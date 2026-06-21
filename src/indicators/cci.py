@@ -1,31 +1,43 @@
 # =====================================================================
-# WHEN 2026-06-21 (Phase 0 STUB) | WHO Claude for Monty
-# WHY  CCI for each period emits TWO lines: the raw CCI and a post-smoothed
-#      line = SMA(2) of CCI, shifted 4 bars. (Per Monty's correction.)
+# WHEN 2026-06-21 (Phase 0 stub; Phase 1 made real) | WHO Claude for Monty
+# WHY  CCI per period emits TWO lines: raw CCI + SMA(2)-shifted-4 of it.
 # WHERE src/indicators/cci.py
-# HOW  Phase 0: raw CCI returns NaN (length N) -- TA-Lib wired in Phase 1.
-#      The post-smoothing (SMA2 + shift4) is already real and reused from
-#      sma.py, so Phase 1 only needs to drop in talib.CCI for the raw line.
-# DEPENDS_ON: numpy, src/indicators/sma.py
+# HOW  Real CCI via pandas (typical price, SMA, mean-deviation, /0.015);
+#      auto-uses TA-Lib if installed. Post line = sma(raw, 2, shift=4).
+# DEPENDS_ON: numpy, pandas, src/indicators/sma.py, (optional) talib
 # USED_BY: src/indicators/base.py
-# CHANGE_NOTES(IRAC): I: need cci30 & cci100, each raw+shifted. R: spec.
-#   A: stub raw now, real post-smoothing now. C: locks the 4 column slots so
-#   the 190-wide indicator block is correct from Phase 0.
+# CHANGE_NOTES(IRAC): I: stub returned NaN. R: spec cci30 & cci100 raw+shifted.
+#   A(Phase1): real CCI (pandas), TA-Lib fast-path. C: real cyclicity features;
+#   zero-install on Colab.
 # =====================================================================
-"""CCI (period 30 & 100), each as raw + SMA(2)-shifted-4. Raw is a Phase-0 stub."""
+"""CCI raw + SMA(2)-shifted-4. Pandas impl, optional TA-Lib fast-path."""
 from __future__ import annotations
 import numpy as np
+import pandas as pd
 from src.indicators.sma import sma
+
+try:
+    import talib  # type: ignore
+    _HAS_TALIB = True
+except Exception:
+    _HAS_TALIB = False
 
 
 def cci_raw(high, low, close, period: int) -> np.ndarray:
-    """RAW CCI(period). PHASE-0 STUB -> NaN length N (wire talib.CCI in Phase 1)."""
-    n = np.asarray(close).ravel().shape[0]
-    return np.full(n, np.nan, dtype=np.float32)  # TODO(Phase 1): talib.CCI
+    """Raw CCI(period), length N float32 (NaN during warmup)."""
+    high = np.asarray(high, dtype=np.float64).ravel()
+    low = np.asarray(low, dtype=np.float64).ravel()
+    close = np.asarray(close, dtype=np.float64).ravel()
+    n = close.shape[0]
+    if _HAS_TALIB and n > period:
+        return np.asarray(talib.CCI(high, low, close, timeperiod=period), dtype=np.float32)
+    tp = pd.Series((high + low + close) / 3.0)
+    ma = tp.rolling(period).mean()
+    md = tp.rolling(period).apply(lambda x: np.mean(np.abs(x - x.mean())), raw=True)
+    cci = (tp - ma) / (0.015 * md)
+    return cci.to_numpy(dtype=np.float32)
 
 
-def cci_post(high, low, close, period: int, post_sma: int = 2,
-             post_shift: int = 4) -> np.ndarray:
+def cci_post(high, low, close, period: int, post_sma: int = 2, post_shift: int = 4) -> np.ndarray:
     """SMA(post_sma) of CCI(period), shifted post_shift bars. Length N float32."""
-    raw = cci_raw(high, low, close, period)
-    return sma(raw, post_sma, shift=post_shift)
+    return sma(cci_raw(high, low, close, period), post_sma, shift=post_shift)

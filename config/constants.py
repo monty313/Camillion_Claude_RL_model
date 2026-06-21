@@ -39,6 +39,11 @@ CCI_POST_SHIFT: int = 4
 RSI_PERIODS: tuple[int, ...] = (4, 14)
 RSI_POST_SMA: int = 2
 RSI_POST_SHIFT: int = 2
+# ATR: period 14 -> raw + SMA(2) shifted 4 (volatility; the shift lets the
+# bot compare ATR now vs ~4 bars ago, i.e. read its slope).
+ATR_PERIODS: tuple[int, ...] = (14,)
+ATR_POST_SMA: int = 2
+ATR_POST_SHIFT: int = 4
 # Bollinger: (period, deviation) -> upper, middle, lower (3 lines each).
 BOLLINGER_PERIODS: tuple[int, ...] = (20, 200)
 BOLLINGER_DEVS: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0)
@@ -51,7 +56,10 @@ N_RSI_PER_TF: int = len(RSI_PERIODS) * 2                             # 4
 N_BB_PER_TF: int = (
     len(BOLLINGER_PERIODS) * len(BOLLINGER_DEVS) * len(BOLLINGER_BANDS)
 )                                                                    # 24
-N_INDICATORS_PER_TF: int = N_SMA_PER_TF + N_CCI_PER_TF + N_RSI_PER_TF + N_BB_PER_TF  # 38
+N_ATR_PER_TF: int = len(ATR_PERIODS) * 2                              # 2 (raw + shifted)
+N_INDICATORS_PER_TF: int = (
+    N_SMA_PER_TF + N_CCI_PER_TF + N_RSI_PER_TF + N_ATR_PER_TF + N_BB_PER_TF
+)  # 40
 N_INDICATORS_TOTAL: int = N_INDICATORS_PER_TF * N_TIMEFRAMES          # 190
 
 # --- Strategy / alpha slots ---
@@ -104,4 +112,4 @@ OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 357
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.0.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.1.0"

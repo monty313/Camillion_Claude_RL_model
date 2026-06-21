@@ -3,7 +3,7 @@
 import numpy as np
 from config import constants as C
 from src.strategies.base import BaseStrategy
-from src.strategies.registry import StrategyRegistry
+from src.strategies.registry import AlphaRegistry
 
 
 class _S(BaseStrategy):
@@ -15,24 +15,24 @@ class _S(BaseStrategy):
 
 
 def test_shape_constant_as_strategies_added():
-    reg = StrategyRegistry()
+    reg = AlphaRegistry()
     for i in range(20):
         reg.register(_S(1 if i % 2 else -1, f"s{i}"))
-        assert reg.collect_signals(None).shape == (C.MAX_STRATEGIES,)
+        assert reg.collect_alphas(None).shape == (C.MAX_STRATEGIES,)
         assert reg.occupancy_mask().shape == (C.MAX_STRATEGIES,)
 
 
 def test_unused_slots_zero():
-    reg = StrategyRegistry()
+    reg = AlphaRegistry()
     reg.register(_S(1, "a"))
-    sig = reg.collect_signals(None)
+    sig = reg.collect_alphas(None)
     assert sig[0] == 1.0 and np.all(sig[1:] == 0.0)
 
 
 def test_empty_vs_inactive_distinguished():
-    reg = StrategyRegistry()
+    reg = AlphaRegistry()
     reg.register(_S(0, "inactive"))           # assigned but no setup
-    sig, mask = reg.collect_signals(None), reg.occupancy_mask()
+    sig, mask = reg.collect_alphas(None), reg.occupancy_mask()
     assert sig[0] == 0.0 and mask[0] == 1.0   # inactive: value 0, occupied
     assert sig[1] == 0.0 and mask[1] == 0.0   # empty: value 0, not occupied
 
@@ -41,11 +41,11 @@ def test_invalid_signal_rejected():
     class Bad(BaseStrategy):
         def compute_signal(self, ctx):
             return 2
-    reg = StrategyRegistry()
+    reg = AlphaRegistry()
     reg.register(Bad("bad"))
     raised = False
     try:
-        reg.collect_signals(None)
+        reg.collect_alphas(None)
     except ValueError:
         raised = True
     assert raised

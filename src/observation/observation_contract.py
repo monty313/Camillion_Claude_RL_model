@@ -66,7 +66,7 @@ for _name, _size in C.OBS_BLOCK_ORDER:
     FEATURE_NAMES.extend(_names)
     _cursor += _size
 
-assert _cursor == C.OBS_TOTAL_SIZE == 357, (_cursor, C.OBS_TOTAL_SIZE)
+assert _cursor == C.OBS_TOTAL_SIZE, (_cursor, C.OBS_TOTAL_SIZE)
 assert len(FEATURE_NAMES) == C.OBS_TOTAL_SIZE
 
 

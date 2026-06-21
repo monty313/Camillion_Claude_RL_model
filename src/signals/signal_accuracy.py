@@ -1,52 +1,53 @@
 # =====================================================================
-# WHEN 2026-06-21 (Phase 0) | WHO Claude for Monty
-# WHY  Tell the bot how accurate past net signals were -- using ONLY outcomes
-#      that are already complete. NEVER let bar t see its own future.
+# WHEN 2026-06-21 (Phase 0; Phase 1 added counts + 10-bar reuse) | WHO Claude
+# WHY  Rolling directional accuracy of a signal vs realised price move, with
+#      NO look-ahead leakage. The leak-free primitive reused for net-signal,
+#      per-alpha, and policy accuracy.
 # WHERE src/signals/signal_accuracy.py
-# HOW  A net signal at bar X is "correct" if sign(net[X]) matches
-#      sign(close[X+h]-close[X]). At bar t we only count signals with outcome
-#      known by t, i.e. X <= t-h (1-bar uses up to t-1, 3-bar up to t-3).
-#      Vectorised with cumulative sums; output[t] depends on close up to t only.
-# DEPENDS_ON: config/variables.py (SIGNAL_ACCURACY_WINDOW), numpy
-# USED_BY: src/observation/builder.py, tests/test_signal_accuracy_no_leakage.py
-# CHANGE_NOTES(IRAC): I: accuracy features must not leak the future. R: spec
-#   "no look-ahead leakage; rolling window=100". A: grade at X+h, expose only
-#   X<=t-h, prove out[t] ignores bars>t. C: leak-free features = honest
-#   generalisation and a trustworthy FTMO pass estimate.
+# HOW  Signal at bar X is graded vs sign(close[X+h]-close[X]); at decision bar t
+#      only X<=t-h are counted (outcome already known by t). out[t] depends on
+#      close up to t only -> bars > t cannot change it.
+# DEPENDS_ON: config/variables.py, numpy
+# USED_BY: signal_memory/builder, src/signals/alpha_accuracy.py,
+#          src/diagnostics/policy_accuracy.py, tests.
+# CHANGE_NOTES(IRAC): I: aggregates need to know how many graded samples each
+#   series has (to exclude 'no data' from mean/best). R: operator diagnostics
+#   spec. A: add rolling_accuracy_counts -> (acc, valid_count). C: honest
+#   reliability aggregates, still leak-free.
 # =====================================================================
-"""Rolling past-signal accuracy with NO look-ahead leakage (1-bar & 3-bar)."""
+"""Leak-free rolling directional accuracy (+ valid-sample counts)."""
 from __future__ import annotations
 import numpy as np
 from config import variables as V
 
 
-def rolling_accuracy(net_signal, close, window: int, horizon: int) -> np.ndarray:
-    """Per-bar rolling accuracy of net signals at the given horizon (no leakage).
+def rolling_accuracy_counts(signal, close, window: int, horizon: int):
+    """Return (accuracy, valid_count) per bar, leak-free.
 
-    out[t] = fraction of directional net signals X in (t-h-window, t-h] whose
-    sign matched sign(close[X+h]-close[X]). out[t] uses close only up to index t,
-    so modifying any bar > t cannot change out[t]. Returns float32 length T,
-    0.0 where no graded signal exists yet.
+    accuracy[t] = fraction of directional signals X in (t-h-window, t-h] whose
+    sign matched sign(close[X+h]-close[X]); valid_count[t] = how many graded,
+    directional signals are in that window. out[t] uses close only up to t.
     """
-    net = np.asarray(net_signal, dtype=np.float64).ravel()
+    sig = np.asarray(signal, dtype=np.float64).ravel()
     close = np.asarray(close, dtype=np.float64).ravel()
     T = close.shape[0]
-    out = np.zeros(T, dtype=np.float32)
+    acc = np.zeros(T, dtype=np.float32)
+    cnt = np.zeros(T, dtype=np.float32)
     if T == 0:
-        return out
+        return acc, cnt
     h = int(horizon)
-    correct = np.zeros(T, dtype=np.float64)  # 1 if signal at X correct (else 0)
-    valid = np.zeros(T, dtype=np.float64)    # 1 if signal at X is gradable & directional
+    correct = np.zeros(T, dtype=np.float64)
+    valid = np.zeros(T, dtype=np.float64)
     if T > h:
-        sX = np.sign(net[: T - h])                      # signal sign at index X
-        future_dir = np.sign(close[h:] - close[: T - h])  # realised dir over h bars
+        sX = np.sign(sig[: T - h])
+        future_dir = np.sign(close[h:] - close[: T - h])
         graded = sX != 0
         correct[: T - h] = ((sX == future_dir) & graded).astype(np.float64)
         valid[: T - h] = graded.astype(np.float64)
     cc = np.concatenate(([0.0], np.cumsum(correct)))
     cv = np.concatenate(([0.0], np.cumsum(valid)))
     t = np.arange(T)
-    hi = t - h                                   # last gradable index visible at t
+    hi = t - h
     lo = np.maximum(0, hi - int(window) + 1)
     mask = hi >= 0
     hi_c = np.clip(hi + 1, 0, T)
@@ -54,12 +55,18 @@ def rolling_accuracy(net_signal, close, window: int, horizon: int) -> np.ndarray
     num = np.where(mask, cc[hi_c] - cc[lo_c], 0.0)
     den = np.where(mask, cv[hi_c] - cv[lo_c], 0.0)
     safe = np.where(den > 0, den, 1.0)
-    out = np.where(den > 0, num / safe, 0.0).astype(np.float32)
-    return out
+    acc = np.where(den > 0, num / safe, 0.0).astype(np.float32)
+    cnt = den.astype(np.float32)
+    return acc, cnt
+
+
+def rolling_accuracy(signal, close, window: int, horizon: int) -> np.ndarray:
+    """Leak-free rolling accuracy only (see rolling_accuracy_counts)."""
+    return rolling_accuracy_counts(signal, close, window, horizon)[0]
 
 
 def accuracy_features(net_signal, close, window: int | None = None, t: int | None = None):
-    """[acc_1bar, acc_3bar] -- at bar t (length-2) or the full series ((T,2))."""
+    """[acc_1bar, acc_3bar] for the net signal (observation block). Leak-free."""
     w = V.SIGNAL_ACCURACY_WINDOW if window is None else int(window)
     a1 = rolling_accuracy(net_signal, close, w, 1)
     a3 = rolling_accuracy(net_signal, close, w, 3)

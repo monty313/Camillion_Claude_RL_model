@@ -24,6 +24,7 @@ from src.indicators.sma import sma
 from src.indicators.cci import cci_raw, cci_post
 from src.indicators.rsi import rsi_raw, rsi_post
 from src.indicators.bollinger import bollinger
+from src.indicators.atr import atr_raw, atr_post
 
 
 def per_tf_columns() -> list[str]:
@@ -41,6 +42,9 @@ def per_tf_columns() -> list[str]:
         for dev in C.BOLLINGER_DEVS:
             for band in C.BOLLINGER_BANDS:
                 cols.append(f"bb{period}_dev{dev}_{band}")
+    for period in C.ATR_PERIODS:                            # 2 (raw + shifted)
+        cols.append(f"atr{period}_raw")
+        cols.append(f"atr{period}_sma{C.ATR_POST_SMA}sh{C.ATR_POST_SHIFT}")
     return cols
 
 
@@ -78,5 +82,8 @@ def compute_timeframe_indicators(high, low, close) -> np.ndarray:
             out[:, col] = upper; col += 1
             out[:, col] = middle; col += 1
             out[:, col] = lower; col += 1
+    for period in C.ATR_PERIODS:
+        out[:, col] = atr_raw(high, low, close, period); col += 1
+        out[:, col] = atr_post(high, low, close, period); col += 1
     assert col == len(PER_TF_COLUMNS), (col, len(PER_TF_COLUMNS))
     return out

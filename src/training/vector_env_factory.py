@@ -1,10 +1,25 @@
-# WHEN 2026-06-21 (Phase 0 STUB) | WHO Claude for Monty
-# WHY  Build vectorised parallel envs (SubprocVecEnv) for CPU-bound speed.
-# WHERE src/training/vector_env_factory.py | HOW Phase-1 spins N_ENVS workers.
-# DEPENDS_ON config/training_speed_config.py, src/env/trading_env.py
+# WHEN 2026-06-21 (Phase 1) | WHO Claude for Monty
+# WHY  Vectorised parallel envs (SubprocVecEnv) for CPU-bound speed.
+# WHERE src/training/vector_env_factory.py | HOW lazy SB3 import; N_ENVS workers.
+# DEPENDS_ON config/training_speed_config.py, src/training/gym_adapter.py
 # USED_BY src/training/trainer.py.
-"""Vectorised env factory (Phase-0 placeholder)."""
+"""SubprocVecEnv factory (Colab-runnable; lazy SB3 import)."""
 from __future__ import annotations
+from config import training_speed_config as TS
+from src.training.gym_adapter import make_gym_env
 
-def make_vec_env(*args, **kwargs):
-    raise NotImplementedError("Phase 1: SubprocVecEnv with N_ENVS workers.")
+
+def make_vec_env(indicators, close, time_ns, registry_factory, n_envs: int | None = None,
+                 **env_kwargs):
+    """registry_factory() -> a fresh AlphaRegistry per worker (no shared state)."""
+    from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+    n = n_envs or TS.N_ENVS
+
+    def _thunk(seed):
+        def _f():
+            return make_gym_env(indicators, close, time_ns, registry_factory(),
+                                seed=seed, random_window=True, **env_kwargs)
+        return _f
+
+    backend = SubprocVecEnv if TS.VEC_ENV_BACKEND == "subproc" else DummyVecEnv
+    return backend([_thunk(i) for i in range(n)])

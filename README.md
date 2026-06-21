@@ -14,10 +14,10 @@ stubs, `BaseStrategy` + `StrategyRegistry` (64 fixed slots), the signal/observat
 builders, account + risk scaffolds, and the shape-contract tests. **No RL training,
 no UI yet** (those are Phases 1 and 2).
 
-## The observation (locked: 357 float32, contract `v1.0.0`)
+## The observation (locked: 367 float32, contract `v1.1.0`)
 | Block | Size | What it is |
 |---|---|---|
-| indicators | 190 | raw TA-Lib values, 5 TFs x 38 (NOT normalized) |
+| indicators | 200 | raw values, 5 TFs x 40 (NOT normalized; TA-Lib optional) |
 | alpha_values | 64 | strategy outputs `+1/-1/0` (fixed slots) |
 | alpha_mask | 64 | occupancy: `1` assigned, `0` empty slot |
 | alpha_summary | 4 | buy% / sell% / active% / net% |

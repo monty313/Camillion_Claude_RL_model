@@ -26,3 +26,46 @@ pass FTMO-style challenges more consistently.
   features divide by the active config's (editable) limits.
 - **C:** One trained model is reusable across many challenge configurations → far
   faster iteration toward a stable pass rate.
+
+## [2026-06-21] Phase 1 start — real indicators + ATR added (contract v1.1.0)
+- **I:** Stubs returned NaN; Monty added ATR-14 (raw + SMA2-shift4) per timeframe.
+- **R:** Phase-1 spec (real indicators) + operator request 2026-06-21 + CCI/RSI raw+shifted pattern.
+- **A:** Real RSI/CCI/Bollinger/ATR (pandas, TA-Lib optional); NaN-aware SMA; ATR adds
+  +2 cols/TF -> indicator block 190->200, observation **357->367**, contract **v1.1.0**.
+  Added 3 example alphas (SMA-trend, RSI-reversion, Bollinger-breakout).
+- **C:** The policy now sees real multi-timeframe indicators incl. volatility and its
+  4-bar slope — richer, leak-free context for trading within FTMO drawdown walls.
+
+## [2026-06-21] Locked strategy/alpha/policy contract
+- **I:** 'strategy' and 'alpha' risked being conflated; observation must expose
+  only alpha OUTPUTS, never strategy internals.
+- **R:** Operator contract (strategy=logic, alpha=exposed output, policy=RL).
+- **A:** Renamed StrategyRegistry->AlphaRegistry, collect_signals->collect_alphas
+  (aliases kept), example classes ->...Strategy; locked semantics in docstrings +
+  OBSERVATION_CONTRACT.md. Confirmed 6 SMA obs lines/TF (1/s0,2/s1,3/s2,4/s3,50/s0,
+  200/s0) and that the observation exposes only alpha_values/mask/summary.
+- **C:** The policy can't 'see the strategy'; clean meta-learning over alphas.
+
+## [2026-06-21] Phase 1 — interpretability + alpha/policy diagnostics
+- **I:** Need to see what the PPO is thinking, track alpha vs policy reliability,
+  and detect leader-chasing — without observation bloat, leakage, or reward shortcut.
+- **R:** Operator diagnostics spec 2026-06-21.
+- **A:** Leak-free per-alpha 1/3/10 accuracy + counts; aggregate reliability
+  (mean/best/dispersion); policy directional accuracy (same primitive);
+  PolicyIntrospector (action dist + value + entropy + block-ablation saliency);
+  Policy Doctor (scoreboard, explicit leader-chasing test, best-alpha comparison,
+  block importance). All diagnostics-only; reward untouched. +7 tests (35/35).
+- **C:** We can prove whether the policy is a real meta-learner over alphas or a
+  wrapper around the best recent signal — the core risk in this architecture.
+
+## [2026-06-21] Phase 1 complete — cache, env, trainer, eval
+- **I:** Need leakage-safe cache, FTMO env with clean reward, trainer, and
+  read-only diagnostics in eval.
+- **R:** Operator guardrails 2026-06-21 (reward objective-only, no leakage,
+  eval separation) + Phase-1 spec.
+- **A:** Leak-free multi-TF cache (last-closed-bar alignment); TradingEnv
+  (reward = equity change only, proven alpha-independent; per-day FTMO reset;
+  breach terminate; two-phase); PPO trainer (Colab); read-only evaluate harness
+  wiring introspection + Policy Doctor. 43/43 tests. Docs: PHASE1_REPORT.md.
+- **C:** A fast, honest, FTMO-aligned training loop whose policy we can actually
+  interpret and audit for shortcut/leader-chasing.

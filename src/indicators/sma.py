@@ -1,39 +1,35 @@
 # =====================================================================
-# WHEN 2026-06-21 (Phase 0) | WHO Claude for Monty
-# WHY  Simple Moving Average with an optional bar SHIFT (value from N bars
-#      ago). This is the ONE indicator implemented for real in Phase 0
-#      (pure numpy, no TA-Lib) -- it is also reused to post-smooth CCI/RSI.
+# WHEN 2026-06-21 (Phase 0; Phase 1 made NaN-aware) | WHO Claude for Monty
+# WHY  SMA with optional bar SHIFT. Reused to post-smooth CCI/RSI, which carry
+#      leading NaN during warmup -> the SMA must be NaN-aware (skip warmup,
+#      stay valid afterwards) instead of propagating NaN forever.
 # WHERE src/indicators/sma.py
-# HOW  cumsum trick -> O(N); leading values are NaN; shift moves the series
-#      forward so out[i] == sma[i-shift]. Output is float32, length N.
-# DEPENDS_ON: numpy
+# HOW  pandas rolling(period).mean() (NaN-aware via min_periods) then shift.
+#      out[i] = SMA value from `shift` bars ago. float32, length N.
+# DEPENDS_ON: numpy, pandas
 # USED_BY: src/indicators/base.py, cci.py, rsi.py
-# CHANGE_NOTES(IRAC): I: need raw SMA incl. shifted lookbacks. R: spec SMA
-#   p1/s0,p2/s1,p3/s2,p4/s3,p50/s0,p200/s0. A: numpy cumsum + shift. C: fast,
-#   dependency-free, exact -> safe in the cached precompute step.
+# CHANGE_NOTES(IRAC): I: cumsum SMA turned post-smoothed CCI/RSI all-NaN. R:
+#   spec SMA shifts + the CCI/RSI raw+shifted requirement. A(Phase1): pandas
+#   rolling (NaN-aware) + shift. C: the shifted indicator lines now carry real
+#   values, so the agent actually sees them.
 # =====================================================================
-"""Simple Moving Average (raw, with optional bar shift). Pure numpy."""
+"""SMA (raw, optional bar shift), NaN-aware so it can post-smooth indicators."""
 from __future__ import annotations
 import numpy as np
+import pandas as pd
 
 
 def sma(values, period: int, shift: int = 0) -> np.ndarray:
     """Return SMA(period) of `values`, shifted forward by `shift` bars.
 
-    out[i] = mean(values[i-period+1 : i+1]) then shifted so out[i] uses the
-    SMA value from `shift` bars ago. Leading undefined entries are NaN.
-    Always returns float32 of the same length as the input (bar-aligned).
+    NaN-aware: a window containing NaN (warmup of an upstream indicator) yields
+    NaN, but values become valid once the window clears the NaN region. Always
+    returns float32 of the same length as the input (bar-aligned).
     """
-    v = np.asarray(values, dtype=np.float64).ravel()
-    n = v.shape[0]
-    out = np.full(n, np.nan, dtype=np.float64)
-    if period > 0 and n >= period:
-        csum = np.cumsum(np.insert(v, 0, 0.0))
-        ma = (csum[period:] - csum[:-period]) / float(period)  # len n-period+1
-        out[period - 1:] = ma
+    s = pd.Series(np.asarray(values, dtype=np.float64).ravel())
+    if period < 1:
+        period = 1
+    ma = s.rolling(window=period, min_periods=period).mean()
     if shift > 0:
-        shifted = np.full(n, np.nan, dtype=np.float64)
-        if shift < n:
-            shifted[shift:] = out[:n - shift]
-        out = shifted
-    return out.astype(np.float32)
+        ma = ma.shift(shift)
+    return ma.to_numpy(dtype=np.float32)
