@@ -22,3 +22,10 @@ current status, related tests (all already encoded in `workflow_map.MODULES`).
 Buttons: **CLEAR**, **NEW IRAC CYCLE**. Local mock bus — no paid API keys.
 
 Run it: `streamlit run src/jarvis/app.py`.
+
+## Cockpit (`0_JARVIS_COCKPIT.html`)
+A standalone, no-install holographic cockpit: animated arc-reactor core, the
+workflow as a data constellation with streaming packets, live FTMO gauges,
+editable risk (no retrain), a British **voice** (Web Speech), **mic-reactive**
+core (it follows your voice), clap-to-wake, and a real market brief via
+`fetchLive()` (wire to MT5/feed for live ticks). Open it in Chrome/Edge.

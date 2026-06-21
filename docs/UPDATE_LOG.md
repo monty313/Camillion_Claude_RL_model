@@ -69,3 +69,14 @@ pass FTMO-style challenges more consistently.
   wiring introspection + Policy Doctor. 43/43 tests. Docs: PHASE1_REPORT.md.
 - **C:** A fast, honest, FTMO-aligned training loop whose policy we can actually
   interpret and audit for shortcut/leader-chasing.
+
+## [2026-06-21] Phase 2 — Barbershop suite + walk-forward + cockpit
+- **I:** Need the rest of the Barbershop diagnostics, a real FTMO pass-rate, and
+  the Jarvis cockpit in the repo.
+- **R:** Phase-2 spec (Jarvis UI + Barbershop) + 'pass-rate first'.
+- **A:** Day Replay, Trade Autopsy, Signal Doctor (real, tested); walk-forward
+  validation harness (rolling windows -> per-window pass/breach -> pass-rate,
+  leak-safe + read-only); standalone 0_JARVIS_COCKPIT.html (voice + mic-reactive
+  + clap + live brief). 48/48 tests.
+- **C:** The Barbershop can fully audit a run, and we can put an honest pass-rate
+  number on the policy over unseen walk-forward windows.

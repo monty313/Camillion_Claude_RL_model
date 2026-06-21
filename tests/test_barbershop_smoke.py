@@ -12,8 +12,8 @@ def test_barbershop_modules_import_and_run():
     assert "daily" in scoreboard.scoreboard(acc)
     assert "reasons" in risk_doctor.diagnose(acc)
     assert feature_doctor.inspect(B.zeros())["shape_ok"]
-    for mod in (day_replay, trade_autopsy, signal_doctor):
-        assert mod.run()["status"].startswith("placeholder")
+    assert callable(day_replay.build_replay) and callable(trade_autopsy.autopsy)
+    assert callable(signal_doctor.report)
 
 
 def test_jarvis_modules_import_without_crashing():

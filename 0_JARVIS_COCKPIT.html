@@ -1,0 +1,124 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JARVIS MONTGOMERY // Command</title>
+<link href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css" rel="stylesheet">
+<style>
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% 40%,#071a2e 0,#03101e 52%,#01060d 100%);color:#bfe6ff;font-family:ui-monospace,Menlo,Consolas,monospace;min-height:100vh;padding:16px}
+.wrap{max-width:980px;margin:0 auto}
+.lab{font-size:10px;letter-spacing:1.5px;color:#5fa8d6;text-transform:uppercase;margin:0}
+.btn{font-family:inherit;background:rgba(54,230,255,.06);border:1px solid rgba(54,230,255,.4);color:#cdeeff;border-radius:7px;padding:8px 12px;cursor:pointer;font-size:11px;letter-spacing:1px;text-transform:uppercase;box-shadow:0 0 10px rgba(54,230,255,.12)}
+.btn:hover{background:rgba(54,230,255,.18)}
+.card{background:rgba(7,26,46,.55);border:1px solid rgba(54,230,255,.18);border-radius:12px;padding:14px}
+.nl{position:absolute;transform:translate(-50%,-50%);text-align:center;cursor:pointer}.nl .nm{font-size:10px;color:#cfeaff;text-shadow:0 0 7px rgba(54,230,255,.8);white-space:nowrap}.nl .id{font-size:8px;color:#5fa8d6}
+.bar{height:9px;border-radius:5px;transition:.4s;box-shadow:0 0 8px currentColor}
+.av{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:19px;border:1px solid}
+.msg{font-size:12px;padding:7px 9px;border-radius:0 7px 7px 0;background:rgba(20,40,70,.5);margin-bottom:6px;border-left:2px solid #2c4a72}
+input[type=range]{accent-color:#36e6ff}select{background:#071a2e;color:#cdeeff;border:1px solid rgba(54,230,255,.35);border-radius:6px;padding:6px;font-family:inherit;font-size:11px}
+@keyframes gl{0%,100%{box-shadow:0 0 0 currentColor}50%{box-shadow:0 0 24px currentColor}}.spk{animation:gl 1s infinite}
+.miclvl{height:6px;border-radius:4px;background:#36e6ff;width:0;transition:width .08s;box-shadow:0 0 8px #36e6ff}
+</style></head><body><div class="wrap">
+
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border-bottom:1px solid rgba(54,230,255,.15);padding-bottom:12px;margin-bottom:14px">
+ <div><p style="margin:0;font-size:16px;letter-spacing:2.5px;color:#eaf7ff;text-shadow:0 0 13px rgba(54,230,255,.7)">JARVIS MONTGOMERY</p><p class="lab" style="margin-top:2px">executive quant partner</p></div>
+ <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span id="clock" style="font-size:12px;color:#5fa8d6"></span>
+  <button class="btn" id="voice"><i class="ti ti-volume"></i> voice brief</button>
+  <button class="btn" id="mic"><i class="ti ti-microphone"></i> enable mic</button>
+  <button class="btn" id="diag"><i class="ti ti-radar-2"></i> diagnostic</button></div>
+</div>
+
+<div class="card" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><p class="lab"><i class="ti ti-world"></i> live market brief — from the internet</p><span id="asof" style="font-size:10px;color:#5fa8d6"></span></div>
+ <div id="brief" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px"></div>
+ <div style="display:flex;align-items:center;gap:10px;margin-top:10px"><span class="lab" style="min-width:40px">mic</span><div style="flex:1;background:rgba(54,230,255,.12);border-radius:4px"><div class="miclvl" id="miclvl"></div></div></div>
+ <p style="margin:8px 0 0;font-size:11px;color:#7fb8df" id="jline">Jarvis: enable the mic and talk to me — the core follows your voice.</p>
+</div>
+
+<div id="hero" style="position:relative;width:660px;max-width:100%;height:380px;margin:0 auto 14px">
+ <svg id="links" width="660" height="380" style="position:absolute;inset:0;overflow:visible"></svg>
+ <div id="ovn" style="position:absolute;inset:0"></div>
+ <div id="readout" style="position:absolute;right:6px;top:4px;text-align:right;font-size:11px;line-height:1.7"></div>
+</div>
+
+<div class="card" style="margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><p class="lab"><i class="ti ti-adjustments"></i> risk model — editable live</p><span style="font-size:9.5px;color:#0a1830;background:#2bd576;padding:2px 8px;border-radius:9px">NO RETRAIN</span></div>
+ <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px">
+  <div style="display:flex;align-items:center;gap:9px"><span class="lab" style="min-width:54px">target</span><input type="range" id="s-tg" min="0.5" max="5" step="0.1" value="2.5" style="flex:1"><span id="o-tg" style="font-size:12px;color:#dff3ff;min-width:34px">2.5%</span></div>
+  <div style="display:flex;align-items:center;gap:9px"><span class="lab" style="min-width:54px">wall</span><input type="range" id="s-dd" min="1" max="10" step="0.5" value="4" style="flex:1"><span id="o-dd" style="font-size:12px;color:#dff3ff;min-width:34px">4.0%</span></div>
+  <div style="display:flex;align-items:center;gap:9px"><button class="btn" id="s-trail" style="flex:1"><i class="ti ti-shield-check"></i> trail on</button><select id="s-mode"><option>FTMO</option><option>FREE</option></select></div></div></div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px">
+ <div class="card"><p class="lab" style="margin-bottom:8px"><i class="ti ti-stethoscope"></i> policy doctor</p><p class="lab" style="font-size:9.5px">action π(a|s)</p><div id="acts" style="margin:5px 0 10px"></div><p class="lab" style="font-size:9.5px">why · block saliency</p><div id="sal"></div></div>
+ <div class="card"><p class="lab" style="margin-bottom:10px"><i class="ti ti-messages"></i> agent comms · IRAC</p>
+  <div style="display:flex;gap:12px;margin-bottom:12px"><div style="text-align:center"><div class="av" id="av-O" style="color:#36e6ff;border-color:#36e6ff">Ω</div><p class="lab" style="font-size:9px;margin-top:3px">omega</p></div><div style="text-align:center"><div class="av" id="av-J" style="color:#ffb020;border-color:#ffb020">J</div><p class="lab" style="font-size:9px;margin-top:3px">justice</p></div><div style="text-align:center"><div class="av spk" id="av-V" style="color:#e64bff;border-color:#e64bff">∞</div><p class="lab" style="font-size:9px;margin-top:3px">jarvis</p></div></div><div id="feed" style="min-height:100px"></div></div>
+</div>
+
+<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px"><p class="lab"><i class="ti ti-activity"></i> run the policy</p><div style="display:flex;gap:8px"><button class="btn" id="step"><i class="ti ti-player-track-next"></i> step</button><button class="btn" id="play"><i class="ti ti-player-play"></i> play</button><button class="btn" id="stress" style="border-color:#ff4d6a;color:#ff9db0">stress wall</button><button class="btn" id="reset"><i class="ti ti-refresh"></i> reset</button></div></div>
+ <p id="say" style="margin:0;font-size:12px;color:#bfe6ff;min-height:16px">“core online — click voice brief, or talk to me.”</p></div>
+
+<p style="font-size:10.5px;color:#456a8e;margin-top:14px">voice = your browser's British system voice. mic drives the reactor live (your voice) and brief data is real (June 20); wire <code>fetchLive()</code> to MT5 for ticks. allow the mic when asked.</p>
+</div>
+<script>
+var BRIEF={asof:'June 20, 2026',rows:[
+ {k:'EUR/USD',px:'1.1469',sub:'-0.93% wk · strong sell',c:'#ff4d6a',say:'Euro dollar at 1.1469, down nine tenths of a percent on the week, strong sell below the four hour two hundred moving average.'},
+ {k:'XAU/USD',px:'4,155',sub:'gold/oz · vol ~1.9%',c:'#ffb020',say:'Gold at 4,155 an ounce, volatility near two percent.'},
+ {k:'GBP/USD',px:'1.3226',sub:'+0.23% · bid',c:'#2bd576',say:'Cable at 1.3226, modestly bid.'},
+ {k:'US30',px:'46,500',sub:'Dow · near highs',c:'#4f8bff',say:'The Dow near 46,500, close to its highs.'}]};
+function fetchLive(){return BRIEF;}
+var $=function(i){return document.getElementById(i);};
+var voice=null;function lv(){var vs=speechSynthesis.getVoices();voice=vs.find(function(v){return v.name==='Google UK English Male';})||vs.find(function(v){return v.lang==='en-GB'&&/daniel|arthur|male|uk/i.test(v.name);})||vs.find(function(v){return v.lang&&v.lang.indexOf('en-GB')===0;})||vs.find(function(v){return v.lang&&v.lang.indexOf('en')===0;})||vs[0];}
+if('speechSynthesis' in window){lv();speechSynthesis.onvoiceschanged=lv;}
+function speak(t,mad){if(!('speechSynthesis' in window))return;speechSynthesis.cancel();var u=new SpeechSynthesisUtterance(t);if(voice)u.voice=voice;u.rate=mad?0.9:0.98;u.pitch=mad?0.7:0.86;u.onstart=function(){S.talk=1;};u.onend=function(){S.talk=0;};speechSynthesis.speak(u);$('jline').textContent='Jarvis: '+t;$('say').textContent='“'+t+'”';$('say').style.color=mad?'#ff9db0':'#bfe6ff';}
+function brief(){var b=fetchLive();speak('Good day, Monty. Snapshot as of '+b.asof+'. '+b.rows.map(function(r){return r.say;}).join(' ')+' The trailing wall is intact. Standing by.',0);}
+
+var S;function reset(){S={eq:100000,start:100000,dayStart:100000,peak:100000,tg:2.5,dd:4,trail:true,mode:'FTMO',n:0,lead:0.42,acts:[0.55,0.2,0.15,0.1],sal:{indicators:0.34,alpha:0.3,account:0.2,portfolio:0.16},talk:0,mad:0,flash:0,mic:0};}
+reset();
+var ACT=['hold','buy','sell','close'];
+var ND={'01':[100,72,'#36e6ff','Data'],'02':[58,190,'#36e6ff','Universe'],'03':[118,312,'#2dd4bf','Alphas'],'04':[250,372,'#2dd4bf','Combination'],'CORE':[330,196,'#36e6ff','core'],'05':[440,128,'#4f8bff','Portfolio'],'R':[466,330,'#ff4d6a','Risk'],'O':[600,96,'#ffb020','Objective'],'C':[614,210,'#ffb020','Constraints'],'06':[572,316,'#4f8bff','Trading']};
+var ORDER=['01','02','03','04','CORE','05','R','O','C','06'];
+var EDGES=[['01','02'],['01','03'],['02','03'],['03','04'],['04','CORE'],['R','CORE'],['R','O'],['R','C'],['O','CORE'],['C','CORE'],['CORE','05'],['05','06'],['06','R']];
+var PK=EDGES.map(function(e,i){return {e:e,p:(i*0.13)%1,sp:0.2+Math.random()*0.12};});
+var SP=[],STARS=[];for(var i=0;i<120;i++)STARS.push([Math.random()*660,Math.random()*380,Math.random()*1.4+0.3,Math.random()*6.28]);
+var cv=document.createElement('canvas');$('hero').insertBefore(cv,$('ovn'));cv.style.cssText='position:absolute;inset:0';var ctx=cv.getContext('2d');var dpr=Math.min(window.devicePixelRatio||1,2),sx=1;
+function resize(){var w=$('hero').clientWidth;sx=w/660;cv.style.width=w+'px';cv.style.height='380px';cv.width=w*dpr;cv.height=380*dpr;ctx.setTransform(dpr*sx,0,0,dpr,0,0);place();}
+function P(id){return ND[id];}
+function place(){var h='';ORDER.forEach(function(id){if(id==='CORE')return;var n=ND[id];h+='<div class="nl" data-id="'+id+'" style="left:'+(n[0]*sx)+'px;top:'+(n[1]+16)+'px"><div class="id">'+id+'</div><div class="nm">'+n[3]+'</div></div>';});$('ovn').innerHTML=h;Array.prototype.forEach.call($('ovn').children,function(c){c.onclick=function(){speak(ND[c.getAttribute('data-id')][3]+' module. Online.',0);};});}
+function nbars(el,items){var h='';items.forEach(function(it){h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:10px;width:64px;color:#6f9fc8">'+it[0]+'</span><div style="flex:1;background:rgba(54,230,255,.1);border-radius:5px"><div class="bar" style="width:'+Math.round(it[1]*100)+'%;background:'+it[2]+';color:'+it[2]+'"></div></div><span style="font-size:10px;width:24px;text-align:right;color:#bfe6ff">'+Math.round(it[1]*100)+'</span></div>';});el.innerHTML=h;}
+function warnf(){return (S.peak-S.eq)/S.peak/(S.dd/100);}
+function isMad(){return warnf()>0.85||S.mad>0||S.lead>0.82;}
+function bolt(a,r1,r2,col){ctx.strokeStyle=col;ctx.globalAlpha=.85;ctx.lineWidth=1;ctx.shadowColor=col;ctx.shadowBlur=8;ctx.beginPath();for(var i=0;i<=6;i++){var r=r1+(r2-r1)*i/6,off=(i===0||i===6)?0:(Math.random()-0.5)*9;ctx.lineTo?0:0;var px=Math.cos(a)*r+Math.cos(a+1.5708)*off,py=Math.sin(a)*r+Math.sin(a+1.5708)*off;i?ctx.lineTo(px,py):ctx.moveTo(px,py);}ctx.stroke();ctx.shadowBlur=0;ctx.globalAlpha=1;}
+function lerp(a,b,p){return a+(b-a)*p;}
+function reactor(cx,cy,t,mad){var hue=mad?'#ff3b5c':'#36e6ff',hue2=mad?'#ffa6b8':'#aef4ff';
+ var amp=(S.talk?(0.4+0.4*Math.sin(t*16)):0)+Math.min(1,S.mic*7)*0.9+(mad?0.7:0);
+ ctx.save();ctx.translate(cx,cy);
+ var hg=ctx.createRadialGradient(0,0,4,0,0,74+amp*16);hg.addColorStop(0,mad?'rgba(255,59,92,.5)':'rgba(54,230,255,.42)');hg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=hg;ctx.beginPath();ctx.arc(0,0,74+amp*16,0,6.28);ctx.fill();
+ ctx.save();ctx.rotate(t*(mad?0.5:0.18));ctx.strokeStyle=hue;ctx.globalAlpha=.75;ctx.lineWidth=2;ctx.shadowColor=hue;ctx.shadowBlur=10;ctx.beginPath();ctx.arc(0,0,47,0,6.28);ctx.stroke();for(var i2=0;i2<32;i2++){var a2=i2/32*6.28;ctx.lineWidth=i2%2?1:2.4;ctx.beginPath();ctx.moveTo(Math.cos(a2)*47,Math.sin(a2)*47);ctx.lineTo(Math.cos(a2)*(i2%2?51:53),Math.sin(a2)*(i2%2?51:53));ctx.stroke();}ctx.restore();ctx.shadowBlur=0;ctx.globalAlpha=1;
+ ctx.save();ctx.rotate(-t*(mad?0.85:0.32));for(var c2=0;c2<12;c2++){ctx.save();ctx.rotate(c2/12*6.28);ctx.translate(33,0);ctx.fillStyle=hue;ctx.globalAlpha=.9;ctx.shadowColor=hue;ctx.shadowBlur=9;ctx.fillRect(-5,-4.5,10,9);ctx.restore();}ctx.restore();ctx.shadowBlur=0;ctx.globalAlpha=1;
+ var nb=mad?5:(S.talk||S.mic>0.04?3:1);for(var e=0;e<nb;e++){if(Math.random()<.7)bolt(Math.random()*6.28,9,30,hue2);}
+ ctx.save();ctx.rotate(t*(mad?-1:-0.4));ctx.strokeStyle='#fff';ctx.shadowColor=hue;ctx.shadowBlur=mad?24:15;ctx.lineWidth=2.5;ctx.globalAlpha=.95;ctx.beginPath();for(var v=0;v<3;v++){var av=v/3*6.28-1.5708;v?ctx.lineTo(Math.cos(av)*16,Math.sin(av)*16):ctx.moveTo(Math.cos(av)*16,Math.sin(av)*16);}ctx.closePath();ctx.stroke();ctx.restore();ctx.shadowBlur=0;ctx.globalAlpha=1;
+ var pr=9+2*Math.sin(t*3)+amp*9;var pg=ctx.createRadialGradient(0,0,0,0,0,pr*1.8);pg.addColorStop(0,'#fff');pg.addColorStop(.4,hue2);pg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=pg;ctx.beginPath();ctx.arc(0,0,pr*1.8,0,6.28);ctx.fill();ctx.fillStyle=hue;ctx.shadowColor=hue;ctx.shadowBlur=mad?42:28;ctx.beginPath();ctx.arc(0,0,pr,0,6.28);ctx.fill();ctx.fillStyle='#fff';ctx.shadowBlur=12;ctx.beginPath();ctx.arc(0,0,pr*0.48,0,6.28);ctx.fill();ctx.shadowBlur=0;
+ var epl=(S.eq/S.start-1);ctx.strokeStyle=epl>=0?'#2bd576':'#ff4d6a';ctx.lineWidth=2.6;ctx.shadowColor=ctx.strokeStyle;ctx.shadowBlur=8;ctx.beginPath();ctx.arc(0,0,58,-1.5708,-1.5708+Math.max(-0.95,Math.min(0.95,epl*8))*3.14);ctx.stroke();ctx.shadowBlur=0;
+ var ne=mad?3:(S.talk||S.mic>0.05?2:0);for(var k=0;k<ne;k++){var aa=Math.random()*6.28,vv=0.6+Math.random()*1.6;SP.push({x:0,y:0,vx:Math.cos(aa)*vv,vy:Math.sin(aa)*vv,l:1,c:hue2});}if(SP.length>60)SP.splice(0,SP.length-60);
+ for(var s2=SP.length-1;s2>=0;s2--){var sp=SP[s2];sp.x+=sp.vx;sp.y+=sp.vy;sp.l-=0.03;if(sp.l<=0){SP.splice(s2,1);continue;}ctx.globalAlpha=sp.l*0.9;ctx.fillStyle=sp.c;ctx.shadowColor=sp.c;ctx.shadowBlur=6;ctx.beginPath();ctx.arc(sp.x,sp.y,1.4,0,6.28);ctx.fill();}ctx.shadowBlur=0;ctx.globalAlpha=1;
+ ctx.restore();if(mad){ctx.fillStyle='#ff5c78';ctx.font='11px ui-monospace';ctx.globalAlpha=0.5+0.5*Math.sin(t*8);ctx.fillText('● ALERT',cx-22,cy+74);ctx.globalAlpha=1;}
+}
+function draw(){var t=performance.now()/1000,mad=isMad();ctx.save();ctx.clearRect(-20,-20,700,420);if(mad)ctx.translate((Math.random()-0.5)*5,(Math.random()-0.5)*5);
+ for(var s=0;s<STARS.length;s++){var st=STARS[s],tw=0.4+0.6*(0.5+0.5*Math.sin(t*2+st[3]));ctx.globalAlpha=tw*0.7;ctx.fillStyle=(mad&&Math.random()<0.04)?'#ff8090':'#bfe6ff';ctx.beginPath();ctx.arc(st[0],st[1],st[2],0,6.28);ctx.fill();}ctx.globalAlpha=1;
+ var lc=mad?'rgba(255,77,106,.3)':'rgba(54,230,255,.22)';EDGES.forEach(function(e){var a=P(e[0]),b=P(e[1]);ctx.strokeStyle=lc;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();});
+ var fl=0.6+S.mic*4;PK.forEach(function(k){k.p+=k.sp*0.016*fl;if(k.p>1)k.p-=1;var a=P(k.e[0]),b=P(k.e[1]);for(var tr=0;tr<4;tr++){var pp=k.p-tr*0.03;if(pp<0)pp+=1;var tx=lerp(a[0],b[0],pp),ty=lerp(a[1],b[1],pp);ctx.globalAlpha=(1-tr/4)*0.85;ctx.fillStyle=mad?'#ff5c78':'#9af0ff';ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=tr===0?12:0;ctx.beginPath();ctx.arc(tx,ty,tr===0?2.4:1.3,0,6.28);ctx.fill();}ctx.shadowBlur=0;ctx.globalAlpha=1;});
+ ORDER.forEach(function(id){if(id==='CORE')return;var n=ND[id];ctx.fillStyle=n[2];ctx.shadowColor=n[2];ctx.shadowBlur=8;ctx.beginPath();ctx.arc(n[0],n[1],3.2,0,6.28);ctx.fill();ctx.shadowBlur=0;});
+ var c=P('CORE');reactor(c[0],c[1],t,mad);ctx.restore();
+ if(S.flash>0){ctx.fillStyle='rgba(255,40,70,'+(S.flash/30*0.4)+')';ctx.fillRect(0,0,cv.width/dpr/sx,380);S.flash--;}
+ if(S.mad>0)S.mad--;S.mic*=0.92;requestAnimationFrame(draw);}
+function render(){$('readout').innerHTML='equity <b style="color:#eaffff">$'+Math.round(S.eq).toLocaleString()+'</b><br>day <b style="color:'+((S.eq>=S.dayStart)?'#2bd576':'#ff4d6a')+'">'+((S.eq/S.dayStart-1)*100>=0?'+':'')+((S.eq/S.dayStart-1)*100).toFixed(2)+'%</b><br>wall <b style="color:'+(warnf()>0.8?'#ff4d6a':warnf()>0.55?'#ffb020':'#2bd576')+'">'+Math.round(Math.max(0,Math.min(1,warnf()))*100)+'%</b>';nbars($('acts'),S.acts.map(function(p,i){return [ACT[i],p,['#5fa8d6','#2bd576','#ff4d6a','#4f8bff'][i]];}));nbars($('sal'),[['indicators',S.sal.indicators,'#36e6ff'],['alpha',S.sal.alpha,'#2bd576'],['account',S.sal.account,'#ffb020'],['portfolio',S.sal.portfolio,'#4f8bff']]);}
+function renderBrief(){var b=fetchLive();$('asof').textContent=b.asof;$('brief').innerHTML=b.rows.map(function(r){return '<div><p class="lab" style="font-size:9.5px">'+r.k+'</p><p style="margin:1px 0 0;font-size:16px;color:'+r.c+'">'+r.px+'</p><p style="margin:2px 0 0;font-size:10px;color:#6f9fc8">'+r.sub+'</p></div>';}).join('');}
+function feed(who,txt,col){var d=document.createElement('div');d.className='msg';d.style.borderLeftColor=col;d.innerHTML='<span style="color:'+col+'">'+who+'</span> <span style="color:#9cc4e6">'+txt+'</span>';var f=$('feed');f.insertBefore(d,f.firstChild);while(f.children.length>4)f.removeChild(f.lastChild);}
+function step(){S.n++;var near=(S.eq-S.peak*(1-S.dd/100))<S.peak*0.008,drift=Math.random()-0.46,mv=drift*S.peak*0.0016;if(near&&mv<0){mv*=0.15;S.acts=[0.15,0.05,0.05,0.75];S.sal={indicators:0.12,alpha:0.1,account:0.46,portfolio:0.32};speak('Easy — '+Math.round((1-warnf())*100)+' percent of the wall left. Masking the trade.',1);}else{var up=drift>0;S.acts=up?[0.18,0.55,0.12,0.15]:[0.18,0.12,0.55,0.15];var a=0.28+Math.random()*0.14,ind=0.3+Math.random()*0.12,z=a+ind+0.3;S.sal={indicators:ind/z,alpha:a/z,account:0.16/z,portfolio:0.14/z};var zz=S.sal.indicators+S.sal.alpha+S.sal.account+S.sal.portfolio;Object.keys(S.sal).forEach(function(k){S.sal[k]/=zz;});}S.eq+=mv;S.peak=Math.max(S.peak,S.eq);S.lead=Math.max(0.3,Math.min(0.85,S.lead+(Math.random()-0.5)*0.06));var dpl=(S.eq/S.dayStart-1)*100;if(S.mode==='FTMO'&&S.trail&&dpl>=S.tg){S.dayStart=S.eq;speak('Daily target banked. Auto-flat, fresh trail.',0);}if((S.peak-S.eq)/S.peak*100>=S.dd){speak('Breach. Episode terminates. Resetting.',1);S.flash=30;S.eq=S.start;S.peak=S.start;S.dayStart=S.start;}if(S.n%14===0)S.dayStart=S.eq;render();}
+var playing=null;
+function diag(){feed('OMEGA','obs 367 ok · alpha slots consistent','#36e6ff');setTimeout(function(){feed('JUSTICE',S.mode+' · wall '+Math.round(warnf()*100)+'% · lead '+Math.round(S.lead*100)+'%',(warnf()>0.85?'#ff4d6a':'#ffb020'));},520);setTimeout(function(){var clr=warnf()<0.85&&S.lead<=0.78;feed('JARVIS','verdict: '+(clr?'clear':'hold'),'#e64bff');speak(clr?'All clear. Within risk, decisions contextual.':'Hold position. We are too close to the wall.',!clr);},1080);}
+$('voice').onclick=brief;$('diag').onclick=diag;$('step').onclick=step;$('reset').onclick=function(){reset();SP=[];$('feed').innerHTML='';speak('Systems reset. Standing by.',0);render();};
+$('stress').onclick=function(){S.eq=S.peak*(1-S.dd/100*0.92);speak('You are pushing me to the wall. I do not like this.',1);render();};
+$('play').onclick=function(){var b=this;if(playing){clearInterval(playing);playing=null;b.innerHTML='<i class="ti ti-player-play"></i> play';}else{playing=setInterval(step,640);b.innerHTML='<i class="ti ti-player-pause"></i> pause';}};
+$('s-tg').oninput=function(){S.tg=parseFloat(this.value);$('o-tg').textContent=S.tg.toFixed(1)+'%';render();};$('s-dd').oninput=function(){S.dd=parseFloat(this.value);$('o-dd').textContent=S.dd.toFixed(1)+'%';render();};
+$('s-trail').onclick=function(){S.trail=!S.trail;this.innerHTML='<i class="ti ti-shield-'+(S.trail?'check':'off')+'"></i> trail '+(S.trail?'on':'off');};$('s-mode').onchange=function(){S.mode=this.value;};
+$('mic').onclick=async function(){try{var stm=await navigator.mediaDevices.getUserMedia({audio:true});this.innerHTML='<i class="ti ti-microphone"></i> listening';this.style.color='#2bd576';var ac=new (window.AudioContext||window.webkitAudioContext)();var src=ac.createMediaStreamSource(stm),an=ac.createAnalyser();an.fftSize=512;src.connect(an);var buf=new Uint8Array(an.fftSize);var last=0;(function tick(){an.getByteTimeDomainData(buf);var sum=0,peak=0;for(var i=0;i<buf.length;i++){var d=Math.abs(buf[i]-128);sum+=d*d;if(d>peak)peak=d;}var rms=Math.sqrt(sum/buf.length)/128;S.mic=Math.max(S.mic,rms);$('miclvl').style.width=Math.min(100,rms*420)+'%';var now=Date.now();if(peak>52&&now-last>500){last=now;speak('At your service.',0);setTimeout(brief,1200);}requestAnimationFrame(tick);})();speak('Microphone live. Talk to me — the core follows your voice. Clap to wake me.',0);}catch(e){this.innerHTML='<i class="ti ti-microphone-off"></i> blocked';speak('I could not reach the microphone. Use voice brief instead.',0);}};
+setInterval(function(){$('clock').textContent=new Date().toTimeString().slice(0,8);},1000);
+window.addEventListener('resize',resize);resize();renderBrief();render();requestAnimationFrame(draw);
+feed('JARVIS','online · enable mic and talk, or press voice brief','#e64bff');
+</script></body></html>
