@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Data + model caches (NEVER commit large binaries)
+data_cache/
+*.parquet
+*.npy
+*.npz
+*.memmap
+models/
+checkpoints/
+*.zip
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets (NEVER commit tokens/keys)
+.env
+*.token
+secrets.*
