@@ -1,0 +1,35 @@
+# WHEN 2026-06-21 | WHO Claude for Monty | WHY package + dependency manifest
+# WHERE repo root | HOW PEP 621 metadata; Phase-0 core is numpy/pandas only.
+# DEPENDS_ON (none) | USED_BY pip / Colab install cell
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "camillion-claude-rl-model"
+version = "0.0.1"
+description = "Modular RL forex framework: strategy alphas combined by an RL agent under FTMO rules."
+requires-python = ">=3.10"
+# Phase-0 core (enough to import the package and run the shape tests):
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+# Phase-1 (indicators + fast training). TA-Lib needs the C lib; on Colab use
+#   apt-get install -y ta-lib  (or the prebuilt wheel) then  pip install TA-Lib
+indicators = ["TA-Lib>=0.4.28", "pyarrow>=14.0"]
+train = ["gymnasium>=0.29", "stable-baselines3>=2.3", "torch>=2.2"]
+# Phase-2 (UI + dashboards)
+ui = ["streamlit>=1.33", "plotly>=5.20"]
+# Live data
+mt5 = ["MetaTrader5>=5.0.45"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools]
+packages = ["config", "src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
