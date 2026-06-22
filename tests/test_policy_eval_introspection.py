@@ -30,7 +30,8 @@ def _mock_policy(obs):
 def test_eval_harness_runs_and_is_read_only():
     ind, close, t = _cache()
     reg = AlphaRegistry(); register_examples(reg)
-    env = TradingEnv(ind, close, t, reg, warmup=5, window=200, random_window=False)
+    # position_size=1.0 keeps this a no-breach harness test (F2 default is now realistic)
+    env = TradingEnv(ind, close, t, reg, warmup=5, window=200, random_window=False, position_size=1.0)
     out = evaluate_policy(env, _mock_policy, max_steps=150, window=60)
     assert out["n_steps"] == 150
     assert len(out["introspection"]) == 150

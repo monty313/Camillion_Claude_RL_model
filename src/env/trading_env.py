@@ -42,7 +42,8 @@ class TradingEnv:
     n_actions = C.N_ACTIONS
 
     def __init__(self, indicators, close, time_ns, alpha_registry, *, cfg=None,
-                 position_size: float = 1.0, breach_penalty: float = 1.0,
+                 position_size: float = 100000.0, breach_penalty: float = 1.0,
+                 reward_scale: float = 1.0,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None):
         self.ind = np.asarray(indicators, dtype=np.float32)
@@ -52,6 +53,7 @@ class TradingEnv:
         self.cfg = cfg or load_active_config()
         self.position_size = float(position_size)
         self.breach_penalty = float(breach_penalty)
+        self.reward_scale = float(reward_scale)   # F2: condition learning signal w/o oversizing
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -120,7 +122,7 @@ class TradingEnv:
         self.acc.mark_equity(self.acc.equity)
 
         # 3) REWARD = equity change as a fraction of starting balance (objective only)
-        reward = float((self.acc.equity - equity_before) / self.cfg.starting_balance)
+        reward = float((self.acc.equity - equity_before) / self.cfg.starting_balance) * self.reward_scale
 
         # 4) day boundary -> reset daily FTMO state (after reward)
         if self._dates[self.ptr] != self._cur_date:

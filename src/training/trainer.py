@@ -1,54 +1,109 @@
 # =====================================================================
-# WHEN 2026-06-21 (Phase 0 stub; Phase 1 Colab-runnable) | WHO Claude for Monty
+# WHEN 2026-06-21 (Phase 0 stub; Phase 1 Colab-runnable; F1 normalization)
+# WHO  Claude for Monty
 # WHY  Train / resume a PPO policy over the cached env, fast. Mirrors Quantra's
 #      locked PPO (gamma=0.997, lambda=0.97, 3x256 MLP). An eval callback runs
 #      the READ-ONLY Policy Doctor; it never changes training.
 # WHERE src/training/trainer.py
 # HOW  Lazy SB3 import (Colab installs torch+SB3). REWARD comes only from the
 #      env (equity change) -- the trainer adds no reward shaping over alphas.
-# DEPENDS_ON src/training/{vector_env_factory,evaluate}.py
+#      F1: training wraps the vec env in VecNormalize(norm_obs=True,
+#      norm_reward=False). The raw 367 cache/contract is UNTOUCHED; only what the
+#      policy sees at train time is standardized. The running mean/std are SAVED
+#      next to the model and MUST be reloaded (training=False) for eval/walk-
+#      forward, or the policy sees mis-scaled inputs (and eval would leak into
+#      the stats). Use load_for_eval() to do this correctly.
+# DEPENDS_ON src/training/{vector_env_factory,evaluate,gym_adapter}.py
 # USED_BY notebooks/Camillion_One_Click_Train.ipynb.
-# CHANGE_NOTES(IRAC): I: need fast, reproducible PPO with clean eval separation.
-#   R: operator guardrails + Quantra locked PPO. A: SB3 PPO + introspection eval
-#   callback (read-only). C: a trainable meta-learner over alphas, FTMO-aligned.
+# CHANGE_NOTES(IRAC): I: raw obs spans ~[-414,+382] across mixed scales -> PPO
+#   learns poorly (audit finding F1). R: normalize the policy input, not the
+#   cache. A: VecNormalize on the training path + save/load of the stats; eval
+#   loads frozen stats. C: same 367 contract, far better-conditioned learning.
 # =====================================================================
-"""PPO trainer (Colab-runnable; lazy torch/SB3 import). Reward stays env-defined."""
+"""PPO trainer (Colab-runnable; lazy torch/SB3 import). Reward stays env-defined.
+
+Normalization (F1): obs are standardized by a VecNormalize wrapper at TRAIN time
+only. The stats live in `<save_path>_vecnorm.pkl`. Always pair a saved model with
+its saved stats; eval/walk-forward must load them with training=False.
+"""
 from __future__ import annotations
 
 PPO_HPARAMS = dict(gamma=0.997, gae_lambda=0.97, n_steps=2048, batch_size=256,
                    ent_coef=0.0, learning_rate=3e-4,
                    policy_kwargs=dict(net_arch=[256, 256, 256]))
 
+VECNORM_KW = dict(norm_obs=True, norm_reward=False, clip_obs=10.0)
+
+
+def _vecnorm_path(save_path: str) -> str:
+    return save_path + "_vecnorm.pkl"
+
 
 def train(indicators, close, time_ns, registry_factory, *, total_timesteps=1_000_000,
           n_envs=None, save_path="models/camillion_ppo", eval_env=None, **env_kwargs):
-    """Train PPO. SB3/torch are imported here (install them in Colab)."""
+    """Train PPO with obs normalization (F1). SB3/torch imported here (Colab)."""
     from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_vec_env
 
     venv = make_vec_env(indicators, close, time_ns, registry_factory, n_envs, **env_kwargs)
+    venv = VecNormalize(venv, **VECNORM_KW)            # F1: standardize policy input
     model = PPO("MlpPolicy", venv, verbose=1, **PPO_HPARAMS)
     model.learn(total_timesteps=total_timesteps)
     model.save(save_path)
+    venv.save(_vecnorm_path(save_path))                # F1: persist running mean/std
     return model
 
 
 def resume(save_path, indicators, close, time_ns, registry_factory, *,
            total_timesteps=500_000, n_envs=None, **env_kwargs):
+    """Resume training, restoring the saved normalization stats (keeps stats updating)."""
     from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_vec_env
+
     venv = make_vec_env(indicators, close, time_ns, registry_factory, n_envs, **env_kwargs)
+    venv = VecNormalize.load(_vecnorm_path(save_path), venv)   # restore mean/std
+    venv.training = True; venv.norm_reward = False
     model = PPO.load(save_path, env=venv)
     model.learn(total_timesteps=total_timesteps)
     model.save(save_path)
+    venv.save(_vecnorm_path(save_path))
     return model
 
 
-def sb3_policy_fn(model):
-    """Wrap an SB3 model as policy_fn(obs)->(logits, value) for the introspector."""
+def load_for_eval(save_path, indicators, close, time_ns, registry_factory, **env_kwargs):
+    """Load model + FROZEN normalization stats for leakage-free eval / walk-forward.
+
+    training=False so (1) the policy sees the same scaling it trained on, and
+    (2) eval observations do NOT update the running stats. Returns (model, venv).
+    """
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+    from src.training.gym_adapter import make_gym_env
+
+    venv = DummyVecEnv([lambda: make_gym_env(indicators, close, time_ns,
+                                             registry_factory(), **env_kwargs)])
+    venv = VecNormalize.load(_vecnorm_path(save_path), venv)
+    venv.training = False        # freeze stats (no eval-time leakage)
+    venv.norm_reward = False
+    model = PPO.load(save_path, env=venv)
+    return model, venv
+
+
+def sb3_policy_fn(model, vecnorm=None):
+    """Wrap an SB3 model as policy_fn(obs)->(logits, value) for the introspector.
+
+    If `vecnorm` (a loaded VecNormalize) is given, raw obs are normalized with the
+    SAME frozen stats the model trained on before the forward pass.
+    """
     import numpy as np, torch
+
     def policy_fn(obs):
-        obs_t = torch.as_tensor(np.asarray(obs, dtype=np.float32)).unsqueeze(0)
+        x = np.asarray(obs, dtype=np.float32)
+        if vecnorm is not None:
+            x = vecnorm.normalize_obs(x)               # apply frozen train-time stats
+        obs_t = torch.as_tensor(np.asarray(x, dtype=np.float32)).unsqueeze(0)
         with torch.no_grad():
             dist = model.policy.get_distribution(obs_t)
             logits = dist.distribution.logits.cpu().numpy().ravel()
