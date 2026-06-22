@@ -81,3 +81,40 @@ def load_cache(out_dir: str, symbol: str = "EURUSD"):
     return (np.load(j("indicators"), mmap_mode="r"),
             np.load(j("close"), mmap_mode="r"),
             np.load(j("time_ns"), mmap_mode="r"))
+
+
+def load_ohlcv_csv(path):
+    """Load a 1-minute OHLCV CSV with flexible column names -> DataFrame indexed by
+    datetime (sorted, de-duplicated). Column values are taken positionally so they
+    align to the parsed timestamps, not to the CSV's original integer index.
+    Feed the result to build_aligned_indicators(df)."""
+    import numpy as _np, pandas as _pd
+    df = _pd.read_csv(path)
+    low = {c.lower().strip(): c for c in df.columns}
+    def pick(opts):
+        for o in opts:
+            if o in low:
+                return low[o]
+        return None
+    tcol = pick(("datetime", "date_time", "timestamp", "time", "date", "<date>", "gmt time", "gmt_time"))
+    if tcol is not None:
+        idx = _pd.to_datetime(df[tcol], errors="coerce")
+    elif "date" in low and "time" in low:
+        idx = _pd.to_datetime(df[low["date"]].astype(str) + " " + df[low["time"]].astype(str), errors="coerce")
+    else:
+        raise ValueError(f"{path}: no datetime column found (cols={list(df.columns)})")
+    def col(opts):
+        nm = pick(opts)
+        return _pd.to_numeric(df[nm], errors="coerce").to_numpy() if nm else None
+    o = col(("open", "o", "<open>")); h = col(("high", "h", "<high>")); l = col(("low", "l", "<low>"))
+    c = col(("close", "c", "<close>", "adj close", "price"))
+    v = col(("volume", "vol", "v", "<vol>", "tickvol", "tick_volume"))
+    if c is None:
+        raise ValueError(f"{path}: no close column found (cols={list(df.columns)})")
+    out = _pd.DataFrame({"open": o if o is not None else c, "high": h if h is not None else c,
+                         "low": l if l is not None else c, "close": c,
+                         "volume": v if v is not None else _np.ones(len(df))},
+                        index=_pd.DatetimeIndex(_np.asarray(idx)))
+    out = out[~out.index.isna()].dropna(subset=["open", "high", "low", "close"])
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    return out

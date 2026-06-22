@@ -43,7 +43,7 @@ class TradingEnv:
 
     def __init__(self, indicators, close, time_ns, alpha_registry, *, cfg=None,
                  position_size: float = 100000.0, breach_penalty: float = 1.0,
-                 reward_scale: float = 1.0,
+                 reward_scale: float = 1.0, open_gate: bool = False,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None):
         self.ind = np.asarray(indicators, dtype=np.float32)
@@ -54,6 +54,7 @@ class TradingEnv:
         self.position_size = float(position_size)
         self.breach_penalty = float(breach_penalty)
         self.reward_scale = float(reward_scale)   # F2: condition learning signal w/o oversizing
+        self.open_gate = bool(open_gate)          # 5m CCI open-gate (off by default)
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -77,6 +78,14 @@ class TradingEnv:
         self.sig_acc = accuracy_features(self.net_signal, self.close)        # (T,2) leak-free
         self.time_feats = np.stack([OB.time_features(pd.Timestamp(self.time_ns[i]))
                                     for i in range(T)]).astype(np.float32)    # (T,6)
+        # 5m CCI open-gate mask: True where EITHER 5m CCI sits in [-50, 50] (flat/undecided
+        # short-term market) -> new directional opens are forbidden when self.open_gate is on.
+        try:
+            j30 = ALL_INDICATOR_COLUMNS.index("5m__cci30_raw")
+            j100 = ALL_INDICATOR_COLUMNS.index("5m__cci100_raw")
+            self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= 50.0) | (np.abs(self.ind[:, j100]) <= 50.0)
+        except ValueError:
+            self.open_gate_blocked = np.zeros(self.T, dtype=bool)
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -104,6 +113,10 @@ class TradingEnv:
         # 1) act at close[t]: realize on any position change, set new position
         target = {C.ACTION_HOLD: self.position, C.ACTION_BUY: 1,
                   C.ACTION_SELL: -1, C.ACTION_CLOSE: 0}[a]
+        # 5m CCI open-gate: forbid establishing a NEW direction when the 5m market is
+        # neutral (EITHER 5m CCI in [-50,50]). A flip just closes; holds/closes pass through.
+        if self.open_gate and self.open_gate_blocked[t] and target != 0 and target != self.position:
+            target = 0
         if target != self.position:
             if self.position != 0:
                 realized = self.position * (self.close[t] - self.entry_price) * self.position_size
