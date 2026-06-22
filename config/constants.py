@@ -60,7 +60,7 @@ N_ATR_PER_TF: int = len(ATR_PERIODS) * 2                              # 2 (raw +
 N_INDICATORS_PER_TF: int = (
     N_SMA_PER_TF + N_CCI_PER_TF + N_RSI_PER_TF + N_ATR_PER_TF + N_BB_PER_TF
 )  # 40
-N_INDICATORS_TOTAL: int = N_INDICATORS_PER_TF * N_TIMEFRAMES          # 190
+N_INDICATORS_TOTAL: int = N_INDICATORS_PER_TF * N_TIMEFRAMES          # 200
 
 # --- Strategy / alpha slots ---
 MAX_STRATEGIES: int = 64
@@ -80,11 +80,11 @@ N_ACTIONS: int = len(ACTIONS)
 SIGNAL_MEMORY_LAGS: int = 5
 
 # =====================================================================
-# OBSERVATION CONTRACT (v1) -- block sizes in concatenation order.
-# Total = 357 float32. Adding strategies fills alpha slots and does NOT
+# OBSERVATION CONTRACT (v1.1.0) -- block sizes in concatenation order.
+# Total = 367 float32. Adding strategies fills alpha slots and does NOT
 # change this number. Changing any size here = new contract version.
 # =====================================================================
-OBS_BLOCK_INDICATORS: int = N_INDICATORS_TOTAL   # 190 raw market inputs
+OBS_BLOCK_INDICATORS: int = N_INDICATORS_TOTAL   # 200 raw market inputs
 OBS_BLOCK_ALPHA_VALUES: int = MAX_STRATEGIES     # 64  (+1 / -1 / 0)
 OBS_BLOCK_ALPHA_MASK: int = MAX_STRATEGIES       # 64  occupancy (1 assigned / 0 empty)
 OBS_BLOCK_ALPHA_SUMMARY: int = 4                 # buy%, sell%, active%, net%
@@ -108,7 +108,7 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("time",             OBS_BLOCK_TIME),
     ("portfolio",        OBS_BLOCK_PORTFOLIO),
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 357
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 367
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 

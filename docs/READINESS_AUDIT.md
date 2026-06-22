@@ -27,13 +27,22 @@ contract or the cached raw values: normalize what the *policy* sees at train tim
 wraps the env in `VecNormalize` to demonstrate this. **Recommendation: train with
 `VecNormalize(norm_obs=True)`. Flagging, not changing, per your rules.**
 
-**F2 — HIGH · Reward scale depends entirely on `position_size`, and the default is too small.**
-Reward = equity change / starting balance. Measured reward std over a random rollout:
-- `position_size=1.0` (current default): **std = 5.38e-7** (mean 1.4e-8) — a near-dead signal.
-- `position_size=100000` (realistic ~1 lot notional): **std = 0.424** (mean -0.18) — healthy.
+**F2 — RESOLVED · Reward scale depends on `position_size` — default is now realistic.**
 
-std is technically > 0, but at 1.0 it is effectively zero for learning. **Set a realistic
-`position_size` (or reward scaling) before training.** Flagging, not changing.
+**Historical note (original audit finding):**
+The original audit measured reward std over a random rollout at `position_size=1.0`:
+- `position_size=1.0`: **std = 5.38e-7** — a near-dead signal (unusable for learning).
+- `position_size=100000` (realistic ~1 lot notional): **std = 0.424** — healthy.
+
+**Current verified state (2026-06-21):**
+The `TradingEnv` default is now `position_size=100000.0`. This was verified by inspecting the
+actual runtime default via `inspect.signature(TradingEnv.__init__)`. The single-symbol training
+notebook also sets `POSITION_SIZE=100000.0` explicitly. No action required — the baseline is
+already configured with a realistic notional.
+
+**Tests using `position_size=1.0`:** Some tests intentionally use 1.0 for fast verification of
+specific behaviors (reward independence, gate logic), not for training. This is intentional and
+correct.
 
 **F3 — LOW · `env.step()` ≈ 310µs (~3,300 steps/s single env).** Fine for CPU PPO with
 vectorised envs (×8 ≈ 26k/s); the cost is the per-step observation assembly, optimizable
@@ -74,7 +83,7 @@ Intentional (a breach is catastrophic), but tune the ratio deliberately when you
   `reward -= self.breach_penalty` on a breach. No alpha/accuracy/signal terms.
 - **3.14 PASS** — `tests/test_trading_env.py::test_reward_independent_of_alphas`: identical prices +
   identical actions, different alphas → byte-identical rewards.
-- **3.15 PASS (w/ F2)** — reward std > 0 but tiny at default scale (see F2 numbers).
+- **3.15 PASS** — reward std ≈ 0.42 at default position_size=100000 (realistic).
 - **3.16 PASS** — grep of the reward path: no `alpha`/`accuracy`/`signal`/`reliab` terms.
 - **3.17 PASS** — FTMO: +$2,600 → daily 2.60% → `target_hit=True, auto_flat=True` (two-phase).
   FREE: same → `target_hit=True, auto_flat=False` (no two-phase). Breach: equity 95,800 from peak
@@ -138,7 +147,7 @@ Intentional (a breach is catastrophic), but tune the ratio deliberately when you
 | 12 | MTF leakage | PASS | corrupt future → aligned[:t] unchanged |
 | 13 | reward formula | PASS | equity-delta/start − breach_penalty |
 | 14 | reward ⊥ alphas | PASS | byte-identical rewards, different alphas |
-| 15 | reward std > 0 | PASS⚠ | 5e-7 @1.0 (F2), 0.42 @100k |
+| 15 | reward std > 0 | PASS | std ≈ 0.42 at default position_size=100000 (realistic) |
 | 16 | no alpha in reward | PASS | grep clean |
 | 17 | FTMO/FREE day logic | PASS | worked numbers (target/auto-flat/breach/reset) |
 | 18 | net arch / input 367 | PASS | MlpPolicy [256,256,256], in=367 |
@@ -163,7 +172,8 @@ Intentional (a breach is catastrophic), but tune the ratio deliberately when you
 
 **Tests:** 53/53 green (48 prior + 5 new audit tests). **Fixed this audit:** only the Phase-0
 barbershop smoke test (it expected placeholder stubs that are now real modules). **Nothing in the
-observation contract, reward, or leakage was changed** — F1 and F2 are flagged, not altered.
+observation contract, reward, or leakage was changed** — F1 is flagged (not altered), F2 is resolved
+(the default was already realistic).
 
 ---
 
@@ -174,10 +184,11 @@ observation contract, reward, or leakage was changed** — F1 and F2 are flagged
   independent of alphas, and the multi-timeframe cache is leak-free. Adding alphas is safe and
   needs no retraining or schema change.
 
-- **Ready to TRAIN seriously: ⚠️ CONDITIONAL — three to-dos first:**
+- **Ready to TRAIN seriously: ⚠️ CONDITIONAL — two to-dos first:**
   1. **F1** — train with `VecNormalize(norm_obs=True)` (raw 367 obs is unscaled).
-  2. **F2** — set a realistic `position_size` (or reward scaling) so reward std is meaningful.
-  3. Run the **4 Colab proof cells** (check_env, single-batch overfit, PPO-update sanity,
+  2. Run the **4 Colab proof cells** (check_env, single-batch overfit, PPO-update sanity,
      save/load) — I cannot run torch here, so learnability is **by-design, not yet numerically proven**.
+  
+  **F2 (reward scale) is resolved** — the default `position_size=100000.0` is now realistic.
 
 Do F1 + F2 and pass the Colab overfit test, and you have a green light to train.
