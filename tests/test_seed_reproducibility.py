@@ -1,6 +1,11 @@
 # Audit S5.23: same seed + same actions -> byte-identical obs and rewards.
 import numpy as np
-from tests._audit_helpers import cache
+try:
+    from tests._audit_helpers import cache
+except ImportError:  # stdlib runner / Colab load test as top-level module
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    from _audit_helpers import cache
 from src.env.trading_env import TradingEnv
 from src.strategies.registry import AlphaRegistry
 
