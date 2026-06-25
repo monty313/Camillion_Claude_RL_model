@@ -118,3 +118,20 @@ pass FTMO-style challenges more consistently.
   US30 6.25 (2.5x) -- all << 1:100. +4 tests. 74/74 green.
 - **C:** The challenge math is now WELL-POSED per asset; training on real data can actually
   reach the target without instant breaches. Prereq for both real-data training and portfolio.
+
+## [2026-06-25] Contract v1.2.0 -> v1.3.0 — SIZING observation block (461 float32)
+- **I:** The bot couldn't see (a) the per-asset $-per-move conversion, (b) how much it still
+  needs today, or (c) what different lot sizes would do -- it only learned that from reward.
+  Operator wants these as OBSERVATIONS now (sizing still NOT an action yet), relative to the
+  INITIAL balance, so the policy learns the size<->risk/reward relationship before it can size.
+- **R:** CLAUDE.md rule #1 (deliberate shape bump: version + docs + shape tests). No trained
+  model exists yet, so this is the right time. Appended (indices 0..450 unchanged).
+- **A:** New 10-float `sizing` block (all fractions of INITIAL balance): 6-rung what-if lot
+  ladder (0.01/0.1/0.5/1/2/4 -> account-% a typical move is worth), `daily_target_remaining`,
+  `dd_room`, `active_lots_norm`, `active_move_value`. `WL.sizing_features()`; env resolves
+  `value_per_point` per asset (asset spec, else position_size=1 lot) + a leak-free `ref_move`
+  (recent realized range, pandas in precompute only). Contract -> v1.3.0 / 461; updated
+  constants, observation_contract, builder order, OBSERVATION_CONTRACT.md (also corrected the
+  stale v1.1.0 doc) and all shape tests (451->461). +6 tests. 80/80 green.
+- **C:** The bot now SEES sizing in account terms -- groundwork for the future sizing action
+  and for portfolio risk allocation, with the challenge math made well-posed by asset_specs.

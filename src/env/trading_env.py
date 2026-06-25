@@ -24,6 +24,7 @@ import pandas as pd
 from config import constants as C
 from config.ftmo_config import load_active_config
 from config import variables as V
+from config import asset_specs as A
 from src.indicators.base import ALL_INDICATOR_COLUMNS
 from src.strategies.context import MarketContext
 from src.signals.signal_summary import summarize, net_balance
@@ -46,6 +47,7 @@ class TradingEnv:
                  position_size: float = 100000.0, breach_penalty: float = 1.0,
                  reward_scale: float = 1.0, open_gate: bool = False,
                  cost_frac: float | None = None, pass_bonus: float | None = None,
+                 symbol: str | None = None, value_per_point: float | None = None,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None):
         self.ind = np.asarray(indicators, dtype=np.float32)
@@ -60,6 +62,16 @@ class TradingEnv:
         self.cost_frac = float(V.TRANSACTION_COST_FRAC_PER_SIDE if cost_frac is None else cost_frac)
         self.pass_bonus = float(self.breach_penalty if pass_bonus is None else pass_bonus)
         self.profit_target_frac = float(getattr(self.cfg, 'profit_target_total_pct', 10.0)) / 100.0
+        # v1.3.0 sizing block: account $ per 1.0 PRICE move per 1 lot. From the asset spec if
+        # known, else treat the active position_size as "1 lot" (active_lots = 1) so the block
+        # stays sane for any data. position_size = value_per_point * active_lots.
+        self.symbol = symbol
+        if value_per_point is not None:
+            self.value_per_point = float(value_per_point)
+        elif symbol and symbol in A.SPECS:
+            self.value_per_point = float(A.SPECS[symbol].contract_size)
+        else:
+            self.value_per_point = float(self.position_size) or 1.0
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -100,6 +112,11 @@ class TradingEnv:
         for i in range(am.shape[0]):
             s = np.where(cont[i], s + 1.0, np.where(nz[i], 1.0, 0.0))
             self.streak_matrix[i] = s
+        # v1.3.0: recent typical PRICE move (leak-free) for the sizing block = realized range
+        # over the last ~240 bars (uses close[:i+1] only). pandas here is precompute, NEVER step().
+        cser = pd.Series(self.close)
+        self.ref_move = (cser.rolling(240, min_periods=1).max()
+                         - cser.rolling(240, min_periods=1).min()).to_numpy()
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -198,6 +215,8 @@ class TradingEnv:
             "account_episode": WL.episode_features(self.acc, self.cfg),
             "time": self.time_feats[i],
             "portfolio": self._portfolio_block(),
+            "sizing": WL.sizing_features(self.acc, self.cfg, value_per_point=self.value_per_point,
+                                         ref_move=float(self.ref_move[i]), position_size=self.position_size),
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
         })
 

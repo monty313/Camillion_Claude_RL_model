@@ -1,14 +1,18 @@
-# OBSERVATION CONTRACT — v1.1.0  (367 float32)
+# OBSERVATION CONTRACT — v1.3.0  (461 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
 > version bump.** Adding *strategies* does NOT change it (that is the whole point).
+>
+> **Version history:** v1.1.0 (367) → v1.2.0 (451: indicators 200→220 alpha-pack extras +
+> 64-wide `alpha_streak`) → **v1.3.0 (461): appended the 10-float `sizing` block.** Appended
+> blocks leave indices 0..(prev-1) unchanged.
 
 ## Block order (concatenated in this exact order)
 
 | # | Block | Size | Meaning |
 |---|-------|------|---------|
-| 1 | `indicators` | 200 | Raw values, 5 TFs × 40. NOT normalized. (real in Phase 1: numpy/pandas, TA-Lib optional.) |
+| 1 | `indicators` | 220 | Raw values, 5 TFs × 44 (v1.2.0 added 4 extras/TF). NOT normalized. |
 | 2 | `alpha_values` | 64 | Strategy outputs `+1` buy / `-1` sell / `0` inactive. Fixed slots. |
 | 3 | `alpha_mask` | 64 | Occupancy: `1` strategy assigned, `0` empty slot. Distinguishes empty vs inactive. |
 | 4 | `alpha_summary` | 4 | `buy_pct, sell_pct, active_pct, net_signal_pct`. |
@@ -18,8 +22,10 @@
 | 8 | `account_episode` | 7 | win%, pnl%, dd_used%, target_progress%, pass_progress%, risk_remaining%, streak%. |
 | 9 | `time` | 6 | tod sin/cos, dow sin/cos, London flag, New York flag. |
 | 10 | `portfolio` | 8 | open%, net exposure, gross exposure, unrealized pnl%, avg age%, largest dir, equity ratio, balance ratio. |
+| 11 | `alpha_streak` | 64 | Per-alpha consecutive-signal streak, normalized by `ALPHA_STREAK_CAP` (v1.2.0). |
+| 12 | `sizing` | 10 | **v1.3.0**, all fractions of INITIAL balance: 6-rung what-if lot ladder (0.01/0.1/0.5/1/2/4 → account-% a typical move is worth), `daily_target_remaining`, `dd_room`, `active_lots_norm`, `active_move_value`. OBSERVATION ONLY — sizing is not an action yet. |
 
-**Total = 367.**
+**Total = 461.**
 
 ## Per-timeframe indicator block (40), repeated for 1m, 5m, 30m, 4h, 1d
 - **SMA (6):** p1/s0, p2/s1, p3/s2, p4/s3, p50/s0, p200/s0.

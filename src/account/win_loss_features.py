@@ -19,6 +19,7 @@
 from __future__ import annotations
 import numpy as np
 from config import variables as V
+from config import constants as C
 from config.ftmo_config import load_active_config
 from src.account.account_state import AccountState
 
@@ -102,3 +103,35 @@ def portfolio_features(acc: AccountState) -> np.ndarray:
         np.clip(equity_ratio, 0, 5),
         np.clip(balance_ratio, 0, 5),
     ], dtype=np.float32)
+
+
+def sizing_features(acc: AccountState, cfg=None, *, value_per_point: float,
+                    ref_move: float, position_size: float) -> np.ndarray:
+    """v1.3.0 SIZING block (10 floats), ALL as fractions of the INITIAL balance.
+
+    OBSERVATION ONLY -- sizing is not an action yet. Shows the per-asset $ conversion,
+    how much is still needed today, drawdown room, and a 0.01..4-lot what-if ladder so the
+    policy learns the size<->risk/reward relationship before it can choose size.
+      value_per_point: account $ per 1.0 PRICE move per 1 lot (asset contract size).
+      ref_move:        a recent typical PRICE move (leak-free, from the cache).
+      position_size:   the env's ACTIVE size (= value_per_point * active_lots).
+    """
+    cfg = cfg or load_active_config()
+    init = acc.starting_balance or 1.0
+    one_lot_move = float(value_per_point) * float(ref_move)          # $ a typical move = at 1 lot
+    ladder = [np.clip(one_lot_move * L / init, 0.0, 1.0) for L in C.SIZING_LOTS_LADDER]
+    # how much of the +target% is still needed today (the day's gain on EQUITY vs INITIAL)
+    day0 = acc.day_start_balance if acc.day_start_balance is not None else init
+    day_gain_frac = (acc.equity - day0) / init if init else 0.0
+    target_frac = _pct(cfg, "daily_target_pct", 2.5)
+    target_remaining = np.clip(target_frac - day_gain_frac, 0.0, 1.0)
+    # room before the binding wall (trailing if on, else total)
+    wall = _pct(cfg, "trailing_drawdown_pct", 4.0) if bool(getattr(cfg, "trailing_enabled", False)) \
+        else _pct(cfg, "max_total_drawdown_pct", 10.0)
+    peak = acc.episode_peak_equity or init
+    dd_frac = max(0.0, (peak - acc.equity) / peak) if peak else 0.0
+    dd_room = np.clip(wall - dd_frac, 0.0, 1.0)
+    active_lots = (float(position_size) / float(value_per_point)) if value_per_point else 0.0
+    active_norm = np.clip(active_lots / max(C.SIZING_LOTS_LADDER), 0.0, 1.0)
+    active_move = np.clip(one_lot_move * active_lots / init, 0.0, 1.0)
+    return np.array([*ladder, target_remaining, dd_room, active_norm, active_move], dtype=np.float32)

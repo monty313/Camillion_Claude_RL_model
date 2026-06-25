@@ -86,9 +86,10 @@ N_ACTIONS: int = len(ACTIONS)
 SIGNAL_MEMORY_LAGS: int = 5
 
 # =====================================================================
-# OBSERVATION CONTRACT (v1.2.0) -- block sizes in concatenation order.
-# Total = 451 float32. Adding strategies fills alpha slots and does NOT
-# change this number. Changing any size here = new contract version.
+# OBSERVATION CONTRACT (v1.3.0) -- block sizes in concatenation order.
+# Total = 461 float32 (v1.3.0 appended a 10-float SIZING block). Adding
+# strategies fills alpha slots and does NOT change this number. Changing any
+# size here = new contract version (see docs/OBSERVATION_CONTRACT.md).
 # =====================================================================
 OBS_BLOCK_INDICATORS: int = N_INDICATORS_TOTAL   # 220 raw market inputs (v1.2.0)
 OBS_BLOCK_ALPHA_VALUES: int = MAX_STRATEGIES     # 64  (+1 / -1 / 0)
@@ -102,6 +103,12 @@ OBS_BLOCK_TIME: int = 6
 OBS_BLOCK_PORTFOLIO: int = 8
 OBS_BLOCK_ALPHA_STREAK: int = 64   # v1.2.0: per-alpha signal-streak (normalized)
 ALPHA_STREAK_CAP: int = 50         # streak fraction = min(streak, cap)/cap
+# --- v1.3.0: SIZING / target-awareness block (all fractions of the INITIAL balance) ---
+# A what-if lot ladder (each size -> account-% a typical move would be worth) + how much is
+# still needed today + drawdown room + the active size. OBSERVATION ONLY for now: sizing is
+# NOT yet an action, so the bot learns the size<->risk/reward relationship before it can use it.
+SIZING_LOTS_LADDER: tuple[float, ...] = (0.01, 0.1, 0.5, 1.0, 2.0, 4.0)
+OBS_BLOCK_SIZING: int = len(SIZING_LOTS_LADDER) + 4  # 6 ladder + target_remaining,dd_room,active_lots,active_move
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -116,9 +123,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("time",             OBS_BLOCK_TIME),
     ("portfolio",        OBS_BLOCK_PORTFOLIO),
     ("alpha_streak",     OBS_BLOCK_ALPHA_STREAK),
+    ("sizing",           OBS_BLOCK_SIZING),       # v1.3.0 (appended -> 0..450 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 451 (v1.2.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 461 (v1.3.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.2.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.3.0"
