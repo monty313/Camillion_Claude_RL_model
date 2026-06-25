@@ -24,6 +24,7 @@ import pandas as pd
 from config import constants as C
 from config.ftmo_config import load_active_config
 from config import variables as V
+from config import asset_specs as A
 from src.indicators.base import ALL_INDICATOR_COLUMNS
 from src.strategies.context import MarketContext
 from src.signals.signal_summary import summarize, net_balance
@@ -45,7 +46,9 @@ class TradingEnv:
     def __init__(self, indicators, close, time_ns, alpha_registry, *, cfg=None,
                  position_size: float = 100000.0, breach_penalty: float = 1.0,
                  reward_scale: float = 1.0, open_gate: bool = False,
+                 open_gate_threshold: float | None = None,
                  cost_frac: float | None = None, pass_bonus: float | None = None,
+                 symbol: str | None = None, value_per_point: float | None = None,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None):
         self.ind = np.asarray(indicators, dtype=np.float32)
@@ -57,9 +60,22 @@ class TradingEnv:
         self.breach_penalty = float(breach_penalty)
         self.reward_scale = float(reward_scale)   # F2: condition learning signal w/o oversizing
         self.open_gate = bool(open_gate)          # 5m CCI open-gate (off by default)
+        # |cci| must exceed this for BOTH 5m CCIs to allow a new open (config-driven, tunable)
+        self.open_gate_threshold = float(
+            V.OPEN_GATE_CCI_THRESHOLD if open_gate_threshold is None else open_gate_threshold)
         self.cost_frac = float(V.TRANSACTION_COST_FRAC_PER_SIDE if cost_frac is None else cost_frac)
         self.pass_bonus = float(self.breach_penalty if pass_bonus is None else pass_bonus)
         self.profit_target_frac = float(getattr(self.cfg, 'profit_target_total_pct', 10.0)) / 100.0
+        # v1.3.0 sizing block: account $ per 1.0 PRICE move per 1 lot. From the asset spec if
+        # known, else treat the active position_size as "1 lot" (active_lots = 1) so the block
+        # stays sane for any data. position_size = value_per_point * active_lots.
+        self.symbol = symbol
+        if value_per_point is not None:
+            self.value_per_point = float(value_per_point)
+        elif symbol and symbol in A.SPECS:
+            self.value_per_point = float(A.SPECS[symbol].contract_size)
+        else:
+            self.value_per_point = float(self.position_size) or 1.0
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -83,12 +99,14 @@ class TradingEnv:
         self.sig_acc = accuracy_features(self.net_signal, self.close)        # (T,2) leak-free
         self.time_feats = np.stack([OB.time_features(pd.Timestamp(self.time_ns[i]))
                                     for i in range(T)]).astype(np.float32)    # (T,6)
-        # 5m CCI open-gate mask: True where EITHER 5m CCI sits in [-50, 50] (flat/undecided
-        # short-term market) -> new directional opens are forbidden when self.open_gate is on.
+        # 5m CCI open-gate mask: True where EITHER 5m CCI sits within +/-threshold
+        # (flat/undecided short-term market) -> new directional opens are forbidden when
+        # self.open_gate is on. Allowed only when BOTH |cci| > threshold (a strong move).
+        thr = self.open_gate_threshold
         try:
             j30 = ALL_INDICATOR_COLUMNS.index("5m__cci30_raw")
             j100 = ALL_INDICATOR_COLUMNS.index("5m__cci100_raw")
-            self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= 50.0) | (np.abs(self.ind[:, j100]) <= 50.0)
+            self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= thr) | (np.abs(self.ind[:, j100]) <= thr)
         except ValueError:
             self.open_gate_blocked = np.zeros(self.T, dtype=bool)
         # v1.2.0: per-alpha signal streak (consecutive bars, same non-zero signal) -- leak-free
@@ -100,6 +118,11 @@ class TradingEnv:
         for i in range(am.shape[0]):
             s = np.where(cont[i], s + 1.0, np.where(nz[i], 1.0, 0.0))
             self.streak_matrix[i] = s
+        # v1.3.0: recent typical PRICE move (leak-free) for the sizing block = realized range
+        # over the last ~240 bars (uses close[:i+1] only). pandas here is precompute, NEVER step().
+        cser = pd.Series(self.close)
+        self.ref_move = (cser.rolling(240, min_periods=1).max()
+                         - cser.rolling(240, min_periods=1).min()).to_numpy()
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -117,7 +140,25 @@ class TradingEnv:
         self.position = 0
         self.entry_price = float(self.close[self.ptr])
         self._cur_date = self._dates[self.ptr]
+        self._reset_phase2()
         return self._obs(), {"ptr": self.ptr}
+
+    def _reset_phase2(self) -> None:
+        """Reset the per-DAY two-phase state (called on reset + each midnight)."""
+        self._phase2_active = False    # banked +2.5% today AND chose to keep trading (1% trail)
+        self._phase2_peak = 0.0        # equity peak since the phase-2 (1%) trail started
+        self._day_locked = False       # done trading for the day -> no new opens
+
+    def _flatten(self) -> None:
+        """Close any open position at close[ptr] and bank it via record_close (the single
+        source of truth). Used to bank the +2.5% target and the phase-2 protective stop."""
+        if self.position != 0:
+            realized = self.position * (self.close[self.ptr] - self.entry_price) * self.position_size
+            realized -= self.cost_frac * self.close[self.ptr] * self.position_size   # exit cost
+            self.th.record_close(self.acc, realized, bar_index=self.ptr)
+            self.position = 0
+        self.acc.equity = self.acc.balance
+        self.acc.mark_equity(self.acc.equity)
 
     def step(self, action: int):
         a = int(action)
@@ -130,6 +171,10 @@ class TradingEnv:
         # 5m CCI open-gate: forbid establishing a NEW direction when the 5m market is
         # neutral (EITHER 5m CCI in [-50,50]). A flip just closes; holds/closes pass through.
         if self.open_gate and self.open_gate_blocked[t] and target != 0 and target != self.position:
+            target = 0
+        # two-phase day-lock: once the day is done (banked +2.5% then stopped, or hit the
+        # phase-2 1% protective stop), block NEW opens until tomorrow. Holds/closes pass.
+        if self._day_locked and target != 0 and target != self.position:
             target = 0
         if target != self.position:
             if self.position != 0:
@@ -156,9 +201,10 @@ class TradingEnv:
         # 3) REWARD = equity change as a fraction of starting balance (objective only)
         reward = float((self.acc.equity - equity_before) / self.cfg.starting_balance) * self.reward_scale
 
-        # 4) day boundary -> reset daily FTMO state (after reward)
+        # 4) day boundary -> reset daily FTMO state + per-day two-phase engine (after reward)
         if self._dates[self.ptr] != self._cur_date:
             self.acc.reset_day()
+            self._reset_phase2()
             self._cur_date = self._dates[self.ptr]
 
         # 5) breach check (FTMO/free) -> terminate with penalty (still objective)
@@ -171,16 +217,30 @@ class TradingEnv:
             terminated = True                        # +10% FTMO Challenge target reached -> PASS
             self.acc.episode_passed = True
             reward += self.pass_bonus
-        # daily target -> two-phase auto-flat (FTMO)
-        if rep.should_auto_flat and self.position != 0:
-            realized = self.position * (self.close[self.ptr] - self.entry_price) * self.position_size
-            self.th.record_close(self.acc, realized, bar_index=self.ptr)  # single source of truth (no manual +=)
-            self.position = 0
-            self.acc.equity = self.acc.balance
+        # 6) DAILY ENGINE (two-phase): hit +2.5% of initial -> close ALL & bank it. Then
+        #    either STOP for the day (default) or, if phase2_continue, keep trading under a
+        #    tight 1% trailing wall from the banked peak (give it back -> bank & stop). This
+        #    is a PROTECTIVE overlay, never an episode breach. Skipped once terminated.
+        if not terminated and self.cfg.two_phase_enabled:
+            if rep.should_auto_flat and not self._phase2_active and not self._day_locked:
+                self._flatten()                              # +2.5% reached -> bank the day
+                if getattr(self.cfg, "phase2_continue", False):
+                    self._phase2_active = True
+                    self._phase2_peak = self.acc.equity      # fresh 1% trail starts here
+                else:
+                    self._day_locked = True                  # default: done for the day
+            elif self._phase2_active:
+                self._phase2_peak = max(self._phase2_peak, self.acc.equity)
+                give_back = self._phase2_peak - self.acc.equity
+                if give_back >= self._phase2_peak * self.cfg.phase2_trailing_pct / 100.0:
+                    self._flatten()                          # gave back the 1% -> bank & stop
+                    self._phase2_active = False
+                    self._day_locked = True
 
         truncated = bool(self.ptr >= self.end)
         info = {"ptr": self.ptr, "equity": self.acc.equity, "position": self.position,
                 "breach_reasons": rep.reasons, "daily_target_hit": rep.daily_target_hit,
+                "day_locked": self._day_locked, "phase2_active": self._phase2_active,
                 "action": a, "alpha_streaks": self.streak_matrix[self.ptr].astype(int)}
         return self._obs(), reward, terminated, truncated, info
 
@@ -198,6 +258,8 @@ class TradingEnv:
             "account_episode": WL.episode_features(self.acc, self.cfg),
             "time": self.time_feats[i],
             "portfolio": self._portfolio_block(),
+            "sizing": WL.sizing_features(self.acc, self.cfg, value_per_point=self.value_per_point,
+                                         ref_move=float(self.ref_move[i]), position_size=self.position_size),
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
         })
 

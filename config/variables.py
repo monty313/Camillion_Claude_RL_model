@@ -36,17 +36,24 @@ STARTING_BALANCE: float = 100_000.0
 # =====================================================================
 
 # --- FTMO mode (locked-style defaults you can still tweak) ---
-FTMO_DAILY_TARGET_PCT: float = 2.5          # +%/day target
-FTMO_DAILY_DRAWDOWN_PCT: float = 5.0        # daily loss limit
-FTMO_MAX_TOTAL_DRAWDOWN_PCT: float = 10.0   # overall loss limit
-FTMO_TRAILING_DRAWDOWN_PCT: float = 4.0     # trailing wall (Quantra 4%)
-FTMO_TRAILING_ENABLED: bool = False         # OFF: real FTMO 2-Step uses a STATIC 10% max, not a 4% trail
-FTMO_TWO_PHASE_ENABLED: bool = False        # OFF: don't cap at +2.5%/day -> let the agent pursue +10%
-FTMO_PHASE2_TRAILING_PCT: float = 1.0       # phase-2 trailing wall (only used if two-phase re-enabled)
+FTMO_DAILY_TARGET_PCT: float = 2.5          # +%/day target = 2.5% of the INITIAL balance
+FTMO_DAILY_DRAWDOWN_PCT: float = 5.0        # daily loss limit (FTMO hard line, from day start)
+FTMO_MAX_TOTAL_DRAWDOWN_PCT: float = 10.0   # overall loss limit (FTMO hard line)
+FTMO_TRAILING_DRAWDOWN_PCT: float = 4.0     # PHASE-1 trailing wall (self-imposed, from peak; trips before FTMO's 5/10%)
+FTMO_TRAILING_ENABLED: bool = True          # ON: phase-1 risk wall is a 4% trailing drawdown
+FTMO_TWO_PHASE_ENABLED: bool = True         # ON: hit +2.5%/day -> close ALL & bank it (daily engine -> +10% over ~4 days)
+FTMO_PHASE2_TRAILING_PCT: float = 1.0       # PHASE-2 trailing wall after banking (tight, protects the day's gain)
+FTMO_PHASE2_CONTINUE: bool = False          # after banking +2.5%: False=stop for the day; True=keep trading under the 1% trail
 FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episode +10%)
 
 # --- Transaction cost (per SIDE, as a fraction of notional; ~0.000035 ~= 0.8 pip round-trip on EURUSD) ---
 TRANSACTION_COST_FRAC_PER_SIDE: float = 0.000035
+
+# --- 5m CCI open-gate threshold (only used when open_gate=True) ---
+# A NEW position may open only when BOTH 5m CCI(30) and CCI(100) are beyond +/-this
+# level (i.e. |cci| > threshold). Bigger = stricter (trades only on stronger moves).
+# 50 = original behaviour; 100 = "both CCIs past +/-100" momentum filter.
+OPEN_GATE_CCI_THRESHOLD: float = 50.0
 
 # --- FREE mode (your own rules) ---
 DAILY_TARGET_PCT: float = 2.5

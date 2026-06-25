@@ -40,25 +40,36 @@ def _vecnorm_path(save_path: str) -> str:
 
 
 def train(indicators, close, time_ns, registry_factory, *, total_timesteps=1_000_000,
-          n_envs=None, save_path="models/camillion_ppo", eval_env=None, **env_kwargs):
+        n_envs=None, save_path="models/camillion_ppo", eval_env=None,
+        eval_freq: int | None = None, **env_kwargs):
     """Train PPO with obs normalization (F1). SB3/torch imported here (Colab)."""
     from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import EvalCallback
     from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_vec_env
 
     venv = make_vec_env(indicators, close, time_ns, registry_factory, n_envs, **env_kwargs)
     venv = VecNormalize(venv, **VECNORM_KW)            # F1: standardize policy input
     model = PPO("MlpPolicy", venv, verbose=1, **PPO_HPARAMS)
-    model.learn(total_timesteps=total_timesteps)
+    cb = None
+    if eval_env is not None:
+        # Eval callback is optional and read-only: it never mutates training env/reward.
+        freq = int(eval_freq or PPO_HPARAMS["n_steps"])
+        cb = EvalCallback(eval_env, eval_freq=max(1, freq),
+                          n_eval_episodes=3, deterministic=True,
+                          best_model_save_path=None, log_path=None)
+    model.learn(total_timesteps=total_timesteps, callback=cb)
     model.save(save_path)
     venv.save(_vecnorm_path(save_path))                # F1: persist running mean/std
     return model
 
 
 def resume(save_path, indicators, close, time_ns, registry_factory, *,
-           total_timesteps=500_000, n_envs=None, **env_kwargs):
+        total_timesteps=500_000, n_envs=None, eval_env=None,
+        eval_freq: int | None = None, **env_kwargs):
     """Resume training, restoring the saved normalization stats (keeps stats updating)."""
     from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import EvalCallback
     from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_vec_env
 
@@ -66,7 +77,13 @@ def resume(save_path, indicators, close, time_ns, registry_factory, *,
     venv = VecNormalize.load(_vecnorm_path(save_path), venv)   # restore mean/std
     venv.training = True; venv.norm_reward = False
     model = PPO.load(save_path, env=venv)
-    model.learn(total_timesteps=total_timesteps)
+    cb = None
+    if eval_env is not None:
+        freq = int(eval_freq or PPO_HPARAMS["n_steps"])
+        cb = EvalCallback(eval_env, eval_freq=max(1, freq),
+                          n_eval_episodes=3, deterministic=True,
+                          best_model_save_path=None, log_path=None)
+    model.learn(total_timesteps=total_timesteps, callback=cb)
     model.save(save_path)
     venv.save(_vecnorm_path(save_path))
     return model

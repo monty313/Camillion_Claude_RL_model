@@ -47,3 +47,21 @@ def test_open_gate_or_semantics():
     differ = c30 ^ c100                                            # exactly-one-neutral bars
     assert differ.any()                                           # such bars exist in this cache
     assert env.open_gate_blocked[differ].all()                    # OR blocks them; AND would NOT
+
+
+def test_open_gate_threshold_is_configurable():
+    """The +/-threshold is a SETTING. With threshold=100 a bar where a CCI sits
+    between 50 and 100 is BLOCKED, though the default 50-gate would have ALLOWED it.
+    Stricter threshold => blocks at least as many bars."""
+    from src.indicators.base import ALL_INDICATOR_COLUMNS
+    ind, cl, t = _cache(n=1500)
+    j30 = ALL_INDICATOR_COLUMNS.index("5m__cci30_raw")
+    j100 = ALL_INDICATOR_COLUMNS.index("5m__cci100_raw")
+    env50 = TradingEnv(ind, cl, t, AlphaRegistry(), warmup=210, open_gate=True, position_size=1.0)
+    env100 = TradingEnv(ind, cl, t, AlphaRegistry(), warmup=210, open_gate=True,
+                        open_gate_threshold=100.0, position_size=1.0)
+    assert env50.open_gate_threshold == 50.0 and env100.open_gate_threshold == 100.0
+    assert env100.open_gate_blocked.sum() >= env50.open_gate_blocked.sum()   # stricter
+    # exact rule at 100: blocked where EITHER |cci| <= 100
+    expect = (np.abs(ind[:, j30]) <= 100.0) | (np.abs(ind[:, j100]) <= 100.0)
+    assert np.array_equal(env100.open_gate_blocked, expect)

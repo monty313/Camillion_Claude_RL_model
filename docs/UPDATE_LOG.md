@@ -105,3 +105,85 @@ pass FTMO-style challenges more consistently.
     NOT re-inflate it via position_size.
 - **C (Conclusion):** Equity, reward, and every FTMO check now run on arithmetically-correct
   money, and the walk-forward scoreboard measures passing at the real +10% challenge target.
+
+## [2026-06-25] PPO wiring hardening — eval callback, random-window control, real learn-check
+- **I (Issue):** PPO/MLP training wiring had three reliability gaps: (1) `train()` accepted
+  `eval_env` but never used it, so learning regressions were invisible during training;
+  (2) vec-env factory hardcoded `random_window=True` and ignored
+  `training_speed_config.RANDOM_WINDOW_TRAINING`; (3) the overfit test only checked finite
+  outputs after `learn()`, which could pass even if the policy learned nothing.
+- **R (Rule):** Keep reward objective-only, keep the observation contract unchanged, and make
+  training diagnostics verify *actual* learning behavior.
+- **A (Application):**
+  - `src/training/trainer.py`: wired optional SB3 `EvalCallback` into both `train()` and
+    `resume()` when `eval_env` is provided; added `eval_freq` override (defaults to one PPO
+    rollout horizon).
+  - `src/training/vector_env_factory.py`: random-window flag now defaults from
+    `RANDOM_WINDOW_TRAINING`, with caller override via `env_kwargs`, and duplicate-keyword
+    collisions are prevented by popping `random_window` before env construction.
+  - `tests/test_single_batch_overfit.py`: upgraded from "finite output" to a deterministic
+    trend overfit harness that asserts post-train deterministic episode return is higher than
+    pre-train return.
+- **C (Conclusion):** PPO setup is now better wired for detectable improvement and easier
+  to control/reproduce, reducing the risk of shipping a policy that only appears to train.
+
+## [2026-06-25] Feature — configurable 5m CCI open-gate threshold
+- **I:** The open-gate (block new opens unless BOTH 5m CCIs are beyond +/-threshold) had
+  the threshold hardcoded at 50. Operator wants to set it (e.g. +/-100 = only open on
+  stronger momentum) without editing code.
+- **R:** Operator request + existing runtime-tunable-knob pattern. Obs shape (451) and FTMO
+  numbers untouched; gate still off by default; still computed in _precompute (never in step).
+- **A:** Added `OPEN_GATE_CCI_THRESHOLD=50.0` to variables.py and an `open_gate_threshold`
+  param on TradingEnv (defaults to the variable, mirrors the `cost_frac` pattern). _precompute
+  uses it. +1 test (`test_open_gate_threshold_is_configurable`). 71/71 green.
+- **C:** The momentum entry filter is now a dial (50 = original, 100 = stricter) with no retrain.
+
+## [2026-06-25] Feature — two-phase DAILY engine (+2.5%/day of initial -> +10% over ~4 days)
+- **I:** Operator's strategy: each day make **+2.5% of the INITIAL balance**, bank it (close
+  ALL), and either STOP for the day (default) or optionally CONTINUE under a tight 1% trail.
+  ~4 such days ladder to the +10% pass. Phase-1 risk wall = 4% trailing. Current main had
+  two-phase + trailing OFF (chase-10%), which is the opposite.
+- **R:** Operator directive (matches CLAUDE.md rule #2 "+2.5% -> 1% trailing"). Obs shape
+  (451) unchanged. EXPLICIT FTMO-behaviour change (re-enables trailing + two-phase).
+- **A:**
+  - `daily_target_hit` now = the DAY's gain on **EQUITY** (open profit incl.) >= 2.5% of the
+    **INITIAL** balance (was realized PnL vs day-start). FREE mode + obs target-progress matched.
+  - `variables.py`: `FTMO_TRAILING_ENABLED` & `FTMO_TWO_PHASE_ENABLED` -> **True**; new
+    `FTMO_PHASE2_CONTINUE=False`. `ftmo_config` carries `phase2_continue`.
+  - `TradingEnv`: per-day two-phase state (reset each midnight). Hit +2.5% -> `_flatten()`
+    (close all, bank, single source of truth). Default -> `_day_locked` (no new opens till
+    tomorrow). If `phase2_continue` -> keep trading under a fresh 1% trailing wall from the
+    banked peak; give it back -> bank & lock (NOT a breach). Phase-1 4% trailing stays a breach.
+  - +5 tests (`tests/test_two_phase_daily.py`); verified a 5-day run banks ~+2.5%/day and
+    PASSES at +10% with no breach. **75/75 green.**
+- **C:** The bot now trains under the real daily engine: grind +2.5%/day of initial, protect
+  it, ladder to +10% — the disciplined, low-drawdown path to the challenge pass.
+## [2026-06-25] Feature — per-asset lot-size calibration (config/asset_specs.py)
+- **I:** PnL = position * price_move * position_size, so a single fixed position_size is
+  sane for FX (~1.1) but absurd for gold (~2000) / US30 (~40000). And at 1 lot EURUSD you'd
+  need ~250 pips for +2.5%/day (impossible). The challenge math was not well-posed.
+- **R:** Operator "per-asset conversion + reachable 2.5%/day, safe under 4%"; leverage 1:100.
+- **A:** `config/asset_specs.py`: per-asset contract_size + typical_daily_range; helpers
+  `value_per_point`, `lots_for_daily_target`, `calibrated_position_size`, `leverage_used`.
+  Calibrates each asset so capturing one typical daily range ~= +2.5% and a full adverse day
+  stays inside 4%. Table: EURUSD 3.12 lots (3.4x), GBPUSD 2.27 (2.9x), XAUUSD 1.25 (2.5x),
+  US30 6.25 (2.5x) -- all << 1:100. +4 tests. 74/74 green.
+- **C:** The challenge math is now WELL-POSED per asset; training on real data can actually
+  reach the target without instant breaches. Prereq for both real-data training and portfolio.
+
+## [2026-06-25] Contract v1.2.0 -> v1.3.0 — SIZING observation block (461 float32)
+- **I:** The bot couldn't see (a) the per-asset $-per-move conversion, (b) how much it still
+  needs today, or (c) what different lot sizes would do -- it only learned that from reward.
+  Operator wants these as OBSERVATIONS now (sizing still NOT an action yet), relative to the
+  INITIAL balance, so the policy learns the size<->risk/reward relationship before it can size.
+- **R:** CLAUDE.md rule #1 (deliberate shape bump: version + docs + shape tests). No trained
+  model exists yet, so this is the right time. Appended (indices 0..450 unchanged).
+- **A:** New 10-float `sizing` block (all fractions of INITIAL balance): 6-rung what-if lot
+  ladder (0.01/0.1/0.5/1/2/4 -> account-% a typical move is worth), `daily_target_remaining`,
+  `dd_room`, `active_lots_norm`, `active_move_value`. `WL.sizing_features()`; env resolves
+  `value_per_point` per asset (asset spec, else position_size=1 lot) + a leak-free `ref_move`
+  (recent realized range, pandas in precompute only). Contract -> v1.3.0 / 461; updated
+  constants, observation_contract, builder order, OBSERVATION_CONTRACT.md (also corrected the
+  stale v1.1.0 doc) and all shape tests (451->461). +6 tests. 80/80 green.
+- **C:** The bot now SEES sizing in account terms -- groundwork for the future sizing action
+  and for portfolio risk allocation, with the challenge math made well-posed by asset_specs.
