@@ -64,6 +64,33 @@ def train(indicators, close, time_ns, registry_factory, *, total_timesteps=1_000
     return model
 
 
+def train_multi_symbol(symbol_data, registry_factory, *, total_timesteps=1_000_000,
+                       n_envs=None, save_path="models/camillion_ppo", eval_env=None,
+                       eval_freq: int | None = None, **env_kwargs):
+    """Train ONE PPO policy across MANY symbols at once -- the 'one bot trades everything' path.
+    `symbol_data = {symbol: (indicators, close, time_ns)}`. Workers are spread round-robin over
+    the symbols (each tagged with its symbol + per-asset calibrated size), so a single policy
+    learns to generalise across pairs/indices/metals using the cross-asset observation features.
+    Rewards are comparable across symbols because each is sized to ~2.5%/day."""
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import EvalCallback
+    from stable_baselines3.common.vec_env import VecNormalize
+    from src.training.vector_env_factory import make_multi_symbol_vec_env
+
+    venv = make_multi_symbol_vec_env(symbol_data, registry_factory, n_envs, **env_kwargs)
+    venv = VecNormalize(venv, **VECNORM_KW)
+    model = PPO("MlpPolicy", venv, verbose=1, **PPO_HPARAMS)
+    cb = None
+    if eval_env is not None:
+        freq = int(eval_freq or PPO_HPARAMS["n_steps"])
+        cb = EvalCallback(eval_env, eval_freq=max(1, freq), n_eval_episodes=3,
+                          deterministic=True, best_model_save_path=None, log_path=None)
+    model.learn(total_timesteps=total_timesteps, callback=cb)
+    model.save(save_path)
+    venv.save(_vecnorm_path(save_path))
+    return model
+
+
 def resume(save_path, indicators, close, time_ns, registry_factory, *,
         total_timesteps=500_000, n_envs=None, eval_env=None,
         eval_freq: int | None = None, **env_kwargs):

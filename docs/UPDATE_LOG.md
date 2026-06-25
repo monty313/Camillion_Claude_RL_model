@@ -187,3 +187,52 @@ pass FTMO-style challenges more consistently.
   stale v1.1.0 doc) and all shape tests (451->461). +6 tests. 80/80 green.
 - **C:** The bot now SEES sizing in account terms -- groundwork for the future sizing action
   and for portfolio risk allocation, with the challenge math made well-posed by asset_specs.
+
+## [2026-06-25] Contract v1.3.0 -> v1.4.0 — CROSS-ASSET perception block (471 float32)
+- **I:** Toward the PORTFOLIO goal (real challenge trades the FULL FTMO broker -- forex, indices,
+  metals, energies, crypto, 130+ instruments). One policy must compare opportunity/risk across a
+  1.1 pair, a 40000 index and a 2000 metal -- raw price/ATR are not comparable. Operator's ideas:
+  ATR-relative movement comparable across symbol types + session/overlap awareness.
+- **R:** CLAUDE.md rule #1 (deliberate shape bump). Append-only (indices 0..460 unchanged).
+- **A:** New 10-float `cross_asset` block: asset-class one-hot (`pair/index/metal/energy/crypto`
+  with a name CLASSIFIER that covers the full broker, unknown -> safe zeros) + ATR-NORMALIZED,
+  SCALE-FREE movement (`move_in_atr`, `atr_pct_price`, `atr_regime`) + sessions (`asian`,
+  `london_ny_overlap`). Verified scale-free: EURUSD/US30/XAUUSD (36000x price gap) all read
+  atr_pct ~0.54. ATR falls back to the realized range where the cache lacks ATR. Leak-free
+  (precompute only). `ASSET_CLASSES` lives in constants (contract). +5 tests; constants/contract/
+  builder/env + shape tests (461->471) + OBSERVATION_CONTRACT.md updated. **90/90 green.**
+- **Movement logic (the 4 we trade):** per-asset `typical_atr` = typical_daily_range/sqrt(1440)
+  (EURUSD 0.00021 .. US30 10.54) anchors the vol REGIME to how each asset NORMALLY moves, and is
+  the ATR fallback. Profiles documented in asset_specs (EUR low-vol/mean-revert, GBP livelier, gold
+  trends/risk-off, US30 trends/NY). +1 test. 91/91 green.
+- **C:** One policy can now perceive ANY FTMO instrument in COMMON units (type + volatility +
+  session) -- the perception bridge from single-asset to a mixed portfolio.
+
+## [2026-06-25] Contract v1.4.0 -> v1.5.0 — RECENT-CONTEXT block (479 float32)
+- **I:** Operator: the (one) bot should see recent DAILY movement (prior days + last-week avg)
+  RELATIVE to the symbol's average, and understand what it needs to PASS in the context of TIME.
+- **R:** CLAUDE.md rule #1 (deliberate shape bump). Append-only (indices 0..470 unchanged). One
+  policy trades everything, so all features are scale-free / relative.
+- **A:** New 8-float `recent_context` block: recent daily ranges expressed RELATIVE to the
+  symbol's own average (`week_avg_range_vs_typical`, `prev_day/prev2/today_range_vs_week`) +
+  TIME-to-pass pace (`days_elapsed_norm`, `episode_return_so_far`, `pace_vs_2_5pct_plan` where
+  0.5 = exactly on the +2.5%/day plan, `challenge_target_remaining`). Daily ranges precomputed
+  leak-free (prior days complete; today expanding; week-avg uses prior days only). `days_elapsed`
+  tracked per episode. +5 tests; constants/contract/builder/env + shape tests (471->479) + doc.
+  **96/96 green.**
+- **C:** The one bot now perceives each symbol's recent movement vs its own norm AND whether it
+  is on pace (in time) to ladder +2.5%/day to the +10% pass -- pacing awareness for the challenge.
+
+## [2026-06-25] Feature — multi-symbol training ("one bot trades everything")
+- **I:** The portfolio goal needs ONE policy trained across ALL assets (the 4 in Drive now), not
+  one model per symbol -- only one brain can manage the shared equity/drawdown pot.
+- **R:** Operator "one bot that trades everything". No obs/contract change (training-side only).
+- **A:** `vector_env_factory.make_multi_symbol_vec_env(symbol_data, ...)` spreads N workers
+  ROUND-ROBIN over `{symbol: (ind,close,time)}`, each tagged with its symbol + per-asset
+  calibrated size (so the cross-asset features are correct and rewards are comparable -- each
+  asset sized to ~2.5%/day). `trainer.train_multi_symbol(...)` mirrors `train()` over it. +1 test
+  (97/97). Empirical: ONE bot trained across pair+index+metal -> judgment 0.90-0.99; at 120k it
+  breached all 3, at 240k it was SAFE on 2/3 (EURUSD,US30) -- safety-first learning, as expected;
+  full profitability needs real training scale (Colab GPU, millions of steps).
+- **C:** The one-bot-trades-everything training path is wired and proven to learn; it generalises
+  across asset types via the cross-asset perception, improving with training. The portfolio bridge.

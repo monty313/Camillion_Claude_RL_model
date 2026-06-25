@@ -1,4 +1,4 @@
-# Audit S7.31: registering one alpha keeps shape (461,), fills its slot + mask,
+# Audit S7.31: registering one alpha keeps shape (479,), fills its slot + mask,
 # and the summary recomputes -- no retrain, no STATE_DIM change.
 import numpy as np
 try:
@@ -22,11 +22,11 @@ def test_add_one_alpha_keeps_shape():
     ind, cl, t = cache()
     e0 = TradingEnv(ind, cl, t, AlphaRegistry(), warmup=210)
     o0, _ = e0.reset()
-    assert o0.shape == (461,) and o0[OC.BLOCK_SLICES["alpha_mask"]].sum() == 0
+    assert o0.shape == (479,) and o0[OC.BLOCK_SLICES["alpha_mask"]].sum() == 0
     reg = AlphaRegistry(); slot = reg.register(_Buy("dummy"))
     e1 = TradingEnv(ind, cl, t, reg, warmup=210)
     o1, _ = e1.reset()
-    assert o1.shape == (461,)                              # shape unchanged
+    assert o1.shape == (479,)                              # shape unchanged
     assert o1[OC.BLOCK_SLICES["alpha_mask"]][slot] == 1.0  # slot mask filled
     assert o1[OC.BLOCK_SLICES["alpha_values"]][slot] == 1.0
     s = o1[OC.BLOCK_SLICES["alpha_summary"]]

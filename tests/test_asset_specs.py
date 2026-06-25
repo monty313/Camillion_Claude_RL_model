@@ -31,3 +31,14 @@ def test_same_fixed_size_is_wrong_across_assets():
     assert value_per_point("EURUSD") == 100_000.0
     assert value_per_point("XAUUSD") == 100.0
     assert value_per_point("US30") == 1.0
+
+
+def test_typical_atr_is_per_asset_and_derived():
+    import math
+    from config.asset_specs import typical_atr
+    for sym, s in SPECS.items():
+        ta = typical_atr(sym)
+        assert ta is not None and abs(ta - s.typical_daily_range / math.sqrt(1440)) < 1e-9
+    # "how they move": US30 moves most in price terms, EURUSD least
+    assert typical_atr("US30") > typical_atr("XAUUSD") > typical_atr("GBPUSD") > typical_atr("EURUSD")
+    assert typical_atr("UNKNOWN") is None

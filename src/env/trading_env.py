@@ -76,6 +76,9 @@ class TradingEnv:
             self.value_per_point = float(A.SPECS[symbol].contract_size)
         else:
             self.value_per_point = float(self.position_size) or 1.0
+        self._typical_atr = A.typical_atr(symbol)   # per-asset "how it normally moves" baseline (or None)
+        self._typical_range = (A.SPECS[symbol].typical_daily_range
+                               if (symbol and symbol in A.SPECS) else None)  # symbol's long-run daily range
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -123,6 +126,61 @@ class TradingEnv:
         cser = pd.Series(self.close)
         self.ref_move = (cser.rolling(240, min_periods=1).max()
                          - cser.rolling(240, min_periods=1).min()).to_numpy()
+        self._precompute_cross_asset()
+        self._precompute_recent_context()
+
+    # ---- v1.5.0: recent daily-movement history (leak-free), precomputed once ----
+    def _precompute_recent_context(self):
+        """Daily RANGE history for the recent_context block: prior-day ranges + last-week avg
+        + today's range so far. Daily range = (max - min) of close per calendar day. Leak-free:
+        prior days are complete; today's range is expanding up to t; week-avg uses prior days."""
+        df = pd.DataFrame({"close": self.close, "day": self._dates})
+        gb = df.groupby("day", sort=False)["close"]
+        self._today_sofar = (gb.cummax() - gb.cummin()).to_numpy()              # expanding intraday range
+        day_full = (gb.max() - gb.min()).to_numpy()                            # full-day range, day order
+        p = df.groupby("day", sort=False).ngroup().to_numpy()                  # day index per bar
+        n = len(day_full)
+        prev_d = np.zeros(n);  prev_d[1:] = day_full[:-1]                      # day i -> range of day i-1
+        prev2_d = np.zeros(n); prev2_d[2:] = day_full[:-2]
+        week_d = np.array([day_full[max(0, i - 5):i].mean() if i >= 1 else day_full[i]
+                           for i in range(n)])                                 # mean of up to 5 PRIOR days
+        self._prev_day = prev_d[p]
+        self._prev2_day = prev2_d[p]
+        # day 0 has no prior days -> use today's expanding range (leak-free) instead of its full range
+        self._week_avg = np.where(p == 0, self._today_sofar, week_d[p])
+
+    # ---- v1.4.0: cross-asset perception (leak-free), precomputed once ----
+    def _precompute_cross_asset(self):
+        """asset-class one-hot + ATR-normalized movement + sessions -> (T, OBS_BLOCK_CROSS_ASSET).
+        ATR-normalized features are SCALE-FREE so one policy reads any FTMO instrument the same."""
+        T = self.T
+        onehot = np.array(A.class_one_hot(self.symbol), dtype=np.float64)        # constant per symbol
+        # ATR (1m, raw) from the cache; where it is missing / zero / non-finite, use the recent
+        # realized range as a volatility proxy so these features are always meaningful.
+        try:
+            atr = self.ind[:, ALL_INDICATOR_COLUMNS.index("1m__atr14_raw")].astype(np.float64)
+        except ValueError:
+            atr = self.ref_move.astype(np.float64)
+        # fallback when the cache has no ATR: this asset's typical 1m ATR (how it normally moves)
+        # if the symbol is known, else the recent realized range.
+        fb = float(self._typical_atr) if self._typical_atr else None
+        bad = ~(np.isfinite(atr) & (atr > 0))
+        atr = np.where(bad, (fb if fb else self.ref_move.astype(np.float64)), atr)
+        atr = np.where(np.isfinite(atr) & (atr > 0), atr, np.nan)   # final guard
+        c = self.close
+        mv = c - pd.Series(c).shift(30).to_numpy()                              # signed recent move
+        move_in_atr = np.clip(np.nan_to_num(mv / atr) / 3.0, -1.0, 1.0)         # ~[-1,1], +/-3 ATR caps
+        atr_pct_price = np.clip(np.nan_to_num(atr / c) * 100.0, 0.0, 1.0)       # vol as % (scale-free)
+        # vol REGIME = current ATR vs how THIS asset normally moves (per-asset typical ATR if the
+        # symbol is known, else a rolling average). ~0.33 = normal, higher = unusually volatile.
+        ref = np.full(T, fb) if fb else pd.Series(atr).rolling(240, min_periods=1).mean().to_numpy()
+        atr_regime = np.clip(np.nan_to_num(atr / ref) / 3.0, 0.0, 1.0)
+        hours = pd.to_datetime(self.time_ns).hour.to_numpy()
+        asian = ((hours >= 0) & (hours < 9)).astype(np.float64)                 # ~Tokyo/Sydney
+        overlap = ((hours >= 12) & (hours < 16)).astype(np.float64)            # London-NY overlap (prime)
+        self.cross_asset_matrix = np.column_stack([
+            np.tile(onehot, (T, 1)), move_in_atr, atr_pct_price, atr_regime, asian, overlap,
+        ]).astype(np.float32)
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -140,6 +198,7 @@ class TradingEnv:
         self.position = 0
         self.entry_price = float(self.close[self.ptr])
         self._cur_date = self._dates[self.ptr]
+        self._days_elapsed = 0          # trading days into this episode (for the time-to-pass pace)
         self._reset_phase2()
         return self._obs(), {"ptr": self.ptr}
 
@@ -206,6 +265,7 @@ class TradingEnv:
             self.acc.reset_day()
             self._reset_phase2()
             self._cur_date = self._dates[self.ptr]
+            self._days_elapsed += 1     # one more trading day into the episode
 
         # 5) breach check (FTMO/free) -> terminate with penalty (still objective)
         rep = BD.detect(self.acc, self.cfg)
@@ -260,6 +320,11 @@ class TradingEnv:
             "portfolio": self._portfolio_block(),
             "sizing": WL.sizing_features(self.acc, self.cfg, value_per_point=self.value_per_point,
                                          ref_move=float(self.ref_move[i]), position_size=self.position_size),
+            "cross_asset": self.cross_asset_matrix[i],
+            "recent_context": WL.recent_context_features(
+                self.acc, self.cfg, week_avg=float(self._week_avg[i]), prev_day=float(self._prev_day[i]),
+                prev2=float(self._prev2_day[i]), today_sofar=float(self._today_sofar[i]),
+                typical_range=self._typical_range, days_elapsed=self._days_elapsed),
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
         })
 
