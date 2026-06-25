@@ -236,3 +236,24 @@ pass FTMO-style challenges more consistently.
   full profitability needs real training scale (Colab GPU, millions of steps).
 - **C:** The one-bot-trades-everything training path is wired and proven to learn; it generalises
   across asset types via the cross-asset perception, improving with training. The portfolio bridge.
+
+## [2026-06-25] Alpha 16 — ORB NY-open breakout (INDICES only) + NY-session reward bonus
+- **I:** Operator wants an Opening-Range Breakout alpha for INDICES at the New York open (the most
+  liquid part of the day), plus a reward bonus for BANKING profit then via indices.
+- **R:** Operator ORB spec, adapted to the repo (no 15m TF; env carries close only; reward was
+  equity-only). Obs SHAPE unchanged (fills alpha slot 15 -> still 479). Operator explicitly opted
+  into reward shaping (overrides the equity-only convention).
+- **A:**
+  - `orb_ny_breakout_indices_alpha.py` (+register, +alpha_pack slot 15): INDEX-only (asset_specs
+    classifier, covers all FTMO indices). Opening range = 09:30-13:30 UTC (4h pre-open; high/low
+    approximated by close); breakout in 13:30-15:30 UTC, filtered by the 30m BB200 middle (=SMA200,
+    no 15m TF). Stateful per UTC day; reset() clears. Wired `symbol` + `minute_of_day` into
+    MarketContext + the env precompute.
+  - NY reward bonus (vars `FTMO_NY_HALF/FULL_TARGET_BONUS` 0.15/0.45): on indices, QUALIFIES when
+    the session's CLOSED-in-profit P&L hits >=50% (within 2h) / >=100% (within 3h) of the daily
+    target; PAID at day-end ONLY if the day passed (closed >= +2.5% of initial); erased if the day
+    fails or breaches. Single-symbol index share = 1.0 (portfolio later computes the real share).
+  - +5 tests (`tests/test_orb_ny_breakout.py`); end-to-end verified the +0.60 bonus pays at the day
+    boundary on a passed day. 102/102 green.
+- **C:** A high-liquidity index entry signal the policy can weight, plus an explicit reward that
+  pays only for banking the day via indices in the NY session -- the operator's intended behaviour.
