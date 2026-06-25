@@ -40,9 +40,13 @@ FTMO_DAILY_TARGET_PCT: float = 2.5          # +%/day target
 FTMO_DAILY_DRAWDOWN_PCT: float = 5.0        # daily loss limit
 FTMO_MAX_TOTAL_DRAWDOWN_PCT: float = 10.0   # overall loss limit
 FTMO_TRAILING_DRAWDOWN_PCT: float = 4.0     # trailing wall (Quantra 4%)
-FTMO_TRAILING_ENABLED: bool = True          # trailing ON/OFF
-FTMO_TWO_PHASE_ENABLED: bool = True         # +2.5% -> auto-flat -> fresh trail
-FTMO_PHASE2_TRAILING_PCT: float = 1.0       # phase-2 trailing wall
+FTMO_TRAILING_ENABLED: bool = False         # OFF: real FTMO 2-Step uses a STATIC 10% max, not a 4% trail
+FTMO_TWO_PHASE_ENABLED: bool = False        # OFF: don't cap at +2.5%/day -> let the agent pursue +10%
+FTMO_PHASE2_TRAILING_PCT: float = 1.0       # phase-2 trailing wall (only used if two-phase re-enabled)
+FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episode +10%)
+
+# --- Transaction cost (per SIDE, as a fraction of notional; ~0.000035 ~= 0.8 pip round-trip on EURUSD) ---
+TRANSACTION_COST_FRAC_PER_SIDE: float = 0.000035
 
 # --- FREE mode (your own rules) ---
 DAILY_TARGET_PCT: float = 2.5

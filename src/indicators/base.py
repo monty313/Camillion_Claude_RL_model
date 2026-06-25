@@ -45,6 +45,10 @@ def per_tf_columns() -> list[str]:
     for period in C.ATR_PERIODS:                            # 2 (raw + shifted)
         cols.append(f"atr{period}_raw")
         cols.append(f"atr{period}_sma{C.ATR_POST_SMA}sh{C.ATR_POST_SHIFT}")
+    for period, shift in C.EXTRA_SMA_SPECS:                 # +2: sma_p30_s0, sma_p1_s1 (prev close)
+        cols.append(f"sma_p{period}_s{shift}")
+    for band in C.SMA_HL_BANDS:                             # +2: sma4_sh4_high, sma4_sh4_low
+        cols.append(f"sma{C.SMA_HL_PERIOD}_sh{C.SMA_HL_SHIFT}_{band}")
     return cols
 
 
@@ -85,5 +89,9 @@ def compute_timeframe_indicators(high, low, close) -> np.ndarray:
     for period in C.ATR_PERIODS:
         out[:, col] = atr_raw(high, low, close, period); col += 1
         out[:, col] = atr_post(high, low, close, period); col += 1
+    for period, shift in C.EXTRA_SMA_SPECS:
+        out[:, col] = sma(close, period, shift); col += 1
+    out[:, col] = sma(high, C.SMA_HL_PERIOD, C.SMA_HL_SHIFT); col += 1   # sma4_sh4_high
+    out[:, col] = sma(low, C.SMA_HL_PERIOD, C.SMA_HL_SHIFT); col += 1    # sma4_sh4_low
     assert col == len(PER_TF_COLUMNS), (col, len(PER_TF_COLUMNS))
     return out

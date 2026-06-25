@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from config import constants as C
 from config.ftmo_config import load_active_config
+from config import variables as V
 from src.indicators.base import ALL_INDICATOR_COLUMNS
 from src.strategies.context import MarketContext
 from src.signals.signal_summary import summarize, net_balance
@@ -44,6 +45,7 @@ class TradingEnv:
     def __init__(self, indicators, close, time_ns, alpha_registry, *, cfg=None,
                  position_size: float = 100000.0, breach_penalty: float = 1.0,
                  reward_scale: float = 1.0, open_gate: bool = False,
+                 cost_frac: float | None = None, pass_bonus: float | None = None,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None):
         self.ind = np.asarray(indicators, dtype=np.float32)
@@ -55,6 +57,9 @@ class TradingEnv:
         self.breach_penalty = float(breach_penalty)
         self.reward_scale = float(reward_scale)   # F2: condition learning signal w/o oversizing
         self.open_gate = bool(open_gate)          # 5m CCI open-gate (off by default)
+        self.cost_frac = float(V.TRANSACTION_COST_FRAC_PER_SIDE if cost_frac is None else cost_frac)
+        self.pass_bonus = float(self.breach_penalty if pass_bonus is None else pass_bonus)
+        self.profit_target_frac = float(getattr(self.cfg, 'profit_target_total_pct', 10.0)) / 100.0
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -86,6 +91,15 @@ class TradingEnv:
             self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= 50.0) | (np.abs(self.ind[:, j100]) <= 50.0)
         except ValueError:
             self.open_gate_blocked = np.zeros(self.T, dtype=bool)
+        # v1.2.0: per-alpha signal streak (consecutive bars, same non-zero signal) -- leak-free
+        am = self.alpha_matrix
+        nz = am != 0
+        cont = np.zeros_like(am, dtype=bool); cont[1:] = (am[1:] == am[:-1]) & nz[1:]
+        self.streak_matrix = np.zeros_like(am, dtype=np.float32)
+        s = np.zeros(am.shape[1], dtype=np.float32)
+        for i in range(am.shape[0]):
+            s = np.where(cont[i], s + 1.0, np.where(nz[i], 1.0, 0.0))
+            self.streak_matrix[i] = s
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -120,6 +134,7 @@ class TradingEnv:
         if target != self.position:
             if self.position != 0:
                 realized = self.position * (self.close[t] - self.entry_price) * self.position_size
+                realized -= self.cost_frac * self.close[t] * self.position_size      # exit cost
                 self.acc.balance += realized
                 self.acc.daily_realized_pnl += realized
                 self.acc.episode_realized_pnl += realized
@@ -127,6 +142,10 @@ class TradingEnv:
             self.position = target
             if target != 0:
                 self.entry_price = float(self.close[t])
+                ecost = self.cost_frac * self.close[t] * self.position_size           # entry cost
+                self.acc.balance -= ecost
+                self.acc.daily_realized_pnl -= ecost
+                self.acc.episode_realized_pnl -= ecost
 
         # 2) advance one bar, mark to market at close[t+1]
         self.ptr = min(t + 1, self.T - 1)
@@ -148,6 +167,10 @@ class TradingEnv:
         if terminated:
             self.acc.episode_breached = True
             reward -= self.breach_penalty
+        elif self.acc.equity >= self.cfg.starting_balance * (1.0 + self.profit_target_frac):
+            terminated = True                        # +10% FTMO Challenge target reached -> PASS
+            self.acc.episode_passed = True
+            reward += self.pass_bonus
         # daily target -> two-phase auto-flat (FTMO)
         if rep.should_auto_flat and self.position != 0:
             realized = self.position * (self.close[self.ptr] - self.entry_price) * self.position_size
@@ -159,7 +182,7 @@ class TradingEnv:
         truncated = bool(self.ptr >= self.end)
         info = {"ptr": self.ptr, "equity": self.acc.equity, "position": self.position,
                 "breach_reasons": rep.reasons, "daily_target_hit": rep.daily_target_hit,
-                "action": a}
+                "action": a, "alpha_streaks": self.streak_matrix[self.ptr].astype(int)}
         return self._obs(), reward, terminated, truncated, info
 
     # ---- observation assembly from cache (no recompute) ----
@@ -176,6 +199,7 @@ class TradingEnv:
             "account_episode": WL.episode_features(self.acc, self.cfg),
             "time": self.time_feats[i],
             "portfolio": self._portfolio_block(),
+            "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
         })
 
     def _portfolio_block(self):

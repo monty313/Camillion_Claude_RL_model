@@ -6,15 +6,15 @@ from src.indicators.sma import sma
 
 
 def test_indicator_column_counts():
-    assert len(base.PER_TF_COLUMNS) == C.N_INDICATORS_PER_TF == 40
-    assert len(base.ALL_INDICATOR_COLUMNS) == C.N_INDICATORS_TOTAL == 200
+    assert len(base.PER_TF_COLUMNS) == C.N_INDICATORS_PER_TF == 44
+    assert len(base.ALL_INDICATOR_COLUMNS) == C.N_INDICATORS_TOTAL == 220
 
 
 def test_outputs_align_with_bar_count():
     for n in (50, 250, 1000):
         close = np.cumsum(np.random.randn(n)) + 100.0
         m = base.compute_timeframe_indicators(close, close, close)
-        assert m.shape == (n, 40)
+        assert m.shape == (n, 44)
         assert m.dtype == np.float32
 
 

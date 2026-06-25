@@ -1,4 +1,4 @@
-# Test 8: the observation shape contract holds (367 float32 finite) and stays
+# Test 8: the observation shape contract holds (451 float32 finite) and stays
 # constant as strategies are added.
 import numpy as np
 from config import constants as C
@@ -14,28 +14,28 @@ class _Buy(BaseStrategy):
         return 1
 
 
-def test_total_size_367():
-    assert C.OBS_TOTAL_SIZE == 367 and C.OBS_SHAPE == (367,)
-    assert len(OC.FEATURE_NAMES) == 367
+def test_total_size_451():
+    assert C.OBS_TOTAL_SIZE == 451 and C.OBS_SHAPE == (451,)
+    assert len(OC.FEATURE_NAMES) == 451
 
 
 def test_block_sizes_sum_to_total():
-    assert sum(s.stop - s.start for s in OC.BLOCK_SLICES.values()) == 367
+    assert sum(s.stop - s.start for s in OC.BLOCK_SLICES.values()) == 451
 
 
 def test_zeros_observation_valid():
     z = B.zeros()
-    assert z.shape == (367,) and z.dtype == np.float32 and np.all(np.isfinite(z))
+    assert z.shape == (451,) and z.dtype == np.float32 and np.all(np.isfinite(z))
 
 
 def test_full_build_finite_and_shaped():
     reg = AlphaRegistry()
     reg.register(_Buy("a"))
-    obs = B.build(indicators=np.full(200, np.nan, np.float32),   # stub NaN -> sanitised
+    obs = B.build(indicators=np.full(220, np.nan, np.float32),   # stub NaN -> sanitised
                   alpha_values=reg.collect_alphas(None),
                   occupancy_mask=reg.occupancy_mask(),
                   account=AccountState(100000.0))
-    assert obs.shape == (367,) and obs.dtype == np.float32 and np.all(np.isfinite(obs))
+    assert obs.shape == (451,) and obs.dtype == np.float32 and np.all(np.isfinite(obs))
 
 
 def test_validate_rejects_wrong_shape():
@@ -53,4 +53,4 @@ def test_shape_constant_as_strategies_added():
         reg.register(_Buy(f"s{i}"))
         obs = B.build(alpha_values=reg.collect_alphas(None),
                       occupancy_mask=reg.occupancy_mask())
-        assert obs.shape == (367,)
+        assert obs.shape == (451,)

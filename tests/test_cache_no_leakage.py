@@ -18,7 +18,7 @@ def _make_1m(n=5000, seed=0):
 
 def test_cache_shape_and_columns():
     mat = build_aligned_indicators(_make_1m(3000))
-    assert mat.shape[1] == C.N_INDICATORS_TOTAL == 200
+    assert mat.shape[1] == C.N_INDICATORS_TOTAL == 220
     assert mat.dtype == np.float32
 
 

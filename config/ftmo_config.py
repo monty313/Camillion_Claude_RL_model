@@ -62,6 +62,7 @@ def load_ftmo_config() -> FTMOConfig:
         trailing_enabled=V.FTMO_TRAILING_ENABLED,
         two_phase_enabled=V.FTMO_TWO_PHASE_ENABLED,
         phase2_trailing_pct=V.FTMO_PHASE2_TRAILING_PCT,
+        profit_target_total_pct=V.FTMO_PROFIT_TARGET_PCT,
     )
 
 

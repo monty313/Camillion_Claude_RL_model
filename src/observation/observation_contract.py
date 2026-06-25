@@ -50,6 +50,7 @@ def _block_names() -> dict[str, list[str]]:
         "account_episode": list(ACCOUNT_EPISODE_NAMES),
         "time": list(TIME_NAMES),
         "portfolio": list(PORTFOLIO_NAMES),
+        "alpha_streak": [f"alpha_streak_{i:02d}" for i in range(C.MAX_STRATEGIES)],
     }
 
 

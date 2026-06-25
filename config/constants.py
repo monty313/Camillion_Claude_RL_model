@@ -57,10 +57,16 @@ N_BB_PER_TF: int = (
     len(BOLLINGER_PERIODS) * len(BOLLINGER_DEVS) * len(BOLLINGER_BANDS)
 )                                                                    # 24
 N_ATR_PER_TF: int = len(ATR_PERIODS) * 2                              # 2 (raw + shifted)
+# --- v1.2.0 alpha-pack extras (appended to each timeframe, in this order) ---
+EXTRA_SMA_SPECS: tuple[tuple[int, int], ...] = ((30, 0), (1, 1))      # SMA30 (close); SMA1 shift1 = prev close
+SMA_HL_PERIOD: int = 4                                                # SMA(4) shift4 on HIGH and LOW
+SMA_HL_SHIFT: int = 4
+SMA_HL_BANDS: tuple[str, ...] = ("high", "low")
+N_EXTRA_PER_TF: int = len(EXTRA_SMA_SPECS) + len(SMA_HL_BANDS)        # 4
 N_INDICATORS_PER_TF: int = (
-    N_SMA_PER_TF + N_CCI_PER_TF + N_RSI_PER_TF + N_ATR_PER_TF + N_BB_PER_TF
-)  # 40
-N_INDICATORS_TOTAL: int = N_INDICATORS_PER_TF * N_TIMEFRAMES          # 200
+    N_SMA_PER_TF + N_CCI_PER_TF + N_RSI_PER_TF + N_ATR_PER_TF + N_BB_PER_TF + N_EXTRA_PER_TF
+)  # 44
+N_INDICATORS_TOTAL: int = N_INDICATORS_PER_TF * N_TIMEFRAMES          # 220
 
 # --- Strategy / alpha slots ---
 MAX_STRATEGIES: int = 64
@@ -80,11 +86,11 @@ N_ACTIONS: int = len(ACTIONS)
 SIGNAL_MEMORY_LAGS: int = 5
 
 # =====================================================================
-# OBSERVATION CONTRACT (v1.1.0) -- block sizes in concatenation order.
-# Total = 367 float32. Adding strategies fills alpha slots and does NOT
+# OBSERVATION CONTRACT (v1.2.0) -- block sizes in concatenation order.
+# Total = 451 float32. Adding strategies fills alpha slots and does NOT
 # change this number. Changing any size here = new contract version.
 # =====================================================================
-OBS_BLOCK_INDICATORS: int = N_INDICATORS_TOTAL   # 200 raw market inputs
+OBS_BLOCK_INDICATORS: int = N_INDICATORS_TOTAL   # 220 raw market inputs (v1.2.0)
 OBS_BLOCK_ALPHA_VALUES: int = MAX_STRATEGIES     # 64  (+1 / -1 / 0)
 OBS_BLOCK_ALPHA_MASK: int = MAX_STRATEGIES       # 64  occupancy (1 assigned / 0 empty)
 OBS_BLOCK_ALPHA_SUMMARY: int = 4                 # buy%, sell%, active%, net%
@@ -94,6 +100,8 @@ OBS_BLOCK_ACCOUNT_DAILY: int = 7
 OBS_BLOCK_ACCOUNT_EPISODE: int = 7
 OBS_BLOCK_TIME: int = 6
 OBS_BLOCK_PORTFOLIO: int = 8
+OBS_BLOCK_ALPHA_STREAK: int = 64   # v1.2.0: per-alpha signal-streak (normalized)
+ALPHA_STREAK_CAP: int = 50         # streak fraction = min(streak, cap)/cap
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -107,9 +115,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("account_episode",  OBS_BLOCK_ACCOUNT_EPISODE),
     ("time",             OBS_BLOCK_TIME),
     ("portfolio",        OBS_BLOCK_PORTFOLIO),
+    ("alpha_streak",     OBS_BLOCK_ALPHA_STREAK),
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 367
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 451 (v1.2.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.1.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.2.0"

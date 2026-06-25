@@ -12,4 +12,4 @@ def test_load_ohlcv_csv_roundtrip():
     assert list(df.columns) == ["open", "high", "low", "close", "volume"]
     assert len(df) == 400 and df.index.is_monotonic_increasing
     ind = build_aligned_indicators(df)
-    assert ind.shape == (400, 200)
+    assert ind.shape == (400, 220)

@@ -1,11 +1,12 @@
 # Phase 2: gravity alpha logic (+1/-1/0 with 30m & 4h agreement) and that it
-# wires into one alpha slot without changing the 367 contract.
+# wires into one alpha slot without changing the 451 contract.
 import numpy as np, pandas as pd
 from src.strategies.context import MarketContext
 from src.strategies.gravity_30m_4h_alpha import Gravity30m4hAlpha, register_gravity_alpha
 from src.strategies.registry import AlphaRegistry
 from src.data.cache_builder import build_aligned_indicators
 from src.env.trading_env import TradingEnv
+from src.observation import observation_contract as OC
 
 
 def _ctx(tf_dirs, g=None):
@@ -49,11 +50,11 @@ def test_gravity_wiring_one_slot():
     assert reg.assigned_count == 1 and slot == 0
     env = TradingEnv(ind, cl, tn, reg, warmup=210)
     o, _ = env.reset()
-    assert o.shape == (367,)                       # contract unchanged
-    assert o[264 + slot] == 1.0                    # mask: slot occupied
+    assert o.shape == (451,)                       # contract unchanged
+    assert o[OC.BLOCK_SLICES["alpha_mask"]][slot] == 1.0                    # mask: slot occupied
     for _ in range(20):
         o, r, te, tr, _ = env.step(1)
-        assert o.shape == (367,) and np.isfinite(r)
+        assert o.shape == (451,) and np.isfinite(r)
 
 
 def test_gravity_vote_modes_debug():
