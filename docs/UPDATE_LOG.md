@@ -105,3 +105,16 @@ pass FTMO-style challenges more consistently.
     NOT re-inflate it via position_size.
 - **C (Conclusion):** Equity, reward, and every FTMO check now run on arithmetically-correct
   money, and the walk-forward scoreboard measures passing at the real +10% challenge target.
+
+## [2026-06-25] Feature — per-asset lot-size calibration (config/asset_specs.py)
+- **I:** PnL = position * price_move * position_size, so a single fixed position_size is
+  sane for FX (~1.1) but absurd for gold (~2000) / US30 (~40000). And at 1 lot EURUSD you'd
+  need ~250 pips for +2.5%/day (impossible). The challenge math was not well-posed.
+- **R:** Operator "per-asset conversion + reachable 2.5%/day, safe under 4%"; leverage 1:100.
+- **A:** `config/asset_specs.py`: per-asset contract_size + typical_daily_range; helpers
+  `value_per_point`, `lots_for_daily_target`, `calibrated_position_size`, `leverage_used`.
+  Calibrates each asset so capturing one typical daily range ~= +2.5% and a full adverse day
+  stays inside 4%. Table: EURUSD 3.12 lots (3.4x), GBPUSD 2.27 (2.9x), XAUUSD 1.25 (2.5x),
+  US30 6.25 (2.5x) -- all << 1:100. +4 tests. 74/74 green.
+- **C:** The challenge math is now WELL-POSED per asset; training on real data can actually
+  reach the target without instant breaches. Prereq for both real-data training and portfolio.
