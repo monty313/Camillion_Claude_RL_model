@@ -105,3 +105,24 @@ pass FTMO-style challenges more consistently.
     NOT re-inflate it via position_size.
 - **C (Conclusion):** Equity, reward, and every FTMO check now run on arithmetically-correct
   money, and the walk-forward scoreboard measures passing at the real +10% challenge target.
+
+## [2026-06-25] Feature — two-phase DAILY engine (+2.5%/day of initial -> +10% over ~4 days)
+- **I:** Operator's strategy: each day make **+2.5% of the INITIAL balance**, bank it (close
+  ALL), and either STOP for the day (default) or optionally CONTINUE under a tight 1% trail.
+  ~4 such days ladder to the +10% pass. Phase-1 risk wall = 4% trailing. Current main had
+  two-phase + trailing OFF (chase-10%), which is the opposite.
+- **R:** Operator directive (matches CLAUDE.md rule #2 "+2.5% -> 1% trailing"). Obs shape
+  (451) unchanged. EXPLICIT FTMO-behaviour change (re-enables trailing + two-phase).
+- **A:**
+  - `daily_target_hit` now = the DAY's gain on **EQUITY** (open profit incl.) >= 2.5% of the
+    **INITIAL** balance (was realized PnL vs day-start). FREE mode + obs target-progress matched.
+  - `variables.py`: `FTMO_TRAILING_ENABLED` & `FTMO_TWO_PHASE_ENABLED` -> **True**; new
+    `FTMO_PHASE2_CONTINUE=False`. `ftmo_config` carries `phase2_continue`.
+  - `TradingEnv`: per-day two-phase state (reset each midnight). Hit +2.5% -> `_flatten()`
+    (close all, bank, single source of truth). Default -> `_day_locked` (no new opens till
+    tomorrow). If `phase2_continue` -> keep trading under a fresh 1% trailing wall from the
+    banked peak; give it back -> bank & lock (NOT a breach). Phase-1 4% trailing stays a breach.
+  - +5 tests (`tests/test_two_phase_daily.py`); verified a 5-day run banks ~+2.5%/day and
+    PASSES at +10% with no breach. **75/75 green.**
+- **C:** The bot now trains under the real daily engine: grind +2.5%/day of initial, protect
+  it, ladder to +10% — the disciplined, low-drawdown path to the challenge pass.

@@ -21,8 +21,10 @@ class FreeModeRules:
         self.cfg = cfg or load_free_config()
 
     def daily_target_hit(self, acc: AccountState) -> bool:
-        bal0 = acc.day_start_balance or acc.starting_balance
-        return bal0 > 0 and (acc.daily_realized_pnl / bal0) >= self.cfg.daily_target_pct / 100.0
+        # day's gain on EQUITY vs 2.5% of the INITIAL balance (consistent with FTMO mode)
+        base = acc.starting_balance or acc.day_start_balance
+        day0 = acc.day_start_balance if acc.day_start_balance is not None else base
+        return base > 0 and (acc.equity - day0) >= base * self.cfg.daily_target_pct / 100.0
 
     def daily_drawdown_breached(self, acc: AccountState) -> bool:
         bal0 = acc.day_start_balance or acc.starting_balance

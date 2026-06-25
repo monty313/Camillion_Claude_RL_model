@@ -30,11 +30,14 @@ def _pct(cfg, name: str, default: float) -> float:
 def daily_features(acc: AccountState, cfg=None) -> np.ndarray:
     """7 daily features (fractions of editable daily limits)."""
     cfg = cfg or load_active_config()
-    bal0 = acc.day_start_balance or acc.starting_balance
+    bal0 = acc.day_start_balance or acc.starting_balance   # day-start = daily DD/loss base
+    init = acc.starting_balance or bal0                    # initial   = daily TARGET base
     win_rate = acc.daily_win_rate
     pnl_frac = (acc.daily_realized_pnl / bal0) if bal0 else 0.0
     target_frac = _pct(cfg, "daily_target_pct", 2.5)
-    target_progress = (pnl_frac / target_frac) if target_frac > 0 else 0.0
+    # daily target progress: the day's gain on EQUITY vs 2.5% of INITIAL (matches daily_target_hit)
+    daily_gain_frac = ((acc.equity - bal0) / init) if init else 0.0
+    target_progress = (daily_gain_frac / target_frac) if target_frac > 0 else 0.0
     dd_limit = _pct(cfg, "daily_drawdown_pct",
                     getattr(cfg, "max_daily_drawdown_pct", 5.0))
     daily_loss_frac = max(0.0, -pnl_frac)
