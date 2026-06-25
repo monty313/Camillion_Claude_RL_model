@@ -48,6 +48,12 @@ FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episod
 # --- Transaction cost (per SIDE, as a fraction of notional; ~0.000035 ~= 0.8 pip round-trip on EURUSD) ---
 TRANSACTION_COST_FRAC_PER_SIDE: float = 0.000035
 
+# --- 5m CCI open-gate threshold (only used when open_gate=True) ---
+# A NEW position may open only when BOTH 5m CCI(30) and CCI(100) are beyond +/-this
+# level (i.e. |cci| > threshold). Bigger = stricter (trades only on stronger moves).
+# 50 = original behaviour; 100 = "both CCIs past +/-100" momentum filter.
+OPEN_GATE_CCI_THRESHOLD: float = 50.0
+
 # --- FREE mode (your own rules) ---
 DAILY_TARGET_PCT: float = 2.5
 MAX_DAILY_DRAWDOWN_PCT: float = 5.0

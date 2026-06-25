@@ -14,11 +14,13 @@ def make_vec_env(indicators, close, time_ns, registry_factory, n_envs: int | Non
     """registry_factory() -> a fresh AlphaRegistry per worker (no shared state)."""
     from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
     n = n_envs or TS.N_ENVS
+    random_window = bool(env_kwargs.pop("random_window", TS.RANDOM_WINDOW_TRAINING))
 
     def _thunk(seed):
         def _f():
             return make_gym_env(indicators, close, time_ns, registry_factory(),
-                                seed=seed, random_window=True, **env_kwargs)
+                                seed=seed, random_window=random_window,
+                                **env_kwargs)
         return _f
 
     backend = SubprocVecEnv if TS.VEC_ENV_BACKEND == "subproc" else DummyVecEnv

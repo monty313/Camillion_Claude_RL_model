@@ -105,3 +105,35 @@ pass FTMO-style challenges more consistently.
     NOT re-inflate it via position_size.
 - **C (Conclusion):** Equity, reward, and every FTMO check now run on arithmetically-correct
   money, and the walk-forward scoreboard measures passing at the real +10% challenge target.
+
+## [2026-06-25] PPO wiring hardening — eval callback, random-window control, real learn-check
+- **I (Issue):** PPO/MLP training wiring had three reliability gaps: (1) `train()` accepted
+  `eval_env` but never used it, so learning regressions were invisible during training;
+  (2) vec-env factory hardcoded `random_window=True` and ignored
+  `training_speed_config.RANDOM_WINDOW_TRAINING`; (3) the overfit test only checked finite
+  outputs after `learn()`, which could pass even if the policy learned nothing.
+- **R (Rule):** Keep reward objective-only, keep the observation contract unchanged, and make
+  training diagnostics verify *actual* learning behavior.
+- **A (Application):**
+  - `src/training/trainer.py`: wired optional SB3 `EvalCallback` into both `train()` and
+    `resume()` when `eval_env` is provided; added `eval_freq` override (defaults to one PPO
+    rollout horizon).
+  - `src/training/vector_env_factory.py`: random-window flag now defaults from
+    `RANDOM_WINDOW_TRAINING`, with caller override via `env_kwargs`, and duplicate-keyword
+    collisions are prevented by popping `random_window` before env construction.
+  - `tests/test_single_batch_overfit.py`: upgraded from "finite output" to a deterministic
+    trend overfit harness that asserts post-train deterministic episode return is higher than
+    pre-train return.
+- **C (Conclusion):** PPO setup is now better wired for detectable improvement and easier
+  to control/reproduce, reducing the risk of shipping a policy that only appears to train.
+
+## [2026-06-25] Feature — configurable 5m CCI open-gate threshold
+- **I:** The open-gate (block new opens unless BOTH 5m CCIs are beyond +/-threshold) had
+  the threshold hardcoded at 50. Operator wants to set it (e.g. +/-100 = only open on
+  stronger momentum) without editing code.
+- **R:** Operator request + existing runtime-tunable-knob pattern. Obs shape (451) and FTMO
+  numbers untouched; gate still off by default; still computed in _precompute (never in step).
+- **A:** Added `OPEN_GATE_CCI_THRESHOLD=50.0` to variables.py and an `open_gate_threshold`
+  param on TradingEnv (defaults to the variable, mirrors the `cost_frac` pattern). _precompute
+  uses it. +1 test (`test_open_gate_threshold_is_configurable`). 71/71 green.
+- **C:** The momentum entry filter is now a dial (50 = original, 100 = stricter) with no retrain.

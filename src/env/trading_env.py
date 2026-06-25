@@ -45,6 +45,7 @@ class TradingEnv:
     def __init__(self, indicators, close, time_ns, alpha_registry, *, cfg=None,
                  position_size: float = 100000.0, breach_penalty: float = 1.0,
                  reward_scale: float = 1.0, open_gate: bool = False,
+                 open_gate_threshold: float | None = None,
                  cost_frac: float | None = None, pass_bonus: float | None = None,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None):
@@ -57,6 +58,9 @@ class TradingEnv:
         self.breach_penalty = float(breach_penalty)
         self.reward_scale = float(reward_scale)   # F2: condition learning signal w/o oversizing
         self.open_gate = bool(open_gate)          # 5m CCI open-gate (off by default)
+        # |cci| must exceed this for BOTH 5m CCIs to allow a new open (config-driven, tunable)
+        self.open_gate_threshold = float(
+            V.OPEN_GATE_CCI_THRESHOLD if open_gate_threshold is None else open_gate_threshold)
         self.cost_frac = float(V.TRANSACTION_COST_FRAC_PER_SIDE if cost_frac is None else cost_frac)
         self.pass_bonus = float(self.breach_penalty if pass_bonus is None else pass_bonus)
         self.profit_target_frac = float(getattr(self.cfg, 'profit_target_total_pct', 10.0)) / 100.0
@@ -83,12 +87,14 @@ class TradingEnv:
         self.sig_acc = accuracy_features(self.net_signal, self.close)        # (T,2) leak-free
         self.time_feats = np.stack([OB.time_features(pd.Timestamp(self.time_ns[i]))
                                     for i in range(T)]).astype(np.float32)    # (T,6)
-        # 5m CCI open-gate mask: True where EITHER 5m CCI sits in [-50, 50] (flat/undecided
-        # short-term market) -> new directional opens are forbidden when self.open_gate is on.
+        # 5m CCI open-gate mask: True where EITHER 5m CCI sits within +/-threshold
+        # (flat/undecided short-term market) -> new directional opens are forbidden when
+        # self.open_gate is on. Allowed only when BOTH |cci| > threshold (a strong move).
+        thr = self.open_gate_threshold
         try:
             j30 = ALL_INDICATOR_COLUMNS.index("5m__cci30_raw")
             j100 = ALL_INDICATOR_COLUMNS.index("5m__cci100_raw")
-            self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= 50.0) | (np.abs(self.ind[:, j100]) <= 50.0)
+            self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= thr) | (np.abs(self.ind[:, j100]) <= thr)
         except ValueError:
             self.open_gate_blocked = np.zeros(self.T, dtype=bool)
         # v1.2.0: per-alpha signal streak (consecutive bars, same non-zero signal) -- leak-free
