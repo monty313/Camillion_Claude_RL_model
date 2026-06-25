@@ -36,6 +36,12 @@ PORTFOLIO_NAMES = (
     "unrealized_pnl_pct", "avg_position_age_pct", "largest_position_dir",
     "equity_ratio", "balance_ratio",
 )
+# v1.3.0 SIZING block: 6 what-if lot rungs + 4 context, all as fractions of INITIAL balance.
+SIZING_NAMES = (
+    "size_move_pct_lot0_01", "size_move_pct_lot0_1", "size_move_pct_lot0_5",
+    "size_move_pct_lot1", "size_move_pct_lot2", "size_move_pct_lot4",
+    "daily_target_remaining_pct", "dd_room_pct", "active_lots_norm", "active_move_value_pct",
+)
 
 
 def _block_names() -> dict[str, list[str]]:
@@ -51,6 +57,7 @@ def _block_names() -> dict[str, list[str]]:
         "time": list(TIME_NAMES),
         "portfolio": list(PORTFOLIO_NAMES),
         "alpha_streak": [f"alpha_streak_{i:02d}" for i in range(C.MAX_STRATEGIES)],
+        "sizing": list(SIZING_NAMES),
     }
 
 
