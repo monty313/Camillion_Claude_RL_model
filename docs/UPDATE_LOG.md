@@ -80,3 +80,28 @@ pass FTMO-style challenges more consistently.
   + clap + live brief). 48/48 tests.
 - **C:** The Barbershop can fully audit a run, and we can put an honest pass-rate
   number on the policy over unseen walk-forward windows.
+
+## [2026-06-25] Fix — realized-PnL double-count + walk-forward pass threshold (on 451-obs v1.2.0)
+- **I (Issue):** Two correctness bugs survived into the 14-alpha v1.2.0 (451-obs) base:
+  1. **Realized PnL was double-counted.** In `env.step()` the realize block added
+     `realized` to balance/daily/episode AND then called `record_close()`, which adds the
+     same three again; the two-phase auto-flat block double-added balance. Every closed
+     trade moved the account by **2x** its true PnL — corrupting equity, reward, the daily
+     accounting, and EVERY FTMO breach/target check.
+  2. **walk_forward measured the wrong pass threshold** — it scored a window "passed" at
+     **+2.5%** (the DAILY target) instead of the **+10%** challenge target.
+- **R (Rule):** CLAUDE.md FTMO numbers untouched; obs shape (451, v1.2.0) untouched;
+  reward = equity-change only; "pass-rate first". Entry/exit transaction costs preserved.
+- **A (Application):**
+  - `record_close()` is now the SINGLE source of truth for balance/daily/episode realized
+    PnL + equity + tallies. Removed the manual `+=` lines in BOTH the realize block and the
+    two-phase auto-flat block. The one-time entry-cost `-= ecost` and the exit-cost baked
+    into `realized` are unchanged (a round trip still pays both sides).
+  - `walk_forward.run()` now scores a pass as "env set `episode_passed` (+10% reached) OR
+    final return >= target, with NO breach"; default threshold resolves to
+    `cfg.profit_target_total_pct` (+10%). `target_pct` still overridable. Detail gains `hit_target`.
+  - +2 tests (`tests/test_no_double_count.py`). NOTE: per-step reward is now ~2x smaller than
+    before the fix — that is correct (the old reward was inflated by the double-count); do
+    NOT re-inflate it via position_size.
+- **C (Conclusion):** Equity, reward, and every FTMO check now run on arithmetically-correct
+  money, and the walk-forward scoreboard measures passing at the real +10% challenge target.

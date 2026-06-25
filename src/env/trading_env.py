@@ -135,10 +135,10 @@ class TradingEnv:
             if self.position != 0:
                 realized = self.position * (self.close[t] - self.entry_price) * self.position_size
                 realized -= self.cost_frac * self.close[t] * self.position_size      # exit cost
-                self.acc.balance += realized
-                self.acc.daily_realized_pnl += realized
-                self.acc.episode_realized_pnl += realized
-                self.th.record_close(self.acc, realized, bar_index=t)  # also marks equity
+                # record_close is the SINGLE source of truth: it updates balance +
+                # daily/episode realized PnL + equity + tallies. Do NOT also add them
+                # here -- that double-counted every closed trade (banked 2x the PnL).
+                self.th.record_close(self.acc, realized, bar_index=t)
             self.position = target
             if target != 0:
                 self.entry_price = float(self.close[t])
@@ -174,8 +174,7 @@ class TradingEnv:
         # daily target -> two-phase auto-flat (FTMO)
         if rep.should_auto_flat and self.position != 0:
             realized = self.position * (self.close[self.ptr] - self.entry_price) * self.position_size
-            self.acc.balance += realized
-            self.th.record_close(self.acc, realized, bar_index=self.ptr)
+            self.th.record_close(self.acc, realized, bar_index=self.ptr)  # single source of truth (no manual +=)
             self.position = 0
             self.acc.equity = self.acc.balance
 
