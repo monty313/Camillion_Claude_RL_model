@@ -42,6 +42,11 @@ SIZING_NAMES = (
     "size_move_pct_lot1", "size_move_pct_lot2", "size_move_pct_lot4",
     "daily_target_remaining_pct", "dd_room_pct", "active_lots_norm", "active_move_value_pct",
 )
+# v1.4.0 CROSS-ASSET block: asset-class one-hot (contract order) + ATR-normalized movement +
+# sessions. ATR-normalized parts are scale-free -> comparable across the whole FTMO universe.
+CROSS_ASSET_NAMES = tuple(f"class_{c}" for c in C.ASSET_CLASSES) + (
+    "move_in_atr", "atr_pct_price", "atr_regime", "session_asian", "session_london_ny_overlap",
+)
 
 
 def _block_names() -> dict[str, list[str]]:
@@ -58,6 +63,7 @@ def _block_names() -> dict[str, list[str]]:
         "portfolio": list(PORTFOLIO_NAMES),
         "alpha_streak": [f"alpha_streak_{i:02d}" for i in range(C.MAX_STRATEGIES)],
         "sizing": list(SIZING_NAMES),
+        "cross_asset": list(CROSS_ASSET_NAMES),
     }
 
 

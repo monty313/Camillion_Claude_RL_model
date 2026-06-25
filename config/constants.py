@@ -109,6 +109,13 @@ ALPHA_STREAK_CAP: int = 50         # streak fraction = min(streak, cap)/cap
 # NOT yet an action, so the bot learns the size<->risk/reward relationship before it can use it.
 SIZING_LOTS_LADDER: tuple[float, ...] = (0.01, 0.1, 0.5, 1.0, 2.0, 4.0)
 OBS_BLOCK_SIZING: int = len(SIZING_LOTS_LADDER) + 4  # 6 ladder + target_remaining,dd_room,active_lots,active_move
+# --- v1.4.0: CROSS-ASSET perception so ONE policy can compare opportunity/risk across the FULL
+# FTMO broker (forex/pairs, indices, metals, energies, crypto -- 130+ instruments) in COMMON
+# units. Asset-class one-hot + ATR-normalized movement (move-in-ATRs, ATR/price, ATR-regime) +
+# sessions (Asian, London-NY overlap). The ATR-normalized features are SCALE-FREE, so they read
+# the same on a 1.1 pair, a 40000 index or a 2000 metal -> one policy generalizes to any symbol. ---
+ASSET_CLASSES: tuple[str, ...] = ("pair", "index", "metal", "energy", "crypto")  # one-hot ORDER (contract)
+OBS_BLOCK_CROSS_ASSET: int = len(ASSET_CLASSES) + 5  # classes + (move/ATR, ATR/price, ATR-regime) + (asian, overlap)
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -124,9 +131,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("portfolio",        OBS_BLOCK_PORTFOLIO),
     ("alpha_streak",     OBS_BLOCK_ALPHA_STREAK),
     ("sizing",           OBS_BLOCK_SIZING),       # v1.3.0 (appended -> 0..450 indices unchanged)
+    ("cross_asset",      OBS_BLOCK_CROSS_ASSET),  # v1.4.0 (appended -> 0..460 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 461 (v1.3.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 471 (v1.4.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.3.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.4.0"

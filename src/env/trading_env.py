@@ -123,6 +123,35 @@ class TradingEnv:
         cser = pd.Series(self.close)
         self.ref_move = (cser.rolling(240, min_periods=1).max()
                          - cser.rolling(240, min_periods=1).min()).to_numpy()
+        self._precompute_cross_asset()
+
+    # ---- v1.4.0: cross-asset perception (leak-free), precomputed once ----
+    def _precompute_cross_asset(self):
+        """asset-class one-hot + ATR-normalized movement + sessions -> (T, OBS_BLOCK_CROSS_ASSET).
+        ATR-normalized features are SCALE-FREE so one policy reads any FTMO instrument the same."""
+        T = self.T
+        onehot = np.array(A.class_one_hot(self.symbol), dtype=np.float64)        # constant per symbol
+        # ATR (1m, raw) from the cache; where it is missing / zero / non-finite, use the recent
+        # realized range as a volatility proxy so these features are always meaningful.
+        try:
+            atr = self.ind[:, ALL_INDICATOR_COLUMNS.index("1m__atr14_raw")].astype(np.float64)
+        except ValueError:
+            atr = self.ref_move.astype(np.float64)
+        bad = ~(np.isfinite(atr) & (atr > 0))
+        atr = np.where(bad, self.ref_move.astype(np.float64), atr)
+        atr = np.where(np.isfinite(atr) & (atr > 0), atr, np.nan)   # final guard
+        c = self.close
+        mv = c - pd.Series(c).shift(30).to_numpy()                              # signed recent move
+        move_in_atr = np.clip(np.nan_to_num(mv / atr) / 3.0, -1.0, 1.0)         # ~[-1,1], +/-3 ATR caps
+        atr_pct_price = np.clip(np.nan_to_num(atr / c) * 100.0, 0.0, 1.0)       # vol as % (scale-free)
+        atr_avg = pd.Series(atr).rolling(240, min_periods=1).mean().to_numpy()
+        atr_regime = np.clip(np.nan_to_num(atr / atr_avg) / 3.0, 0.0, 1.0)      # ~0.33 = normal vol
+        hours = pd.to_datetime(self.time_ns).hour.to_numpy()
+        asian = ((hours >= 0) & (hours < 9)).astype(np.float64)                 # ~Tokyo/Sydney
+        overlap = ((hours >= 12) & (hours < 16)).astype(np.float64)            # London-NY overlap (prime)
+        self.cross_asset_matrix = np.column_stack([
+            np.tile(onehot, (T, 1)), move_in_atr, atr_pct_price, atr_regime, asian, overlap,
+        ]).astype(np.float32)
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -260,6 +289,7 @@ class TradingEnv:
             "portfolio": self._portfolio_block(),
             "sizing": WL.sizing_features(self.acc, self.cfg, value_per_point=self.value_per_point,
                                          ref_move=float(self.ref_move[i]), position_size=self.position_size),
+            "cross_asset": self.cross_asset_matrix[i],
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
         })
 
