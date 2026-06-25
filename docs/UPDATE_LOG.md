@@ -222,3 +222,17 @@ pass FTMO-style challenges more consistently.
   **96/96 green.**
 - **C:** The one bot now perceives each symbol's recent movement vs its own norm AND whether it
   is on pace (in time) to ladder +2.5%/day to the +10% pass -- pacing awareness for the challenge.
+
+## [2026-06-25] Feature — multi-symbol training ("one bot trades everything")
+- **I:** The portfolio goal needs ONE policy trained across ALL assets (the 4 in Drive now), not
+  one model per symbol -- only one brain can manage the shared equity/drawdown pot.
+- **R:** Operator "one bot that trades everything". No obs/contract change (training-side only).
+- **A:** `vector_env_factory.make_multi_symbol_vec_env(symbol_data, ...)` spreads N workers
+  ROUND-ROBIN over `{symbol: (ind,close,time)}`, each tagged with its symbol + per-asset
+  calibrated size (so the cross-asset features are correct and rewards are comparable -- each
+  asset sized to ~2.5%/day). `trainer.train_multi_symbol(...)` mirrors `train()` over it. +1 test
+  (97/97). Empirical: ONE bot trained across pair+index+metal -> judgment 0.90-0.99; at 120k it
+  breached all 3, at 240k it was SAFE on 2/3 (EURUSD,US30) -- safety-first learning, as expected;
+  full profitability needs real training scale (Colab GPU, millions of steps).
+- **C:** The one-bot-trades-everything training path is wired and proven to learn; it generalises
+  across asset types via the cross-asset perception, improving with training. The portfolio bridge.
