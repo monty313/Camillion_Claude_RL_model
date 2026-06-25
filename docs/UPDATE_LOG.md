@@ -201,5 +201,9 @@ pass FTMO-style challenges more consistently.
   atr_pct ~0.54. ATR falls back to the realized range where the cache lacks ATR. Leak-free
   (precompute only). `ASSET_CLASSES` lives in constants (contract). +5 tests; constants/contract/
   builder/env + shape tests (461->471) + OBSERVATION_CONTRACT.md updated. **90/90 green.**
+- **Movement logic (the 4 we trade):** per-asset `typical_atr` = typical_daily_range/sqrt(1440)
+  (EURUSD 0.00021 .. US30 10.54) anchors the vol REGIME to how each asset NORMALLY moves, and is
+  the ATR fallback. Profiles documented in asset_specs (EUR low-vol/mean-revert, GBP livelier, gold
+  trends/risk-off, US30 trends/NY). +1 test. 91/91 green.
 - **C:** One policy can now perceive ANY FTMO instrument in COMMON units (type + volatility +
   session) -- the perception bridge from single-asset to a mixed portfolio.

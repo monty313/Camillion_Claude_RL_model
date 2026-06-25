@@ -76,6 +76,7 @@ class TradingEnv:
             self.value_per_point = float(A.SPECS[symbol].contract_size)
         else:
             self.value_per_point = float(self.position_size) or 1.0
+        self._typical_atr = A.typical_atr(symbol)   # per-asset "how it normally moves" baseline (or None)
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -137,15 +138,20 @@ class TradingEnv:
             atr = self.ind[:, ALL_INDICATOR_COLUMNS.index("1m__atr14_raw")].astype(np.float64)
         except ValueError:
             atr = self.ref_move.astype(np.float64)
+        # fallback when the cache has no ATR: this asset's typical 1m ATR (how it normally moves)
+        # if the symbol is known, else the recent realized range.
+        fb = float(self._typical_atr) if self._typical_atr else None
         bad = ~(np.isfinite(atr) & (atr > 0))
-        atr = np.where(bad, self.ref_move.astype(np.float64), atr)
+        atr = np.where(bad, (fb if fb else self.ref_move.astype(np.float64)), atr)
         atr = np.where(np.isfinite(atr) & (atr > 0), atr, np.nan)   # final guard
         c = self.close
         mv = c - pd.Series(c).shift(30).to_numpy()                              # signed recent move
         move_in_atr = np.clip(np.nan_to_num(mv / atr) / 3.0, -1.0, 1.0)         # ~[-1,1], +/-3 ATR caps
         atr_pct_price = np.clip(np.nan_to_num(atr / c) * 100.0, 0.0, 1.0)       # vol as % (scale-free)
-        atr_avg = pd.Series(atr).rolling(240, min_periods=1).mean().to_numpy()
-        atr_regime = np.clip(np.nan_to_num(atr / atr_avg) / 3.0, 0.0, 1.0)      # ~0.33 = normal vol
+        # vol REGIME = current ATR vs how THIS asset normally moves (per-asset typical ATR if the
+        # symbol is known, else a rolling average). ~0.33 = normal, higher = unusually volatile.
+        ref = np.full(T, fb) if fb else pd.Series(atr).rolling(240, min_periods=1).mean().to_numpy()
+        atr_regime = np.clip(np.nan_to_num(atr / ref) / 3.0, 0.0, 1.0)
         hours = pd.to_datetime(self.time_ns).hour.to_numpy()
         asian = ((hours >= 0) & (hours < 9)).astype(np.float64)                 # ~Tokyo/Sydney
         overlap = ((hours >= 12) & (hours < 16)).astype(np.float64)            # London-NY overlap (prime)

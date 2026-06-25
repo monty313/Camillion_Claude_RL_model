@@ -18,8 +18,11 @@
 # =====================================================================
 """Per-asset contract specs and lot-size calibration (so +2.5%/day is well-posed)."""
 from __future__ import annotations
+import math
 from dataclasses import dataclass
 from config import constants as C
+
+_BARS_PER_DAY = 1440   # 1-minute bars/day -> ties the daily range to a typical 1m ATR
 
 ASSET_CLASSES = C.ASSET_CLASSES   # contract owns the one-hot order: pair/index/metal/energy/crypto
 
@@ -38,12 +41,25 @@ class AssetSpec:
 
 # contract_size: FX standard lot = 100,000 units (1.0 price move = $100,000);
 # gold = 100 oz/lot ($1 move = $100); US30 ~ $1/point. typical_daily_range in PRICE.
+# MOVEMENT PROFILES (the 4 we trade -- "how they move"):
+#   EURUSD ~80 pips/day  -- lowest vol, mean-reverts intraday, most active London-NY
+#   GBPUSD ~110 pips/day -- more volatile than EUR ("the dragon"), London-NY
+#   XAUUSD ~$20/day      -- trends hard, risk-off haven, volatile, London-NY (+ some Asian)
+#   US30   ~400 pts/day  -- trends, gaps, risk-on, NY-session driven
 SPECS: dict[str, AssetSpec] = {
     "EURUSD": AssetSpec("EURUSD", 100_000.0, 0.0001, 0.0080, asset_class="pair"),   # ~80 pips
     "GBPUSD": AssetSpec("GBPUSD", 100_000.0, 0.0001, 0.0110, asset_class="pair"),   # ~110 pips
     "XAUUSD": AssetSpec("XAUUSD", 100.0,     0.10,   20.0,   asset_class="metal"),  # ~$20/day
     "US30":   AssetSpec("US30",   1.0,       1.0,    400.0,  asset_class="index"),  # ~400 pts/day
 }
+
+
+def typical_atr(symbol: str | None) -> float | None:
+    """A principled per-asset 1-minute ATR baseline = typical_daily_range / sqrt(bars_per_day)
+    (random-walk scaling: a day's range ~ ATR_1m * sqrt(1440)). This is the bot's anchor for
+    'how this asset normally moves', so 'volatility regime' = current ATR vs this baseline."""
+    s = SPECS.get(symbol) if symbol else None
+    return (s.typical_daily_range / math.sqrt(_BARS_PER_DAY)) if s else None
 
 
 # Broker symbol roots for class inference -- the REAL challenge trades the FULL FTMO broker
