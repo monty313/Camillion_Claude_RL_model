@@ -23,8 +23,12 @@ class FTMORules:
         self.cfg = cfg or load_ftmo_config()
 
     def daily_target_hit(self, acc: AccountState) -> bool:
-        bal0 = acc.day_start_balance or acc.starting_balance
-        return bal0 > 0 and (acc.daily_realized_pnl / bal0) >= self.cfg.daily_target_pct / 100.0
+        # Daily target = +2.5% of the INITIAL balance, measured as the DAY's gain on
+        # EQUITY (open profit included) so the engine can auto-bank the moment you're up
+        # 2.5% on the day. Fixed $/day -> ~4 such days ladder cleanly to the +10% pass.
+        base = acc.starting_balance or acc.day_start_balance
+        day0 = acc.day_start_balance if acc.day_start_balance is not None else base
+        return base > 0 and (acc.equity - day0) >= base * self.cfg.daily_target_pct / 100.0
 
     def daily_drawdown_breached(self, acc: AccountState) -> bool:
         bal0 = acc.day_start_balance or acc.starting_balance

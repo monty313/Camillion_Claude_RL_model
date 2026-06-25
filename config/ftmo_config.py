@@ -36,6 +36,7 @@ class FTMOConfig:
     trailing_enabled: bool = True
     two_phase_enabled: bool = True
     phase2_trailing_pct: float = 1.0
+    phase2_continue: bool = False          # after banking +2.5%: keep trading under the 1% trail?
     profit_target_total_pct: float = 10.0
 
 
@@ -62,6 +63,7 @@ def load_ftmo_config() -> FTMOConfig:
         trailing_enabled=V.FTMO_TRAILING_ENABLED,
         two_phase_enabled=V.FTMO_TWO_PHASE_ENABLED,
         phase2_trailing_pct=V.FTMO_PHASE2_TRAILING_PCT,
+        phase2_continue=getattr(V, "FTMO_PHASE2_CONTINUE", False),
         profit_target_total_pct=V.FTMO_PROFIT_TARGET_PCT,
     )
 
