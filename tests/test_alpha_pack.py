@@ -1,4 +1,4 @@
-# The 14-alpha pack: per-family logic truth-tables + full-pack wiring (15 alphas, 471 obs).
+# The 14-alpha pack: per-family logic truth-tables + full-pack wiring (15 alphas, 479 obs).
 import numpy as np, pandas as pd
 from src.strategies.context import MarketContext
 from src.strategies.registry import AlphaRegistry
@@ -39,7 +39,7 @@ def test_sma_reversion_logic():
             "30m__sma_p1_s0": 99, "30m__sma_p30_s0": 100, "30m__sma_p1_s1": 101}
     assert a.compute_signal(_ctx(bear)) == -1
 
-def test_alpha_pack_wiring_and_471():
+def test_alpha_pack_wiring_and_479():
     n = 3000; idx = pd.date_range("2026-01-01", periods=n, freq="1min")
     cl = 100 + np.cumsum(np.random.default_rng(3).standard_normal(n) * 0.04 + 0.01)
     df = pd.DataFrame({"open": cl, "high": cl + .05, "low": cl - .05, "close": cl, "volume": 1.}, index=idx)
@@ -48,7 +48,7 @@ def test_alpha_pack_wiring_and_471():
     env = TradingEnv(ind, df["close"].values.astype("float32"),
                      idx.values.astype("datetime64[ns]").astype("int64"), reg, warmup=300)
     o, _ = env.reset()
-    assert o.shape == (471,) and np.all(np.isfinite(o))
+    assert o.shape == (479,) and np.all(np.isfinite(o))
     assert o[OC.BLOCK_SLICES["alpha_mask"]][:15].sum() == 15           # all 15 slots occupied
     assert np.all(np.isfinite(o[OC.BLOCK_SLICES["alpha_streak"]]))     # streak block present
     fires = (env.alpha_matrix[300:, :15] != 0).sum(axis=0)

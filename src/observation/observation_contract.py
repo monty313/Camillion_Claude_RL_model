@@ -47,6 +47,13 @@ SIZING_NAMES = (
 CROSS_ASSET_NAMES = tuple(f"class_{c}" for c in C.ASSET_CLASSES) + (
     "move_in_atr", "atr_pct_price", "atr_regime", "session_asian", "session_london_ny_overlap",
 )
+# v1.5.0 RECENT-CONTEXT block: recent daily movement RELATIVE to the symbol's own average +
+# a time-aware "am I on pace to pass" read.
+RECENT_CONTEXT_NAMES = (
+    "week_avg_range_vs_typical", "prev_day_range_vs_week", "prev2_day_range_vs_week",
+    "today_range_so_far_vs_week", "days_elapsed_norm", "episode_return_so_far",
+    "pace_vs_2_5pct_plan", "challenge_target_remaining",
+)
 
 
 def _block_names() -> dict[str, list[str]]:
@@ -64,6 +71,7 @@ def _block_names() -> dict[str, list[str]]:
         "alpha_streak": [f"alpha_streak_{i:02d}" for i in range(C.MAX_STRATEGIES)],
         "sizing": list(SIZING_NAMES),
         "cross_asset": list(CROSS_ASSET_NAMES),
+        "recent_context": list(RECENT_CONTEXT_NAMES),
     }
 
 

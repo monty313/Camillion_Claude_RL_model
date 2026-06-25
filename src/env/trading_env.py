@@ -77,6 +77,8 @@ class TradingEnv:
         else:
             self.value_per_point = float(self.position_size) or 1.0
         self._typical_atr = A.typical_atr(symbol)   # per-asset "how it normally moves" baseline (or None)
+        self._typical_range = (A.SPECS[symbol].typical_daily_range
+                               if (symbol and symbol in A.SPECS) else None)  # symbol's long-run daily range
         self.warmup = int(warmup)
         self.window = window
         self.random_window = bool(random_window)
@@ -125,6 +127,27 @@ class TradingEnv:
         self.ref_move = (cser.rolling(240, min_periods=1).max()
                          - cser.rolling(240, min_periods=1).min()).to_numpy()
         self._precompute_cross_asset()
+        self._precompute_recent_context()
+
+    # ---- v1.5.0: recent daily-movement history (leak-free), precomputed once ----
+    def _precompute_recent_context(self):
+        """Daily RANGE history for the recent_context block: prior-day ranges + last-week avg
+        + today's range so far. Daily range = (max - min) of close per calendar day. Leak-free:
+        prior days are complete; today's range is expanding up to t; week-avg uses prior days."""
+        df = pd.DataFrame({"close": self.close, "day": self._dates})
+        gb = df.groupby("day", sort=False)["close"]
+        self._today_sofar = (gb.cummax() - gb.cummin()).to_numpy()              # expanding intraday range
+        day_full = (gb.max() - gb.min()).to_numpy()                            # full-day range, day order
+        p = df.groupby("day", sort=False).ngroup().to_numpy()                  # day index per bar
+        n = len(day_full)
+        prev_d = np.zeros(n);  prev_d[1:] = day_full[:-1]                      # day i -> range of day i-1
+        prev2_d = np.zeros(n); prev2_d[2:] = day_full[:-2]
+        week_d = np.array([day_full[max(0, i - 5):i].mean() if i >= 1 else day_full[i]
+                           for i in range(n)])                                 # mean of up to 5 PRIOR days
+        self._prev_day = prev_d[p]
+        self._prev2_day = prev2_d[p]
+        # day 0 has no prior days -> use today's expanding range (leak-free) instead of its full range
+        self._week_avg = np.where(p == 0, self._today_sofar, week_d[p])
 
     # ---- v1.4.0: cross-asset perception (leak-free), precomputed once ----
     def _precompute_cross_asset(self):
@@ -175,6 +198,7 @@ class TradingEnv:
         self.position = 0
         self.entry_price = float(self.close[self.ptr])
         self._cur_date = self._dates[self.ptr]
+        self._days_elapsed = 0          # trading days into this episode (for the time-to-pass pace)
         self._reset_phase2()
         return self._obs(), {"ptr": self.ptr}
 
@@ -241,6 +265,7 @@ class TradingEnv:
             self.acc.reset_day()
             self._reset_phase2()
             self._cur_date = self._dates[self.ptr]
+            self._days_elapsed += 1     # one more trading day into the episode
 
         # 5) breach check (FTMO/free) -> terminate with penalty (still objective)
         rep = BD.detect(self.acc, self.cfg)
@@ -296,6 +321,10 @@ class TradingEnv:
             "sizing": WL.sizing_features(self.acc, self.cfg, value_per_point=self.value_per_point,
                                          ref_move=float(self.ref_move[i]), position_size=self.position_size),
             "cross_asset": self.cross_asset_matrix[i],
+            "recent_context": WL.recent_context_features(
+                self.acc, self.cfg, week_avg=float(self._week_avg[i]), prev_day=float(self._prev_day[i]),
+                prev2=float(self._prev2_day[i]), today_sofar=float(self._today_sofar[i]),
+                typical_range=self._typical_range, days_elapsed=self._days_elapsed),
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
         })
 

@@ -138,3 +138,34 @@ def sizing_features(acc: AccountState, cfg=None, *, value_per_point: float,
     active_norm = np.clip(active_lots / max(C.SIZING_LOTS_LADDER), 0.0, 1.0)
     active_move = np.clip(one_lot_move * active_lots / init, 0.0, 1.0)
     return np.array([*ladder, target_remaining, dd_room, active_norm, active_move], dtype=np.float32)
+
+
+def recent_context_features(acc: AccountState, cfg=None, *, week_avg: float, prev_day: float,
+                            prev2: float, today_sofar: float, typical_range: float | None,
+                            days_elapsed: float) -> np.ndarray:
+    """v1.5.0 RECENT-CONTEXT block (8 floats). Recent DAILY movement expressed RELATIVE to the
+    symbol's own average (so it is scale-free / comparable across the universe) + a TIME-aware
+    'am I on pace to pass' read. Context only -- the bot is never rewarded from these.
+      week_avg/prev_day/prev2/today_sofar: recent daily RANGES in PRICE (leak-free, from cache).
+      typical_range: the symbol's long-run typical daily range (or None).
+      days_elapsed:  trading days into the current episode."""
+    cfg = cfg or load_active_config()
+    eps = 1e-9
+    wk = max(float(week_avg), eps)
+    typ = float(typical_range) if typical_range else wk
+    week_vs_typical = np.clip(wk / max(typ, eps) / 2.0, 0.0, 1.0)        # ~0.5 = a normal week
+    prev_vs_week = np.clip(float(prev_day) / wk / 2.0, 0.0, 1.0)         # was yesterday big vs the week?
+    prev2_vs_week = np.clip(float(prev2) / wk / 2.0, 0.0, 1.0)
+    today_vs_week = np.clip(float(today_sofar) / wk / 2.0, 0.0, 1.0)     # how active is today vs the week?
+    # TIME-to-pass pace: where am I vs the +2.5%/day -> +10% plan, given days elapsed?
+    init = acc.starting_balance or 1.0
+    ret = (acc.equity - init) / init if init else 0.0
+    target = _pct(cfg, "profit_target_total_pct", getattr(cfg, "daily_target_pct", 2.5))
+    daily_t = _pct(cfg, "daily_target_pct", 2.5)
+    d = max(1.0, float(days_elapsed))
+    days_norm = np.clip(float(days_elapsed) / 20.0, 0.0, 1.0)
+    return_so_far = np.clip(ret, -1.0, 1.0)
+    pace = np.clip((ret / (daily_t * d)) / 2.0, 0.0, 1.0) if daily_t > 0 else 0.0   # 0.5 = exactly on plan
+    remaining = np.clip(target - ret, 0.0, 1.0)
+    return np.array([week_vs_typical, prev_vs_week, prev2_vs_week, today_vs_week,
+                     days_norm, return_so_far, pace, remaining], dtype=np.float32)

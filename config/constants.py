@@ -116,6 +116,10 @@ OBS_BLOCK_SIZING: int = len(SIZING_LOTS_LADDER) + 4  # 6 ladder + target_remaini
 # the same on a 1.1 pair, a 40000 index or a 2000 metal -> one policy generalizes to any symbol. ---
 ASSET_CLASSES: tuple[str, ...] = ("pair", "index", "metal", "energy", "crypto")  # one-hot ORDER (contract)
 OBS_BLOCK_CROSS_ASSET: int = len(ASSET_CLASSES) + 5  # classes + (move/ATR, ATR/price, ATR-regime) + (asian, overlap)
+# --- v1.5.0: RECENT-CONTEXT block (8 floats). Recent DAILY movement (prior days + last-week avg),
+# expressed RELATIVE to the symbol's own average so it is comparable across the universe, plus a
+# TIME-aware "am I on pace to pass" read (days elapsed, return so far, pace vs +2.5%/day, remaining). ---
+OBS_BLOCK_RECENT_CONTEXT: int = 8
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -132,9 +136,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("alpha_streak",     OBS_BLOCK_ALPHA_STREAK),
     ("sizing",           OBS_BLOCK_SIZING),       # v1.3.0 (appended -> 0..450 indices unchanged)
     ("cross_asset",      OBS_BLOCK_CROSS_ASSET),  # v1.4.0 (appended -> 0..460 indices unchanged)
+    ("recent_context",   OBS_BLOCK_RECENT_CONTEXT),  # v1.5.0 (appended -> 0..470 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 471 (v1.4.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 479 (v1.5.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.4.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.5.0"

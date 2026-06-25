@@ -1,4 +1,4 @@
-# v1.4.0 CROSS-ASSET perception block: asset-class one-hot (covers the FULL FTMO broker via a
+# v1.5.0 CROSS-ASSET perception block: asset-class one-hot (covers the FULL FTMO broker via a
 # name classifier) + ATR-normalized movement (scale-free -> comparable across pairs/indices/
 # metals/energies/crypto) + sessions (Asian, London-NY overlap). Lets ONE policy generalize.
 import numpy as np
@@ -11,7 +11,7 @@ from src.observation import observation_contract as OC
 
 
 def test_block_in_contract_v1_4_0():
-    assert C.OBSERVATION_CONTRACT_VERSION == "v1.4.0" and C.OBS_TOTAL_SIZE == 471
+    assert C.OBSERVATION_CONTRACT_VERSION == "v1.5.0" and C.OBS_TOTAL_SIZE == 479
     assert C.OBS_BLOCK_CROSS_ASSET == len(C.ASSET_CLASSES) + 5
     sl = OC.BLOCK_SLICES["cross_asset"]
     assert sl.stop - sl.start == C.OBS_BLOCK_CROSS_ASSET
@@ -45,7 +45,7 @@ def test_class_one_hot_in_obs_per_symbol():
         block = obs[sl]
         assert block[C.ASSET_CLASSES.index(klass)] == 1.0
         assert block[:k].sum() == 1.0                # exactly one class set
-        assert obs.shape == (471,) and np.all(np.isfinite(obs))
+        assert obs.shape == (479,) and np.all(np.isfinite(obs))
 
 
 def test_atr_normalized_features_present_and_bounded():

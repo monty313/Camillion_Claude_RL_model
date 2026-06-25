@@ -207,3 +207,18 @@ pass FTMO-style challenges more consistently.
   trends/risk-off, US30 trends/NY). +1 test. 91/91 green.
 - **C:** One policy can now perceive ANY FTMO instrument in COMMON units (type + volatility +
   session) -- the perception bridge from single-asset to a mixed portfolio.
+
+## [2026-06-25] Contract v1.4.0 -> v1.5.0 — RECENT-CONTEXT block (479 float32)
+- **I:** Operator: the (one) bot should see recent DAILY movement (prior days + last-week avg)
+  RELATIVE to the symbol's average, and understand what it needs to PASS in the context of TIME.
+- **R:** CLAUDE.md rule #1 (deliberate shape bump). Append-only (indices 0..470 unchanged). One
+  policy trades everything, so all features are scale-free / relative.
+- **A:** New 8-float `recent_context` block: recent daily ranges expressed RELATIVE to the
+  symbol's own average (`week_avg_range_vs_typical`, `prev_day/prev2/today_range_vs_week`) +
+  TIME-to-pass pace (`days_elapsed_norm`, `episode_return_so_far`, `pace_vs_2_5pct_plan` where
+  0.5 = exactly on the +2.5%/day plan, `challenge_target_remaining`). Daily ranges precomputed
+  leak-free (prior days complete; today expanding; week-avg uses prior days only). `days_elapsed`
+  tracked per episode. +5 tests; constants/contract/builder/env + shape tests (471->479) + doc.
+  **96/96 green.**
+- **C:** The one bot now perceives each symbol's recent movement vs its own norm AND whether it
+  is on pace (in time) to ladder +2.5%/day to the +10% pass -- pacing awareness for the challenge.
