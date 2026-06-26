@@ -39,6 +39,31 @@ def _vecnorm_path(save_path: str) -> str:
     return save_path + "_vecnorm.pkl"
 
 
+def _make_heartbeat(total_timesteps):
+    """A tiny SB3 callback that prints progress + rate + ETA after each rollout, so a long training run
+    is NEVER silently stuck (the #1 'is it frozen?' confusion). Built lazily so this module imports
+    without stable-baselines3."""
+    from stable_baselines3.common.callbacks import BaseCallback
+    import time as _time
+
+    class _HB(BaseCallback):
+        def _on_training_start(self) -> None:
+            self._t0 = _time.time()
+
+        def _on_rollout_end(self) -> None:
+            el = max(1e-9, _time.time() - self._t0)
+            n = self.num_timesteps
+            rate = n / el
+            eta_min = (total_timesteps - n) / max(1e-9, rate) / 60.0
+            print(f"      ...{n:,}/{total_timesteps:,} steps  ({rate:.0f} steps/s, ~{eta_min:.1f} min left)",
+                  flush=True)
+
+        def _on_step(self) -> bool:
+            return True
+
+    return _HB()
+
+
 def train(indicators, close, time_ns, registry_factory, *, total_timesteps=1_000_000,
         n_envs=None, save_path="models/camillion_ppo", eval_env=None,
         eval_freq: int | None = None, **env_kwargs):
@@ -101,19 +126,21 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
     exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (479),
     actions, VecNormalize and the MlpPolicy are identical to single-symbol training."""
     from stable_baselines3 import PPO
-    from stable_baselines3.common.callbacks import EvalCallback
+    from stable_baselines3.common.callbacks import EvalCallback, CallbackList
     from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_portfolio_vec_env
 
+    print("      building the training environment (can take a minute on a big history)...", flush=True)
     venv = make_portfolio_vec_env(symbol_data, registry_factory, n_envs, **env_kwargs)
     venv = VecNormalize(venv, **VECNORM_KW)
-    model = PPO("MlpPolicy", venv, verbose=1, **PPO_HPARAMS)
-    cb = None
+    model = PPO("MlpPolicy", venv, verbose=0, **PPO_HPARAMS)
+    print("      environment ready; training now (you'll see a heartbeat each update)...", flush=True)
+    cbs = [_make_heartbeat(total_timesteps)]
     if eval_env is not None:
         freq = int(eval_freq or PPO_HPARAMS["n_steps"])
-        cb = EvalCallback(eval_env, eval_freq=max(1, freq), n_eval_episodes=3,
-                          deterministic=True, best_model_save_path=None, log_path=None)
-    model.learn(total_timesteps=total_timesteps, callback=cb)
+        cbs.append(EvalCallback(eval_env, eval_freq=max(1, freq), n_eval_episodes=3,
+                                deterministic=True, best_model_save_path=None, log_path=None))
+    model.learn(total_timesteps=total_timesteps, callback=CallbackList(cbs))
     model.save(save_path)
     venv.save(_vecnorm_path(save_path))
     return model

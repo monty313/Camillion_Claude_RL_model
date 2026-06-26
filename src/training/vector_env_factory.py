@@ -61,14 +61,18 @@ def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | No
     full PortfolioEnv over `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned), so the
     single policy learns to BALANCE risk across simultaneous positions in one account, and scales to the
     full FTMO broker list without changing the locked 479 observation."""
-    from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+    from stable_baselines3.common.vec_env import DummyVecEnv
     from src.training.gym_adapter import make_portfolio_gym_env
-    n = n_envs or TS.N_ENVS
+    # IMPORTANT: the aligned portfolio arrays are LARGE (every symbol x the full history -> gigabytes).
+    # SubprocVecEnv would PICKLE the whole dataset to EACH worker (gigabytes x N_ENVS) -> on Colab that
+    # OOM/thrashes and HANGS before training starts. DummyVecEnv runs the envs in ONE process so they
+    # SHARE the arrays BY REFERENCE (one copy total) and start immediately. Fewer envs by default too,
+    # since each PortfolioEnv already builds one sub-env per symbol.
+    n = n_envs or min(4, TS.N_ENVS)
 
     def _thunk(_seed):
         def _f():
             return make_portfolio_gym_env(symbol_data, registry_factory, **env_kwargs)
         return _f
 
-    backend = SubprocVecEnv if TS.VEC_ENV_BACKEND == "subproc" else DummyVecEnv
-    return backend([_thunk(i) for i in range(n)])
+    return DummyVecEnv([_thunk(i) for i in range(n)])

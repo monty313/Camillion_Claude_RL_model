@@ -526,3 +526,19 @@ pass FTMO-style challenges more consistently.
 - **Verified:** 6-month sample -> full 8,736 bars vs Q1-only 4,368; suite green.
 - **C:** First run = a quick few-month slice to confirm the day-by-day report works on his real data,
   then the same command WITHOUT the flags does the full multi-year train.
+
+## [2026-06-26] FIX: portfolio training hung for an hour (SubprocVecEnv pickled gigabytes) + heartbeat
+- **I:** A real Colab run sat silent for an hour at "training for 2,000,000 steps" then was Ctrl-C'd.
+  Two failures: (1) `make_portfolio_vec_env` used SubprocVecEnv with N_ENVS=8 — it PICKLES the full
+  aligned dataset (4 symbols x ~1.8M bars ~= 6GB) to EACH of 8 workers (~50GB) -> Colab OOM/thrash,
+  hangs before training starts. (2) Zero progress output, so it looked frozen even when it wasn't.
+- **R:** Bug fix; obs/FTMO unchanged. Verified end-to-end.
+- **A:** `make_portfolio_vec_env` now uses **DummyVecEnv** (one process, arrays SHARED by reference =
+  one copy, no pickling) and defaults to fewer envs (min(4, N_ENVS)). `train_portfolio` prints
+  "building the environment..." / "training now..." and runs a **heartbeat callback** that prints
+  `steps done / total (steps/s, ~ETA min)` after every rollout. `run_training.py` already supports
+  `--from/--to` + `--steps` for a fast first run.
+- **Verified:** end-to-end portfolio train prints the build lines + heartbeat, uses DummyVecEnv, no OOM;
+  suite 156/156.
+- **C:** The portfolio trainer starts immediately instead of thrashing 50GB, and shows live progress +
+  ETA so a long run is never mistaken for a hang.
