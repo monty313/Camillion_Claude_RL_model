@@ -3,6 +3,26 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] JARVIS live bridge + grounded, progressive multi-agent COUNCIL
+- **I (Issue):** Wire the JARVIS cockpit to the real bot (read-only), and make the LLM agents
+  (OMEGA/JUSTICE/JARVIS) reason from the live system + chat history, talk to each other, and always
+  advise the next improvement toward passing CONSISTENTLY — grounded in the system's logic.
+- **R (Rule):** HANDOFF data contract + "never fabricate / safe-default + flag" + read-only; operator
+  2026-06-26 emphasis on the LLMs' info, chat history, agent-to-agent reasoning, and a always-progressive view.
+- **A (Application):** Pure `src/jarvis/state_contract.build_state` (the exact /state, CLOSE folded into
+  HOLD, gaps flagged, directional-only `net_signal` + basis so the HUD never divides by a hardcoded 15);
+  `src/jarvis/state_provider` (headless env+policy snapshot, honest no-model alpha fallback, defensive
+  directional mask, age/day_history tracking); `src/jarvis/consistency.analyze_consistency` (the
+  system-logic the agents cite: pace, breach headroom, binding constraint, p(pass), and ALWAYS a
+  progressive next step); `src/jarvis/council.deliberate` (OMEGA→JUSTICE→JARVIS each see the full
+  grounded context + chat history + the prior speakers; deterministic core + optional Anthropic LLM,
+  always progressive); `jarvis_bridge.py` (lazy-FastAPI, GET /state + /council + /health, structurally
+  read-only — POST /order → 405). `docs/JARVIS_LIVE_WIRING.md` patches the HUD (pullLive + councilLive +
+  the net-signal/gate fix). 24 deep tests + a live HTTP run; obs/FTMO/contract untouched.
+- **C (Conclusion):** Monty gets a live cockpit and a council that reasons from the real system and the
+  conversation, never fabricates, and always points at the next gain toward a CONSISTENT FTMO pass —
+  while being structurally unable to place a trade.
+
 ## [2026-06-26] Made VERSION PAIRING the governing rule for CPU/GPU/TPU
 - **I (Issue):** With three implementations (CPU, GPU, TPU) we could get confused about which
   produced a policy and whether they're comparable.

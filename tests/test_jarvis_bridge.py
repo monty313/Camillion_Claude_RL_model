@@ -1,0 +1,296 @@
+# Deep functionality tests for the READ-ONLY JARVIS bridge:
+#   - /state contract (build_state): keys, types, prob-sum, CLOSE->HOLD fold, gaps, no-model fallback
+#   - consistency engine: grounded numbers + ALWAYS a progressive next step
+#   - the council: OMEGA->JUSTICE->JARVIS reason together, grounded, progressive, see chat history
+#   - headless provider: snapshot is valid; peak>=equity; directional mask excludes gates
+#   - read-only guarantee: no order/execute/place mutators anywhere in the jarvis bridge modules
+#   - optional FastAPI smoke (skips cleanly if fastapi missing)
+import re
+import copy
+import math
+import importlib
+import numpy as np
+
+from src.jarvis.state_contract import build_state
+from src.jarvis.consistency import analyze_consistency
+from src.jarvis import council
+from src.jarvis.state_provider import StateProvider, directional_mask
+
+TOP_KEYS = ["account", "ftmo", "position", "alphas", "policy", "perf", "news", "human", "clock"]
+
+
+# ---------------- helpers ----------------
+def _snap(**over):
+    """A minimal-but-complete raw provider snapshot for build_state."""
+    s = {
+        "account": {"balance": 106000.0, "equity": 106240.0, "day_start_equity": 105000.0,
+                    "episode_start_equity": 100000.0, "peak_equity": 107000.0},
+        "ftmo": {"daily_loss_limit_pct": 5.0, "max_drawdown_limit_pct": 10.0,
+                 "profit_target_pct": 10.0, "daily_target_pct": 2.5},
+        "position": {"dir": "SHORT", "symbol": "EUR/USD", "lots": 0.8, "entry": 1.08562,
+                     "price": 1.08410, "age_min": 47, "age_known": True},
+        "alphas": [{"name": "Gravity", "signal": -1, "streak": 3, "directional": True},
+                   {"name": "CCI Surge", "signal": 1, "streak": 1, "directional": True}],
+        "policy_raw": {"action_probs": [0.10, 0.40, 0.20, 0.30],   # HOLD,BUY,SELL,CLOSE
+                       "value": 0.31, "entropy": 0.0, "chosen_action": 1, "chosen_action_name": "BUY"},
+        "policy_extra": {},
+        "perf": {"win_rate_pct": 58.0, "trades": 214, "consecutive_losses": 1, "day_history": [820, -410, 1180]},
+        "news": [], "human": {"overrides": 0, "panic_closes": 0, "discipline_pct": 0},
+        "clock": "13:18:11", "net_signal": -0.2, "n_directional": 16,
+        "mode": "FTMO", "model_attached": True,
+    }
+    s.update(over)
+    return s
+
+
+def _state(**over):
+    return build_state(_snap(**over))
+
+
+# ---------------- contract ----------------
+def test_state_has_all_contract_keys():
+    st = _state()
+    for k in TOP_KEYS:
+        assert k in st, f"missing top-level {k}"
+    for k in ["balance", "equity", "day_start_equity", "episode_start_equity", "peak_equity"]:
+        assert k in st["account"]
+    for k in ["daily_loss_limit_pct", "max_drawdown_limit_pct", "profit_target_pct", "daily_target_pct"]:
+        assert k in st["ftmo"]
+    for k in ["dir", "symbol", "lots", "entry", "price", "age_min"]:
+        assert k in st["position"]
+    for k in ["action", "prob_buy", "prob_sell", "prob_hold", "value", "confidence",
+              "entropy", "advantage", "regime", "recommended_lots", "expected_dd_pct", "value_calibration_pct"]:
+        assert k in st["policy"]
+    for k in ["win_rate_pct", "trades", "consecutive_losses", "day_history"]:
+        assert k in st["perf"]
+
+
+def test_state_types_and_ranges():
+    st = _state()
+    assert st["position"]["dir"] in ("LONG", "SHORT", "FLAT")
+    assert re.match(r"^\d\d:\d\d:\d\d$", st["clock"])
+    assert isinstance(st["alphas"], list) and isinstance(st["news"], list)
+    assert isinstance(st["perf"]["day_history"], list)
+    assert 0.0 <= st["policy"]["confidence"] <= 1.0
+    assert isinstance(st["perf"]["trades"], int)
+
+
+def test_prob_sum_is_one_and_close_folded_into_hold():
+    st = _state()
+    p = st["policy"]
+    assert abs(p["prob_buy"] + p["prob_sell"] + p["prob_hold"] - 1.0) < 1e-4
+    # CLOSE prob (0.30) folded into HOLD (0.10) -> hold ~0.40 before renorm (sum was 1.0)
+    assert p["prob_hold"] > p["prob_sell"]            # 0.40 > 0.20 proves the fold
+
+
+def test_action_close_maps_to_hold():
+    st = _state(policy_raw={"action_probs": [0.1, 0.2, 0.2, 0.5], "value": 0.0, "entropy": 0.5,
+                            "chosen_action": 3, "chosen_action_name": "CLOSE"})
+    assert st["policy"]["action"] == "HOLD"
+    assert st["policy"]["action_raw"] == "CLOSE"
+
+
+def test_alpha_signal_domain():
+    st = _state(alphas=[{"name": "x", "signal": 1, "streak": 2}, {"name": "y", "signal": -1, "streak": 0},
+                        {"name": "z", "signal": 0, "streak": 0}, {"name": "bad", "signal": 5, "streak": 1}])
+    for a in st["alphas"]:
+        assert a["signal"] in (-1, 0, 1)             # the bad 5 is clamped to 0
+        assert a["streak"] >= 0
+
+
+def test_no_model_fallback_is_honest():
+    st = _state(policy_raw=None, model_attached=False, net_signal=-0.5)
+    p = st["policy"]
+    assert p["confidence"] == 0.0                     # the model did not decide -> honest 0
+    assert p["action"] == "SELL"                      # leans from the directional net signal
+    assert any("alpha-fallback" in g for g in st["gaps"])
+
+
+def test_gaps_are_flagged():
+    st = _state(news=[], human={"overrides": 0, "panic_closes": 0, "discipline_pct": 0})
+    g = " ".join(st["gaps"])
+    for token in ["news", "human.overrides", "policy.advantage", "policy.value_calibration_pct"]:
+        assert token in g, f"{token} not flagged in gaps"
+
+
+def test_net_signal_basis_is_count_not_15():
+    st = _state(n_directional=16)
+    assert st["net_signal_basis"] == 16              # NEVER a hardcoded 15
+    st2 = _state(n_directional=3)
+    assert st2["net_signal_basis"] == 3
+
+
+def test_build_state_is_pure():
+    snap = _snap()
+    before = copy.deepcopy(snap)
+    build_state(snap)
+    assert snap == before                            # build_state must not mutate its input
+
+
+# ---------------- consistency engine ----------------
+def test_consistency_always_has_progressive_step():
+    for st in (_state(), _state(account={"balance": 100000.0, "equity": 100000.0,
+                                          "day_start_equity": 100000.0, "episode_start_equity": 100000.0,
+                                          "peak_equity": 100000.0})):
+        a = analyze_consistency(st)
+        assert a["progressive_next_step"] and isinstance(a["progressive_next_step"], str)
+        assert a["posture"]
+
+
+def test_consistency_when_green_still_progresses():
+    # fully green: big profit, full headroom, balanced days -> STILL a next improvement
+    green = _state(account={"balance": 108000.0, "equity": 108000.0, "day_start_equity": 108000.0,
+                            "episode_start_equity": 100000.0, "peak_equity": 108000.0},
+                   perf={"win_rate_pct": 70, "trades": 50, "consecutive_losses": 0,
+                         "day_history": [500, 520, 480, 510]})
+    a = analyze_consistency(green)
+    assert a["progressive_next_step"]                 # never 'nothing to do'
+    assert a["daily_headroom_pct"] == 100.0
+    assert 2 <= a["p_pass_pct"] <= 98
+
+
+def test_consistency_binding_constraint_and_bounds():
+    # blow most of the daily room -> binding=daily loss, low headroom, lower p(pass)
+    bleed = _state(account={"balance": 100000.0, "equity": 96000.0, "day_start_equity": 100000.0,
+                            "episode_start_equity": 100000.0, "peak_equity": 100000.0})
+    a = analyze_consistency(bleed)
+    assert a["binding_constraint"] == "daily loss"
+    assert 0.0 <= a["binding_headroom_pct"] <= 100.0
+    assert 0.0 <= a["maxdd_headroom_pct"] <= 100.0
+    assert 2 <= a["p_pass_pct"] <= 98
+
+
+# ---------------- the council ----------------
+def test_council_three_speakers_in_order():
+    out = council.deliberate(_state(), use_llm="off")
+    speakers = [m["speaker"] for m in out["transcript"]]
+    assert speakers == ["OMEGA", "JUSTICE", "JARVIS"]
+    assert out["llm_used"] is False
+
+
+def test_council_statements_are_grounded_in_numbers():
+    out = council.deliberate(_state(), use_llm="off")
+    for m in out["transcript"]:
+        assert re.search(r"\d", m["text"]), f"{m['speaker']} cited no number"
+
+
+def test_council_always_ends_progressive():
+    out = council.deliberate(_state(), use_llm="off")
+    assert out["ruling"]["progressive_next_step"]
+    assert out["ruling"]["posture"]
+    assert out["transcript"][-1]["speaker"] == "JARVIS" and out["transcript"][-1]["text"]
+
+
+def test_council_agents_talk_to_each_other():
+    # JARVIS's prompt must contain OMEGA's and JUSTICE's prior statements (agent-to-agent)
+    ctx = council.build_council_context(_state())
+    prior = [{"speaker": "OMEGA", "text": "OMEGA_SAYS_THIS"},
+             {"speaker": "JUSTICE", "text": "JUSTICE_SAYS_THAT"}]
+    prompt = council.build_agent_prompt("JARVIS", ctx, prior)
+    assert "OMEGA_SAYS_THIS" in prompt and "JUSTICE_SAYS_THAT" in prompt
+
+
+def test_council_sees_chat_history():
+    chat = [{"role": "user", "text": "WHY_AM_I_SHORT"}, {"role": "jarvis", "text": "because momentum"}]
+    ctx = council.build_council_context(_state(), chat_history=chat)
+    assert len(ctx["chat_history"]) == 2
+    prompt = council.build_agent_prompt("OMEGA", ctx, [])
+    assert "WHY_AM_I_SHORT" in prompt                 # chat history is in what the LLM sees
+    out = council.deliberate(_state(), chat_history=chat, use_llm="off")
+    assert out["context_seen"]["chat_turns"] == 2
+
+
+def test_council_prompt_carries_directive_and_numbers():
+    ctx = council.build_council_context(_state())
+    prompt = council.build_agent_prompt("OMEGA", ctx, [])
+    assert "consistent" in prompt.lower() and "progress_to_target" in prompt
+    assert "never invent a figure" in prompt.lower() or "do not invent" in prompt.lower()
+
+
+# ---------------- headless provider ----------------
+def test_provider_headless_snapshot_is_valid():
+    prov = StateProvider.from_synthetic(n=400, seed=1)
+    for _ in range(8):
+        prov.step()
+    st = build_state(prov.snapshot())
+    for k in TOP_KEYS:
+        assert k in st
+    assert st["model_attached"] is False
+    assert st["policy"]["confidence"] == 0.0          # no model -> honest
+    assert st["account"]["peak_equity"] >= st["account"]["equity"] - 1e-6
+    assert st["net_signal_basis"] == 16               # 16 directional alphas on this branch
+
+
+def test_provider_day_history_is_list():
+    prov = StateProvider.from_synthetic(n=300, seed=2)
+    for _ in range(20):
+        prov.step()
+    st = build_state(prov.snapshot())
+    assert isinstance(st["perf"]["day_history"], list)
+
+
+# ---------------- directional / gate handling ----------------
+class _FakeStrat:
+    def __init__(self, name, directional):
+        self.name = name
+        self.DIRECTIONAL = directional
+
+
+class _FakeReg:
+    def __init__(self, slots):
+        self._slots = slots
+        self.max_slots = len(slots)
+
+    def occupancy_mask(self):
+        return np.array([1.0 if s is not None else 0.0 for s in self._slots], dtype=np.float32)
+
+
+def test_directional_mask_excludes_gates():
+    reg = _FakeReg([_FakeStrat("dirA", True), _FakeStrat("dirB", True),
+                    _FakeStrat("gate", False), None])
+    dm = directional_mask(reg)
+    assert list(dm) == [True, True, False, False]
+    # a gate's signal of 1 must NOT count toward the bullish net signal
+    sig = np.array([1, 1, 1, 0], dtype=np.float32)       # gate also says 1 (movement-on)
+    occ = reg.occupancy_mask()
+    idx = np.where(dm & (occ > 0))[0]
+    net = float(sig[idx].sum()) / max(1, idx.size)
+    assert idx.size == 2 and net == 1.0                  # divisor 2, gate excluded -> still +1, not 3/3
+
+
+def test_directional_mask_prefers_registry_method():
+    class _RegWithMask(_FakeReg):
+        def directional_mask(self):
+            return np.array([False, True, False])
+    reg = _RegWithMask([_FakeStrat("a", True), _FakeStrat("b", True), _FakeStrat("c", True)])
+    assert list(directional_mask(reg)) == [False, True, False]   # its own mask wins
+
+
+# ---------------- read-only guarantee ----------------
+def test_no_trade_mutators_in_bridge_modules():
+    bad = re.compile(r"(place|submit|cancel|modif|execute).*(order|trade)|order.*(place|submit)|"
+                     r"send_order|close_position|record_close|liquidat", re.I)
+    for modname in ("src.jarvis.state_contract", "src.jarvis.state_provider",
+                    "src.jarvis.council", "src.jarvis.consistency", "jarvis_bridge"):
+        mod = importlib.import_module(modname)
+        for name in dir(mod):
+            if name.startswith("_"):
+                continue
+            assert not bad.search(name), f"{modname}.{name} looks like a trade mutator"
+
+
+# ---------------- optional FastAPI smoke (skips if not installed) ----------------
+def test_bridge_routes_are_get_only():
+    try:
+        import fastapi  # noqa: F401
+    except Exception:
+        print("SKIP test_bridge_routes_are_get_only: fastapi not installed")
+        return
+    from jarvis_bridge import create_app
+    app = create_app(StateProvider.from_synthetic(n=300))
+    methods = set()
+    for r in app.routes:
+        for m in getattr(r, "methods", set()) or set():
+            methods.add((getattr(r, "path", ""), m))
+    assert ("/state", "GET") in methods and ("/council", "GET") in methods
+    assert not any(m in {"POST", "PUT", "PATCH", "DELETE"} for _, m in methods), "bridge must be read-only"
