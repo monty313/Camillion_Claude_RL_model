@@ -9,6 +9,14 @@
 # USED_BY: src/training/run_log.py (stamps every run), notebooks, tests, docs/ENVIRONMENT_STATE.md
 #
 # ============ RULES FOR THE FUTURE GPU TRAINER (read BEFORE building it) ============
+#  PRINCIPLE WE EXPECT TO USE (data-parallel RL): ONE shared policy (one brain) learning from
+#  THOUSANDS of sims at once. Every sim runs the SAME math instruction at the same moment but on
+#  DIFFERENT market data (different slice/start + exploration) -> DIFFERENT experiences, pooled into
+#  ONE weight update. "All do the same thing" = same OPERATION, different WORLDS -- NOT learning the
+#  same thing; one brain learning from a thousand different lives at once (= faster, steadier
+#  learning). The rewrite's hard part: turn the branchy FTMO logic (if breached/banked/passed) into
+#  that LOCKSTEP math (per-sim decisions become mask/array ops across all sims). Output is the same
+#  policy file as the CPU trainer -- same destination, different vehicle (see docs/ENVIRONMENT_STATE.md).
 #  1. PARITY HASH: the GPU env MUST produce the SAME `env_fingerprint()` as the CPU env for the
 #     same config. The fingerprint covers the obs contract (version + size), the alpha roster,
 #     the FTMO rules, and the reward shaping -- so a matching hash means "same environment".

@@ -3,6 +3,18 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Recorded the GPU-trainer learning principle (data-parallel RL)
+- **I (Issue):** When we build the GPU trainer, a future agent must understand WHY the GPU runs
+  thousands of sims in lockstep — and that "all do the same thing" does not defeat learning.
+- **R (Rule):** Operator-confirmed principle — ONE shared policy learns from thousands of sims
+  running the same math on DIFFERENT market data (different experiences pooled into one update);
+  the rewrite's hard part is turning branchy FTMO logic into lockstep mask/array math; output is
+  the same policy file as the CPU trainer.
+- **A (Application):** Added the principle to §4 of `docs/ENVIRONMENT_STATE.md` and to the
+  "RULES FOR THE FUTURE GPU TRAINER" header in `src/training/env_fingerprint.py`. Comments only.
+- **C (Conclusion):** Locks the intended GPU design so whoever builds it gets 10–100× more varied
+  experience per unit time into one bot — faster path to a consistently FTMO-passing policy.
+
 ## [2026-06-26] Documented the alpha-scaling logic so the obs stays stable forever
 - **I (Issue):** The plan is to grow toward ~1000 alphas. Future agents must not
   destabilise the locked observation (or wrongly "fix" empty slots by reshaping it
