@@ -567,6 +567,27 @@ def t_6_5():
     return (PASS if magic == 0 else WARN), f"FTMO hard+soft limits in config; {magic} hardcoded magic numbers in env/risk (target 0)."
 
 
+def t_6_6():
+    # JARVIS "open" path: cockpit file exists, the link helper is slash-correct (no '...dev0_jarvis'
+    # bug), and (if fastapi) the server root redirects to a 200 cockpit. Catches the broken-link class.
+    from jarvis_bridge import cockpit_url, cockpit_path, COCKPIT_FILE
+    assert os.path.exists(cockpit_path()), f"{COCKPIT_FILE} missing from repo root -> link would 404"
+    base = "https://8000-x.prod.colab.dev"
+    u = cockpit_url(base)
+    assert u == base + "/" + COCKPIT_FILE and "dev0_" not in u, f"malformed cockpit URL: {u}"
+    try:
+        import fastapi  # noqa: F401
+        from fastapi.testclient import TestClient
+    except Exception:
+        return PASS, f"link helper slash-correct + {COCKPIT_FILE} present (fastapi absent -> live redirect skipped)."
+    from jarvis_bridge import create_app
+    from src.jarvis.market_view import MarketView
+    c = TestClient(create_app(MarketView.from_synthetic(["EURUSD"], n=200)))
+    r = c.get("/", follow_redirects=True)
+    assert r.status_code == 200 and "<html" in r.text.lower(), "server root did not serve the cockpit 200"
+    return PASS, f"JARVIS opens: root redirects to {COCKPIT_FILE} (200); link helper slash-correct (no '...dev0_' bug)."
+
+
 # --------------------------------------------------------------------- STEP 7 FUTURE
 def t_7_1():
     wf = os.path.exists(os.path.join(ROOT, "src/training/walk_forward.py"))
@@ -675,6 +696,7 @@ TESTS = [
     ("6.3", "Contract version", "code_quality", "MEDIUM", t_6_3, True),
     ("6.4", "Import health", "code_quality", "CRITICAL", t_6_4, True),
     ("6.5", "Config completeness", "code_quality", "MEDIUM", t_6_5, True),
+    ("6.6", "JARVIS cockpit reachable", "code_quality", "HIGH", t_6_6, False),
     ("7.1", "Overfitting / out-of-sample", "future_risk", "HIGH", t_7_1, True),
     ("7.2", "Market regime robustness", "future_risk", "MEDIUM", t_7_2, True),
     ("7.3", "Scaling to 1000 alphas", "future_risk", "MEDIUM", t_7_3, True),

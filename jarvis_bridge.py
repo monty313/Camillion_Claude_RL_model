@@ -22,6 +22,29 @@
 from __future__ import annotations
 import os
 
+# The cockpit HUD file (served from the repo root). Single source of truth for the redirect
+# AND the "open JARVIS" link the notebook prints, so the two can never drift.
+COCKPIT_FILE = "0_JARVIS_COCKPIT.html"
+
+
+def cockpit_url(base_url: str) -> str:
+    """Join a server base URL (e.g. a Colab proxyPort URL, with or without a trailing slash) to the
+    cockpit page with EXACTLY ONE slash. The missing slash is what produced the broken
+    `...colab.dev0_jarvis_cockpit.html` link (browser read it as a hostname -> DNS error)."""
+    from urllib.parse import quote
+    if not base_url:
+        raise ValueError("base_url is empty")
+    return base_url.rstrip("/") + "/" + quote(COCKPIT_FILE)
+
+
+def cockpit_path() -> str:
+    """Absolute path to the cockpit file in the repo (auto-detect legacy name as a fallback)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in (COCKPIT_FILE, "JARVIS Cockpit.dc.html"):
+        if os.path.exists(os.path.join(here, name)):
+            return os.path.join(here, name)
+    return os.path.join(here, COCKPIT_FILE)
+
 
 def create_app(provider=None):
     """Build the read-only FastAPI app. FastAPI is imported here, not at module load."""
@@ -98,14 +121,13 @@ def create_app(provider=None):
 
     # Opening the root URL should land you straight on the cockpit (the HUD file lives in the repo root).
     here = os.path.dirname(os.path.abspath(__file__))
-    cockpit = next((f for f in ("0_JARVIS_COCKPIT.html", "JARVIS Cockpit.dc.html")
-                    if os.path.exists(os.path.join(here, f))), "0_JARVIS_COCKPIT.html")
+    cockpit = os.path.basename(cockpit_path())          # single source of truth (COCKPIT_FILE)
 
     @app.get("/")
     def home():
         from fastapi.responses import RedirectResponse
         from urllib.parse import quote
-        return RedirectResponse("/" + quote(cockpit))
+        return RedirectResponse("/" + quote(cockpit))   # -> /0_JARVIS_COCKPIT.html
 
     # serve the HUD + support.js from the repo root LAST (so /state etc. take priority)
     app.mount("/", StaticFiles(directory=here, html=True), name="static")

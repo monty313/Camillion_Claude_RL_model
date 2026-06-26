@@ -485,3 +485,19 @@ pass FTMO-style challenges more consistently.
 - **Verified:** MT5 sample -> 120 bars at 1-min spacing, tickvol used, close correct, 220-indicator cache
   builds; comma + semicolon files still load. Fast suite 153/153; audit GO 38/42.
 - **C:** Mark's MetaTrader CSVs load as-is — no manual reformatting — and the JARVIS link opens.
+
+## [2026-06-26] JARVIS link bug -> tested helper + audit coverage (why no test caught it)
+- **I:** The "open JARVIS" link was built by string-concat in a NOTEBOOK cell, so it shipped a missing
+  slash (`...colab.dev0_jarvis_cockpit.html` -> the browser read it as a hostname -> DNS NXDOMAIN). No
+  test caught it because notebook cells are never run by the suite.
+- **R:** Move the logic into real, tested code; cover it in the big test. No behaviour/contract change.
+- **A:** Added `jarvis_bridge.COCKPIT_FILE` + `cockpit_url(base)` (slash-safe, URL-quoted, single source
+  of truth) + `cockpit_path()`; `create_app`'s root redirect now uses them. The notebook imports
+  `cockpit_url` instead of hand-joining. Tests (in the unit suite, which the audit runs): 
+  `test_cockpit_url_is_wellformed` (asserts exactly one slash, no `dev0_` bug, file exists, empty base
+  raises) + `test_root_url_redirects_to_existing_cockpit` (GET / -> redirect -> 200 HTML). New audit
+  check `6.6 JARVIS cockpit reachable` (HIGH) verifies the file + URL + live redirect.
+- **Verified:** the regression test FAILS on the old no-slash join and PASSES on the fix; suite 155/155;
+  audit GO 38/42 with 6.6 ✅.
+- **C:** A malformed JARVIS link (or a 404 cockpit) now fails the big test instead of reaching Mark. The
+  link is built by one tested function used by both the notebook and the server.

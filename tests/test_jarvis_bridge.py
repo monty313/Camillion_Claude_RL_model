@@ -425,3 +425,42 @@ def test_bridge_routes_are_get_only_and_portfolio():
     hm = c.get("/heatmap").json()
     assert len(hm["rows"]) == 2 and "HEATMAP" in hm["summary"]
     assert c.post("/order").status_code == 405          # read-only holds across all endpoints
+
+
+def test_cockpit_url_is_wellformed():
+    """REGRESSION: the 'open JARVIS' link must have EXACTLY ONE slash before the cockpit file.
+    The bug shipped because this lived in a notebook cell (untested) and produced
+    '...colab.dev0_jarvis_cockpit.html' (no slash -> browser treats it as a hostname -> DNS error)."""
+    import os
+    from jarvis_bridge import cockpit_url, cockpit_path, COCKPIT_FILE
+    base = "https://8000-m-s-kkb-ase1a0.asia-east1-0.prod.colab.dev"
+    # works whether or not the proxy URL has a trailing slash; never concatenates host+file directly
+    assert cockpit_url(base) == base + "/" + COCKPIT_FILE
+    assert cockpit_url(base + "/") == base + "/" + COCKPIT_FILE
+    assert "dev0_" not in cockpit_url(base) and "/" + COCKPIT_FILE in cockpit_url(base)
+    assert "://" in cockpit_url(base) and cockpit_url(base).count(COCKPIT_FILE) == 1
+    # the file the link points at must actually exist in the repo (so it can never 404)
+    assert os.path.exists(cockpit_path()), f"{COCKPIT_FILE} missing from repo root"
+    for bad in ("", None):
+        try:
+            cockpit_url(bad); assert False, "empty base should raise"
+        except (ValueError, AttributeError):
+            pass
+
+
+def test_root_url_redirects_to_existing_cockpit():
+    """REGRESSION: opening the server root must land on the cockpit (200), not a 404/empty index."""
+    try:
+        import fastapi  # noqa: F401
+        from fastapi.testclient import TestClient
+    except Exception:
+        print("SKIP test_root_url_redirects_to_existing_cockpit: fastapi not installed")
+        return
+    from jarvis_bridge import create_app, COCKPIT_FILE
+    from src.jarvis.market_view import MarketView
+    c = TestClient(create_app(MarketView.from_synthetic(["EURUSD"], n=200)))
+    r = c.get("/", follow_redirects=False)
+    assert r.status_code in (302, 303, 307) and COCKPIT_FILE in r.headers.get("location", ""), \
+        f"root did not redirect to the cockpit (got {r.status_code} -> {r.headers.get('location')})"
+    r2 = c.get("/", follow_redirects=True)
+    assert r2.status_code == 200 and "<html" in r2.text.lower(), "cockpit did not serve as HTML 200"
