@@ -542,3 +542,57 @@ pass FTMO-style challenges more consistently.
   suite 156/156.
 - **C:** The portfolio trainer starts immediately instead of thrashing 50GB, and shows live progress +
   ETA so a long run is never mistaken for a hang.
+
+## [2026-06-26] Portfolio training review: 4 fixes (HOLD-collapse, identical workers, missing two-phase, broken report)
+A review of TRAINING on real data found four real issues in the PORTFOLIO path (the env we actually train);
+all four are now fixed. Obs stays 479; FTMO numbers unchanged; nothing heavy added to step(). Suite 162/162;
+audit ✅ GO 38/42. Verified end-to-end on synthetic data (real PPO trains, heartbeat shows the action mix,
+report covers all days, model save/load works).
+
+- **(1) Day-by-day report was broken for the portfolio.**
+  - **I:** `daily_report` used a loop guard built for the 1-step-per-bar single-symbol env. PortfolioEnv
+    takes `len(symbols)` steps per bar, so the guard tripped after ~1/len(symbols) of the data — a 3-day,
+    3-symbol run reported **0 days** and reached only 30% of the bars. This is the exact `[4/5]` table the
+    operator reads to judge a run.
+  - **R:** Bug fix; no contract/FTMO change. **A:** guard now `env.T * steps_per_bar + 16`, where
+    `steps_per_bar = len(getattr(env,'symbols',[None]))` (TradingEnv -> 1, unaffected). **C:** the report
+    now traverses the WHOLE range. +test `test_portfolio_daily_report_covers_all_days_not_just_a_quarter`.
+
+- **(2) HOLD-collapse risk: zero entropy bonus + identical parallel workers.**
+  - **I:** `ent_coef=0.0` removed all exploration pressure; every trade pays a cost (immediate negative
+    reward) while HOLD is exactly 0 -> always-HOLD is a stable trap. Worse, all DummyVecEnv workers were
+    IDENTICAL (PortfolioEnv.reset ignored seed; no random window) -> the N "parallel" envs replayed ONE
+    trajectory = no exploration diversity. **R:** anti-collapse; obs/FTMO unchanged.
+  - **A:** `ent_coef` 0.0 -> 0.01; PortfolioEnv gains `random_window/window/seed`; `make_portfolio_vec_env`
+    gives each worker a different seed + a random window so they explore DIFFERENT stretches. Episode/window
+    end is now `truncated` (breach/pass stay `terminated`) — RL-correct time-limit semantics.
+  - **C:** the policy keeps exploring and the parallel envs actually diversify. +test
+    `test_portfolio_random_window_gives_diverse_starts`; verified live: action mix ~25% each at init, not collapsed.
+
+- **(3) Two-phase +2.5% bank-and-stop was MISSING from the portfolio bot.**
+  - **I:** the documented FTMO two-phase engine (bank at +2.5% of initial, then stop / 1% trail) lived ONLY
+    in single-symbol `TradingEnv`. `PortfolioEnv` — the only env `run_training.py` trains — had none of it,
+    silently ignoring `cfg.two_phase_enabled=True`. The existing `test_two_phase_daily` tested the WRONG env,
+    giving false confidence. **R:** restore documented FTMO behaviour on the pot; numbers unchanged.
+  - **A:** added a POT-LEVEL two-phase to `PortfolioEnv.step` mirroring TradingEnv: at +2.5% of initial (on
+    pot equity) `_flatten_all()` banks the whole book via `record_close` (single P&L truth), then locks the
+    day (no new opens on any symbol; HOLD/CLOSE still pass) or, with `phase2_continue`, keeps trading under a
+    1% trail; midnight clears the lock. `_flatten_all` is array/dict only (no heavy ops in step).
+  - **C:** the trained portfolio bot now banks +2.5% and stops, per the plan. +new file
+    `tests/test_portfolio_two_phase.py` (bank-and-stop, phase2 trail, midnight clear, two-phase-off).
+
+- **(4) Live visibility while training.**
+  - **I:** progress only showed steps/s; the operator wanted to SEE it learn (and a HOLD-collapse). **R/A:**
+    the heartbeat now also prints the ACTION MIX (% HOLD/BUY/SELL/CLOSE) + mean reward from the PPO
+    rollout buffer each update (fully guarded so it can never crash training). **C:** one glance shows
+    whether the bot is trading and making money — and a collapse to HOLD 100% is immediately visible.
+
+- **(follow-up, from an adversarial multi-agent review of the above)**
+  - **I:** the random-window start could SILENTLY collapse to zero diversity on a SHORT history: with the
+    default 5000-bar window, any aligned slice under ~5,202 bars made every worker pin to `warmup` again —
+    re-creating the identical-copies bug on exactly the fast `--from/--to` first-run path. **R/A:** clamp the
+    effective window to at most half the usable span, so there is always room to sample a varied start;
+    verified the 8 workers now get 8 distinct starts at T=3000 and T=5201 (was 1). +regression test
+    `test_portfolio_random_window_diversifies_even_on_short_history`. Also: guarded the heartbeat against an
+    empty rollout buffer (no `nan`), and refreshed the JARVIS `entropy-collapse` knowledge entry to say
+    ent_coef is now 0.01 (was stale at 0.0). Suite 163/163; audit ✅ GO.

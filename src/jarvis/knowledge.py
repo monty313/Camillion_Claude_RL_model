@@ -116,8 +116,9 @@ TROUBLESHOOTING = [
                 "deterministic too early / entropy is 0.05 after training",
      "cause": "the entropy bonus (ent_coef) is off or too small, so the policy stopped exploring and locked onto "
               "one action — usually HOLD, the safe default — before it learned anything",
-     "fix": "raise ent_coef in PPO_HPARAMS (src/training/trainer.py) from 0.0 to a small positive value "
-            "(~0.005-0.02) so the policy keeps exploring; watch that entropy stays above ~0.3 early in training. "
+     "fix": "ent_coef in PPO_HPARAMS (src/training/trainer.py) is 0.01 by default now; if the live action-mix "
+            "heartbeat shows ~HOLD 100% early, raise it toward 0.02 (useful range ~0.005-0.02); if it never "
+            "settles, lower it. Watch that entropy stays above ~0.3 early in training. "
             "Also check the reward isn't so tiny/sparse that HOLD is a local minimum. A deterministic (low-entropy) "
             "policy is dangerous live — it cannot adapt when the market shifts.",
      "refs": "src/training/trainer.py (PPO_HPARAMS ent_coef), src/barbershop/policy_doctor.py"},

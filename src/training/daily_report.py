@@ -66,6 +66,10 @@ def daily_report(env, policy=None, max_days: int | None = None):
             "cum_pnl_pct": round((end_eq - init) / init * 100.0, 2),
         })
 
+    # The PortfolioEnv decides ONE symbol per step, so it takes len(symbols) steps to advance ONE bar.
+    # The guard below must count those sub-steps or it trips ~1/len(symbols) of the way in (it once cut
+    # the portfolio report off at ~30% of the data, even showing 0 days). TradingEnv -> steps_per_bar=1.
+    steps_per_bar = max(1, len(getattr(env, "symbols", [None])))
     guard = 0
     while True:
         guard += 1
@@ -84,7 +88,7 @@ def daily_report(env, policy=None, max_days: int | None = None):
                 break
             day_start_eq = peak = trough = float(env.acc.equity)         # start a fresh day
             breached_day = False
-        if guard > env.T + 5:
+        if guard > env.T * steps_per_bar + 16:                            # safety net (scaled by sub-steps)
             break
     return rows, _summarize(rows, cfg)
 

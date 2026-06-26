@@ -28,8 +28,12 @@ its saved stats; eval/walk-forward must load them with training=False.
 """
 from __future__ import annotations
 
+# ent_coef = the "keep exploring" bonus. At 0.0 the policy can collapse to ALWAYS-HOLD: every trade
+# pays a cost (immediate negative reward) while HOLD is exactly 0, so doing nothing is a stable trap.
+# A small bonus (~0.005-0.02; 0.01 here) keeps it trying real trades long enough to learn. Watch the
+# heartbeat's action-mix early in training -- if it's ~HOLD 100%, raise this; if it never settles, lower it.
 PPO_HPARAMS = dict(gamma=0.997, gae_lambda=0.97, n_steps=2048, batch_size=256,
-                   ent_coef=0.0, learning_rate=3e-4,
+                   ent_coef=0.01, learning_rate=3e-4,
                    policy_kwargs=dict(net_arch=[256, 256, 256]))
 
 VECNORM_KW = dict(norm_obs=True, norm_reward=False, clip_obs=10.0)
@@ -40,11 +44,14 @@ def _vecnorm_path(save_path: str) -> str:
 
 
 def _make_heartbeat(total_timesteps):
-    """A tiny SB3 callback that prints progress + rate + ETA after each rollout, so a long training run
-    is NEVER silently stuck (the #1 'is it frozen?' confusion). Built lazily so this module imports
-    without stable-baselines3."""
+    """A tiny SB3 callback that prints LIVE progress after each rollout, so a long run is NEVER silently
+    stuck AND you can WATCH IT LEARN: steps/s + ETA, the ACTION MIX (% HOLD/BUY/SELL/CLOSE -> is it
+    actually trading or stuck on HOLD?), and the mean step reward (is it making money?). This is the
+    plain-language 'is it working?' read-out. Built lazily so this module imports without SB3."""
     from stable_baselines3.common.callbacks import BaseCallback
     import time as _time
+
+    _NAMES = ["HOLD", "BUY", "SELL", "CLOSE"]
 
     class _HB(BaseCallback):
         def _on_training_start(self) -> None:
@@ -55,7 +62,20 @@ def _make_heartbeat(total_timesteps):
             n = self.num_timesteps
             rate = n / el
             eta_min = (total_timesteps - n) / max(1e-9, rate) / 60.0
-            print(f"      ...{n:,}/{total_timesteps:,} steps  ({rate:.0f} steps/s, ~{eta_min:.1f} min left)",
+            extra = ""
+            try:    # read the just-collected rollout: what did it DO, and did it make money?
+                import numpy as _np
+                buf = self.model.rollout_buffer
+                acts = _np.asarray(buf.actions).astype(int).ravel()
+                if acts.size:                                  # skip cleanly if a rollout is somehow empty
+                    counts = _np.bincount(acts, minlength=len(_NAMES))[:len(_NAMES)]
+                    tot = max(1, int(counts.sum()))
+                    mix = " ".join(f"{_NAMES[k]} {100.0 * counts[k] / tot:.0f}%" for k in range(len(_NAMES)))
+                    mean_r = float(_np.asarray(buf.rewards).mean())
+                    extra = f"  | trading: {mix}  | mean reward {mean_r:+.2e}"
+            except Exception:
+                pass
+            print(f"      ...{n:,}/{total_timesteps:,} steps  ({rate:.0f} steps/s, ~{eta_min:.1f} min left){extra}",
                   flush=True)
 
         def _on_step(self) -> bool:

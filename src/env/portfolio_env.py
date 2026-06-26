@@ -20,6 +20,13 @@
 #   portfolio-aggregated obs; obs stays 479, actions stay {HOLD,BUY,SELL,CLOSE}, so the
 #   existing MlpPolicy/trainer/fingerprint all apply. C: one policy learns to balance the
 #   book toward a consistent portfolio pass, and scales to the whole FTMO universe live.
+#   [2026-06-26b] I: the portfolio path (1) replayed ONE identical trajectory across all vec
+#   workers (reset ignored seed, no window) = no exploration diversity, and (2) had NO two-phase
+#   +2.5% bank-and-stop (it lived only in single-symbol TradingEnv) so the trained bot ignored a
+#   documented FTMO rule. R: keep obs(479)/FTMO numbers; add diversity + pot-level two-phase.
+#   A: random_window/seed per worker (DIFFERENT stretches) + pot-level two-phase (bank ALL at
+#   +2.5%, stop or 1% trail) mirroring TradingEnv; episode/window end is now truncated (breach/pass
+#   stay terminated). C: parallel envs actually diversify, and the portfolio bot banks +2.5% & stops.
 # =====================================================================
 """PortfolioEnv: one policy trades ALL symbols from ONE shared pot (obs stays 479)."""
 from __future__ import annotations
@@ -67,7 +74,8 @@ class PortfolioEnv:
     n_actions = C.N_ACTIONS
 
     def __init__(self, symbol_data: dict, registry_factory, *, cfg=None, warmup: int = 200,
-                 breach_penalty: float = 1.0, reward_scale: float = 1.0, pass_bonus: float | None = None):
+                 breach_penalty: float = 1.0, reward_scale: float = 1.0, pass_bonus: float | None = None,
+                 window: int | None = None, random_window: bool = False, seed: int | None = None):
         self.cfg = cfg or load_active_config()
         self.symbols = list(symbol_data)
         if not self.symbols:
@@ -90,21 +98,61 @@ class PortfolioEnv:
                 raise ValueError("all symbols must be time-aligned (same length / timestamps)")
         self.T = int(T)
         self.warmup = int(warmup)
+        # Per-worker EPISODE DIVERSITY: with random_window, each reset() starts at a RANDOM bar and
+        # runs `window` bars. Vectorised workers get DIFFERENT seeds -> they explore DIFFERENT stretches
+        # of history instead of replaying the same trajectory (no diversity = wasted parallel envs).
+        self.window = int(window) if window else None
+        self.random_window = bool(random_window)
+        self.rng = np.random.default_rng(seed)
         self._dates = next(iter(self.subs.values()))._dates    # assumes aligned timestamps
         self.reset()
 
     # ---- episode ----
     def reset(self, *, seed=None, options=None):
+        if seed is not None:
+            self.rng = np.random.default_rng(seed)
         self.acc = AccountState(starting_balance=self.cfg.starting_balance)
         self.th = TradeHistory()
-        self.t = int(self.warmup)
+        if self.random_window and self.window:
+            # Clamp the window to AT MOST half the usable span so there is ALWAYS room to sample a
+            # VARIED start. Otherwise, on a SHORT history (e.g. a trimmed --from/--to first run) where
+            # the configured window is >= the data, every worker pins to `warmup` and the parallel
+            # copies become identical again -- the silent zero-diversity trap this whole fix removes.
+            span = self.T - self.warmup
+            eff_window = min(self.window, max(1, span // 2))
+            hi = max(self.warmup + 1, self.T - eff_window)
+            self.t = int(self.rng.integers(self.warmup, hi))    # random start -> per-worker diversity
+            self.end = min(self.T - 1, self.t + eff_window)
+        else:
+            self.t = int(self.warmup)                           # full walk-forward (eval / daily report)
+            self.end = self.T - 1
         self.j = 0                                             # current symbol index
         self.position = {s: 0 for s in self.symbols}
         self.entry = {s: float(self.subs[s].close[self.t]) for s in self.symbols}
         self._cur_date = self._dates[self.t]
         self._days_elapsed = 0
+        self._reset_phase2()                                   # per-day two-phase state on the shared pot
         self._mark()
         return self._obs(), {"t": self.t}
+
+    def _reset_phase2(self) -> None:
+        """Reset the per-DAY two-phase state on the SHARED pot (reset + each midnight)."""
+        self._phase2_active = False    # banked +2.5% today AND kept trading (1% trail)
+        self._phase2_peak = 0.0        # equity peak since the phase-2 (1%) trail started
+        self._day_locked = False       # day done (banked +2.5% then stopped) -> no new opens
+
+    def _flatten_all(self) -> None:
+        """Close EVERY open position at the current bar and bank it into the shared pot via
+        record_close (the single P&L truth). Used to bank +2.5% and the phase-2 protective stop."""
+        for s in self.symbols:
+            if self.position[s] != 0:
+                sub = self.subs[s]
+                realized = self.position[s] * (sub.close[self.t] - self.entry[s]) * sub.position_size
+                realized -= sub.cost_frac * sub.close[self.t] * sub.position_size   # exit cost
+                self.th.record_close(self.acc, realized, bar_index=self.t)
+                self.position[s] = 0
+        self.acc.equity = self.acc.balance
+        self.acc.mark_equity(self.acc.equity)
 
     @property
     def ptr(self) -> int:                                      # so daily_report / introspect work unchanged
@@ -167,6 +215,10 @@ class PortfolioEnv:
         target = _TARGET[int(action)]
         if target is None:
             target = self.position[sym]                        # HOLD
+        # two-phase day-lock: once the pot banked +2.5% (then stopped), block NEW opens on EVERY
+        # symbol until tomorrow. Holds (target==current) and closes (target==0) still pass through.
+        if self._day_locked and target != 0 and target != self.position[sym]:
+            target = 0
         if target != self.position[sym]:
             if self.position[sym] != 0:                        # realize the closing leg into the POT
                 realized = self.position[sym] * (sub.close[t] - self.entry[sym]) * sub.position_size
@@ -191,12 +243,16 @@ class PortfolioEnv:
         reward = float((self.acc.equity - eq_before) / self.cfg.starting_balance) * self.reward_scale
 
         terminated = False
+        truncated = False
+        daily_target_hit = False
         if bar_advanced:
             if self._dates[self.t] != self._cur_date:          # midnight -> per-day FTMO reset
                 self.acc.reset_day()
+                self._reset_phase2()                           # new day -> clear the day-lock / phase-2
                 self._cur_date = self._dates[self.t]
                 self._days_elapsed += 1
             rep = BD.detect(self.acc, self.cfg)                # breach on the SHARED pot
+            daily_target_hit = rep.daily_target_hit
             if rep.breached:
                 self.acc.episode_breached = True
                 terminated = True
@@ -205,9 +261,29 @@ class PortfolioEnv:
                 self.acc.episode_passed = True                 # +10% on the pot -> PASS
                 terminated = True
                 reward += self.pass_bonus
-            if self.t >= self.T - 1:
-                terminated = True
+            # DAILY ENGINE (two-phase) on the SHARED pot: hit +2.5% of initial -> close ALL & bank it,
+            # then STOP for the day (default) or, if phase2_continue, keep trading under a 1% trailing
+            # wall from the banked peak. A PROTECTIVE overlay, never an episode breach. Skipped if breached.
+            if not terminated and self.cfg.two_phase_enabled:
+                if rep.should_auto_flat and not self._phase2_active and not self._day_locked:
+                    self._flatten_all()                        # +2.5% reached -> bank the whole book
+                    if getattr(self.cfg, "phase2_continue", False):
+                        self._phase2_active = True
+                        self._phase2_peak = self.acc.equity    # fresh 1% trail starts here
+                    else:
+                        self._day_locked = True                # default: done for the day
+                elif self._phase2_active:
+                    self._phase2_peak = max(self._phase2_peak, self.acc.equity)
+                    give_back = self._phase2_peak - self.acc.equity
+                    if give_back >= self._phase2_peak * self.cfg.phase2_trailing_pct / 100.0:
+                        self._flatten_all()                    # gave back the 1% -> bank & stop
+                        self._phase2_active = False
+                        self._day_locked = True
+            if self.t >= self.end:                             # reached the (windowed) episode end
+                truncated = True
 
         info = {"symbol": sym, "t": t, "equity": self.acc.equity,
-                "open_positions": self.acc.open_positions, "positions": dict(self.position)}
-        return self._obs(), reward, terminated, False, info
+                "open_positions": self.acc.open_positions, "positions": dict(self.position),
+                "day_locked": self._day_locked, "phase2_active": self._phase2_active,
+                "daily_target_hit": daily_target_hit}
+        return self._obs(), reward, terminated, truncated, info

@@ -69,10 +69,16 @@ def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | No
     # SHARE the arrays BY REFERENCE (one copy total) and start immediately. Fewer envs by default too,
     # since each PortfolioEnv already builds one sub-env per symbol.
     n = n_envs or min(4, TS.N_ENVS)
+    # EPISODE DIVERSITY: each worker gets a DIFFERENT seed and a random training window, so the N
+    # DummyVecEnv workers explore DIFFERENT stretches of history instead of replaying the SAME
+    # trajectory (identical workers = no exploration diversity = wasted parallel envs).
+    random_window = bool(env_kwargs.pop("random_window", TS.RANDOM_WINDOW_TRAINING))
+    window = env_kwargs.pop("window", TS.WINDOW_LENGTH_BARS)
 
-    def _thunk(_seed):
+    def _thunk(seed):
         def _f():
-            return make_portfolio_gym_env(symbol_data, registry_factory, **env_kwargs)
+            return make_portfolio_gym_env(symbol_data, registry_factory, seed=seed,
+                                          random_window=random_window, window=window, **env_kwargs)
         return _f
 
     return DummyVecEnv([_thunk(i) for i in range(n)])
