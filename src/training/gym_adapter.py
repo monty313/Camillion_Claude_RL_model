@@ -31,3 +31,30 @@ def make_gym_env(indicators, close, time_ns, alpha_registry, **kwargs):
             return self._env.step(int(action))
 
     return GymTradingEnv()
+
+
+def make_portfolio_gym_env(symbol_data, registry_factory, **kwargs):
+    """Build a gymnasium.Env wrapping the shared-pot PortfolioEnv (one bot, all symbols, one pot).
+
+    Same obs(479)/action(4) interface as the single-symbol env, so the existing MlpPolicy +
+    VecNormalize + trainer apply unchanged."""
+    import gymnasium as gym
+    from gymnasium import spaces
+    from src.env.portfolio_env import PortfolioEnv
+
+    class GymPortfolioEnv(gym.Env):
+        metadata = {"render_modes": []}
+
+        def __init__(self):
+            super().__init__()
+            self._env = PortfolioEnv(symbol_data, registry_factory, **kwargs)
+            self.observation_space = spaces.Box(-np.inf, np.inf, C.OBS_SHAPE, np.float32)
+            self.action_space = spaces.Discrete(C.N_ACTIONS)
+
+        def reset(self, *, seed=None, options=None):
+            return self._env.reset(seed=seed, options=options)
+
+        def step(self, action):
+            return self._env.step(int(action))
+
+    return GymPortfolioEnv()

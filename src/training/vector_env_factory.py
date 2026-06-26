@@ -54,3 +54,21 @@ def make_multi_symbol_vec_env(symbol_data: dict, registry_factory, n_envs: int |
 
     backend = SubprocVecEnv if TS.VEC_ENV_BACKEND == "subproc" else DummyVecEnv
     return backend([_thunk(i, syms[i % len(syms)]) for i in range(n)])
+
+
+def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | None = None, **env_kwargs):
+    """ONE bot, ONE shared pot, ALL symbols at once -- the true portfolio trainer. Every worker is a
+    full PortfolioEnv over `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned), so the
+    single policy learns to BALANCE risk across simultaneous positions in one account, and scales to the
+    full FTMO broker list without changing the locked 479 observation."""
+    from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+    from src.training.gym_adapter import make_portfolio_gym_env
+    n = n_envs or TS.N_ENVS
+
+    def _thunk(_seed):
+        def _f():
+            return make_portfolio_gym_env(symbol_data, registry_factory, **env_kwargs)
+        return _f
+
+    backend = SubprocVecEnv if TS.VEC_ENV_BACKEND == "subproc" else DummyVecEnv
+    return backend([_thunk(i) for i in range(n)])

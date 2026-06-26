@@ -153,9 +153,9 @@ THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 
 - **Where:** `src/signals/signal_summary.py, src/jarvis/state_provider.py (directional_mask)`
 
 ### is the bot a single-asset trader, or does it trade everything at once?
-- **Likely cause:** the env is single-symbol today, but the GOAL is portfolio trading
-- **Fix:** it is a PORTFOLIO trader — ONE shared equity/drawdown pot across the WHOLE FTMO universe. Train one policy across symbols (make_multi_symbol_vec_env, per-asset calibrated size) and watch the full market on the heatmap tab. NOTE: a true shared-pot portfolio ENV (simultaneous positions in one account) is the next env build; today the MarketView aggregates per-symbol envs for the heatmap.
-- **Where:** `src/training/vector_env_factory.py, src/jarvis/market_view.py, config/asset_specs.py`
+- **Likely cause:** you may not know the shared-pot portfolio trainer exists
+- **Fix:** it is a PORTFOLIO trader — ONE shared equity/drawdown pot across the WHOLE FTMO universe. Train it with train_portfolio on the shared-pot PortfolioEnv: one policy holds SIMULTANEOUS positions across ALL symbols in one account, decides one symbol at a time while seeing the pot's exposure, and is rewarded on the pot — so it learns to BALANCE risk. Because decisions are per-symbol with portfolio context, the obs stays 479 and it scales to the full FTMO broker list live. See docs/TRAINING_INSTRUCTIONS.md; watch the live book on the heatmap tab.
+- **Where:** `src/env/portfolio_env.py, src/training/trainer.py (train_portfolio), docs/TRAINING_INSTRUCTIONS.md`
 
 ## Data & cache problems
 

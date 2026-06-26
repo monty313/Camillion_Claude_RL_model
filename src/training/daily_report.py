@@ -161,6 +161,29 @@ def run_daily_report(data_dir: str | None = None, symbol: str = "EURUSD",
     return rows, summary
 
 
+def run_portfolio_report(data_dir: str, symbols, model_path: str | None = None, max_days: int | None = None):
+    """Day-by-day on the SHARED-POT PortfolioEnv: ALL symbols, ONE account (the true portfolio view).
+
+    Requires the per-symbol caches to be time-aligned (same bars)."""
+    from src.data.cache_builder import load_cache
+    from src.env.portfolio_env import PortfolioEnv, align_symbol_data
+    syms = list(symbols)
+    sd = align_symbol_data({s: load_cache(data_dir, s) for s in syms})   # keep only shared bars
+    env = PortfolioEnv(sd, _fresh_reg)
+    policy = None
+    if model_path:
+        try:  # pragma: no cover - needs SB3 + a saved portfolio model
+            from src.training.trainer import load_for_eval, sb3_policy_fn
+            ind, close, time_ns = load_cache(data_dir, syms[0])     # obs is identical across symbols
+            model, venv = load_for_eval(model_path, ind, close, time_ns, _fresh_reg, symbol=syms[0])
+            policy = sb3_policy_fn(model, venv)
+        except Exception as e:
+            print(f"[daily_report] no portfolio model ({e}); HOLD baseline.")
+    rows, summary = daily_report(env, policy=policy, max_days=max_days)
+    print(format_daily_report(rows, summary))
+    return rows, summary
+
+
 def _fresh_reg():
     from src.strategies.registry import AlphaRegistry
     from src.strategies.alpha_pack import register_all
@@ -170,7 +193,13 @@ def _fresh_reg():
 if __name__ == "__main__":  # pragma: no cover
     import argparse
     ap = argparse.ArgumentParser(description="Day-by-day FTMO report (+2.5% target + trailing DD).")
-    ap.add_argument("--data", default=None); ap.add_argument("--symbol", default="EURUSD")
+    ap.add_argument("--data", default=None)
+    ap.add_argument("--symbol", default="EURUSD", help="single-symbol report")
+    ap.add_argument("--portfolio", default=None, help="comma-separated symbols -> ONE shared-pot report")
     ap.add_argument("--model", default=None); ap.add_argument("--max-days", type=int, default=None)
     a = ap.parse_args()
-    run_daily_report(a.data, a.symbol, a.model, max_days=a.max_days)
+    if a.portfolio:
+        run_portfolio_report(a.data, [s.strip() for s in a.portfolio.split(",") if s.strip()],
+                             a.model, max_days=a.max_days)
+    else:
+        run_daily_report(a.data, a.symbol, a.model, max_days=a.max_days)

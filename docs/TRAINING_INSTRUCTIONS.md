@@ -43,33 +43,37 @@ them later without retraining:
 - `FTMO_TRAILING_DRAWDOWN_PCT = 4.0`   ← the trailing wall
 - `FTMO_TWO_PHASE_ENABLED = True`   ← hit +2.5% → bank & stop for the day
 
-## 4. Train ONE policy across ALL FOUR symbols (learns to balance)
-This is the key step: `train_multi_symbol` spreads the workers across **all four caches** and trains a
-**single policy** over them, with per-asset calibrated size + the cross-asset observation features
-(ATR-normalized, asset-class identity). That's how the bot learns to **balance the book** — read every
-asset in common units and allocate risk across them — instead of mastering one and ignoring the rest:
+## 4. Train ONE bot on ALL FOUR symbols from ONE shared pot (learns to balance)
+This is the key step. **`train_portfolio`** trains a **single policy** on the **shared-pot
+`PortfolioEnv`**: it holds simultaneous positions across **all four symbols in one account**, decides one
+symbol at a time **while seeing how exposed the pot already is**, and is rewarded on the **pot's** equity.
+That's how the bot learns to **balance the book** — and because decisions are per-symbol with portfolio
+context, the same policy **scales to the full FTMO broker list live without changing the locked 479
+observation**:
 ```python
-from src.training.trainer import train_multi_symbol
+from src.training.trainer import train_portfolio
+from src.env.portfolio_env import align_symbol_data
+from src.data.cache_builder import load_cache
 from src.strategies.registry import AlphaRegistry
 from src.strategies.alpha_pack import register_all
-from src.data.cache_builder import load_cache
-
-symbol_data = {s: load_cache("data_cache", s) for s in ["EURUSD", "GBPUSD", "XAUUSD", "US30"]}
-train_multi_symbol(symbol_data, lambda: _r(), total_timesteps=2_000_000,
-                   save_path="models/camillion_ppo")
-
 def _r():
     r = AlphaRegistry(); register_all(r); return r
-```
-This saves **`models/camillion_ppo`** + **`models/camillion_ppo_vecnorm.pkl`** — **keep both** (eval needs
-the vecnorm stats). *(Single symbol? Use `trainer.train(*load_cache("data_cache","EURUSD"), _r, ...)`.)*
 
-## 5. ⭐ SEE THE DAY-BY-DAY RESULTS (+2.5% target + trailing DD)
-This is the output you want — one row per day, did it hit +2.5% and stay inside the 4% wall:
-```bash
-# per symbol (run for each; the portfolio shared-pot day-by-day is the next env build)
-python -m src.training.daily_report --data data_cache --symbol EURUSD --model models/camillion_ppo
+# align on shared bars (FX vs index hours differ), then train one policy on the whole pot
+symbol_data = align_symbol_data({s: load_cache("data_cache", s) for s in ["EURUSD", "GBPUSD", "XAUUSD", "US30"]})
+train_portfolio(symbol_data, _r, total_timesteps=2_000_000, save_path="models/camillion_portfolio_ppo")
 ```
+Saves **`models/camillion_portfolio_ppo`** + its **`_vecnorm.pkl`** — **keep both**. *(Lighter alternative:
+`train_multi_symbol` trains one policy across symbols with SEPARATE accounts — it generalises across
+assets but does not learn shared-pot risk allocation. Use `train_portfolio` for the real portfolio bot.)*
+
+## 5. ⭐ SEE THE DAY-BY-DAY RESULTS (+2.5% target + trailing DD), on the SHARED POT
+One row per day for the **whole portfolio (one account)** — did it make +2.5% and stay inside the 4% wall:
+```bash
+python -m src.training.daily_report --data data_cache --portfolio EURUSD,GBPUSD,XAUUSD,US30 \
+    --model models/camillion_portfolio_ppo
+```
+*(Single symbol instead: `--symbol EURUSD --model models/camillion_ppo`.)*
 Example output:
 ```
 DAY-BY-DAY FTMO REPORT  (daily target +2.5% of initial | trailing wall 4.0%)
