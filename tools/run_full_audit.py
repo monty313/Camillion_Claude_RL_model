@@ -24,6 +24,7 @@ OUT = os.path.join(ROOT, "audit_results")
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARNING", "SKIP"
 CATS = {"ppo_math": 8, "ftmo_rules": 9, "env_integrity": 5, "jarvis": 5,
         "stability": 5, "code_quality": 5, "future_risk": 5}
+EXPECTED_MIN_TESTS = 100        # floor for the repo unit suite (real count ~151) — below this = collection broke
 
 # --------------------------------------------------------------------- fixtures
 _CACHE = {}
@@ -129,19 +130,26 @@ def t_1_5():
     assert torch.isfinite(logits).all() and torch.isfinite(val).all(), "NaN/Inf in forward pass"
     nparams = sum(p.numel() for p in model.policy.parameters() if p.requires_grad)
     assert 10_000 < nparams < 50_000_000, f"param count {nparams} out of sane range"
-    # dead-neuron probe on the shared body
+    # Degenerate-unit probe on the shared body. Capture POST-ACTIVATION outputs under no_grad
+    # (SB3 MlpPolicy uses Tanh, not ReLU). A unit is degenerate if it never varies across the batch
+    # (std~=0 -> truly dead) or is saturated for ~every input (|activation|>0.99 -> stuck rail).
+    import torch.nn as nn
     big = torch.as_tensor(np.random.default_rng(2).standard_normal((100, 479)).astype(np.float32))
-    acts, h = [], big
-    for layer in model.policy.mlp_extractor.policy_net:
-        h = layer(h)
-        if h.requires_grad is False and h.ndim == 2 and (h >= 0).all():
-            acts.append(h)
-    dead = 0.0
-    if acts:
-        a = acts[-1].detach().numpy()
-        dead = float((np.abs(a).max(axis=0) == 0).mean())
+    acts = []
+    with torch.no_grad():
+        h = big
+        for layer in model.policy.mlp_extractor.policy_net:
+            h = layer(h)
+            if isinstance(layer, (nn.Tanh, nn.ReLU, nn.ELU, nn.LeakyReLU, nn.GELU, nn.SiLU)):
+                acts.append(h.clone())
+    assert acts, "dead-neuron probe captured no activations — MLP architecture changed (probe would silently no-op)"
+    a = acts[-1].numpy()                                   # last hidden activation layer
+    std = a.std(axis=0)
+    sat = np.abs(a).mean(axis=0)
+    dead = float(((std < 1e-6) | (sat > 0.99)).mean())     # dead OR saturated units
     status = PASS if dead < 0.20 else (WARN if dead < 0.50 else FAIL)
-    return status, f"MLP ok: policy(B,4)+value(B,1), {nparams:,} params, finite forward, dead-neuron rate {dead*100:.0f}% (<20% target)."
+    return status, (f"MLP ok: policy(B,4)+value(B,1), {nparams:,} params, finite forward; degenerate-unit "
+                   f"rate {dead*100:.0f}% across {a.shape[1]} units (<20% target).")
 
 
 def t_1_6():
@@ -596,8 +604,38 @@ def t_7_5():
     return WARN, "No reconnect / state-persistence layer (no live broker yet) -> add before VPS/live deployment."
 
 
+# --------------------------------------------------------------------- STEP 0 REPO UNIT SUITE
+def t_0_0():
+    """Run the repo's OWN unit-test suite (tools/run_tests.py, ~150 tests) INSIDE the audit, so the
+    'big test' covers the unit tests too. Any unit-test failure is a CRITICAL gate -> NO-GO."""
+    import subprocess
+    import re
+    env = dict(os.environ)
+    env.pop("RUN_FULL_AUDIT", None)              # never let the subprocess recurse into THIS heavy audit
+    try:
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "run_tests.py")],
+                           capture_output=True, text=True, cwd=ROOT, env=env, timeout=900)
+    except Exception as e:
+        return FAIL, f"could not run the repo unit suite (tools/run_tests.py): {e}"
+    out = (p.stdout or "") + "\n" + (p.stderr or "")
+    summary = None
+    for mm in re.finditer(r"====\s*(\d+)/(\d+)\s*passed,\s*(\d+)\s*failed\s*====", out):
+        summary = mm                             # take the LAST summary line
+    if summary is None:
+        return FAIL, "the repo unit suite produced no summary line (it likely crashed on import)."
+    passed, total, failed = int(summary.group(1)), int(summary.group(2)), int(summary.group(3))
+    if failed or p.returncode != 0:
+        fails = next((ln for ln in out.splitlines() if ln.startswith("Failures:")), "")
+        return FAIL, f"repo unit tests: {passed}/{total} passed, {failed} FAILED. {fails}".strip()
+    if total < EXPECTED_MIN_TESTS:                          # 0/0 or a collapsed suite must NOT pass green
+        return FAIL, (f"unit suite collapsed: only {total} tests collected (expected >= {EXPECTED_MIN_TESTS}); "
+                     f"test collection likely broke (tests/ renamed/moved or the glob failed).")
+    return PASS, f"repo unit tests: {passed}/{total} passed — the full stdlib suite now runs inside the audit."
+
+
 # --------------------------------------------------------------------- registry
 TESTS = [
+    ("0.0", "Repo unit-test suite", "unit_suite", "CRITICAL", t_0_0, False),
     ("1.1", "GAE correctness", "ppo_math", "CRITICAL", t_1_1, True),
     ("1.2", "PPO clipped objective", "ppo_math", "CRITICAL", t_1_2, True),
     ("1.3", "Value (critic) loss", "ppo_math", "CRITICAL", t_1_3, True),
@@ -665,6 +703,7 @@ def run():
     overall_max = sum(CATS.values())
     crit_fail = [r for r in results if r["severity"] == "CRITICAL" and r["status"] == FAIL]
     warnings = [r for r in results if r["status"] == WARN]
+    unit = next((r for r in results if r["id"] == "0.0"), None)
 
     # GO requires ALL of the STEP-10 criteria (strict bar), not merely the absence of a hard NO-GO.
     nogo_reasons = []
@@ -683,11 +722,15 @@ def run():
     report = {"run_timestamp": "(stamped at write)", "go_nogo": "GO" if go else "NO-GO",
               "critical_failures": [r["id"] + " " + r["name"] for r in crit_fail],
               "warnings": [r["id"] + " " + r["name"] for r in warnings],
+              "unit_suite": {"status": unit["status"], "message": unit["message"]} if unit else None,
               "tests": results, "scores": {**scores, "overall": overall, "overall_max": overall_max},
               "nogo_reasons": nogo_reasons}
     _write(report)
 
     print("\n" + "=" * 64)
+    if unit:
+        print(f"  {'✅' if unit['status'] == PASS else '🚫'} REPO UNIT TESTS — {unit['message']}")
+        print("  " + "-" * 60)
     for c, m in CATS.items():
         print(f"  {c:<14} {scores[c]}/{m}")
     print(f"  {'OVERALL':<14} {overall}/{overall_max}   |   {len(warnings)} warnings")
@@ -711,7 +754,7 @@ def _write(report):
     except Exception:
         ts = "n/a"
     report["run_timestamp"] = ts
-    with open(os.path.join(OUT, "audit_report.json"), "w") as f:
+    with open(os.path.join(OUT, "audit_report.json"), "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
     _write_md(report, ts)
     _write_html(report, ts)
@@ -726,6 +769,9 @@ def _write_md(report, ts):
         L.append(f"## 🚫 VERDICT: NO-GO — fix the items below first (score {s['overall']}/{s['overall_max']})")
         L.append("")
         L += [f"{i}. {r}" for i, r in enumerate(report["nogo_reasons"], 1)]
+    u = report.get("unit_suite")
+    if u:
+        L += ["", f"**Repo unit-test suite:** {'✅ ' if u['status'] == 'PASS' else '🚫 '}{u['message']}"]
     L += ["", "## Critical issues",
           "\n".join("- " + c for c in report["critical_failures"]) or "- None 🎉",
           "", "## Warnings (review, not blocking)",
@@ -742,42 +788,48 @@ def _write_md(report, ts):
     for r in report["tests"]:
         flag = {"PASS": "✅", "FAIL": "🚫", "WARNING": "⚠️", "SKIP": "··"}[r["status"]]
         L.append(f"- {flag} **{r['id']} {r['name']}** — {r['message']}")
-    open(os.path.join(OUT, "audit_report.md"), "w").write("\n".join(L))
+    open(os.path.join(OUT, "audit_report.md"), "w", encoding="utf-8").write("\n".join(L))
 
 
 def _write_html(report, ts):
+    import html as _h
+    e = lambda v: _h.escape(str(v))                        # escape every DYNAMIC value (messages carry tracebacks)
     s = report["scores"]
     color = {"PASS": "#1f9d55", "FAIL": "#cc1f1f", "WARNING": "#c79100", "SKIP": "#666"}
     verdict_color = "#1f9d55" if report["go_nogo"] == "GO" else "#cc1f1f"
     pct = int(s["overall"] / s["overall_max"] * 100)
     rows = "".join(
-        f'<tr style="border-bottom:1px solid #222"><td style="padding:6px 10px;color:{color[r["status"]]};font-weight:700">'
-        f'{r["status"]}</td><td style="padding:6px 10px">{r["id"]} {r["name"]}</td>'
-        f'<td style="padding:6px 10px;color:#888">{r["severity"]}</td>'
-        f'<td style="padding:6px 10px;color:#bbb">{r["message"]}</td></tr>'
+        f'<tr style="border-bottom:1px solid #222"><td style="padding:6px 10px;color:{color.get(r["status"], "#888")};font-weight:700">'
+        f'{e(r["status"])}</td><td style="padding:6px 10px">{e(r["id"])} {e(r["name"])}</td>'
+        f'<td style="padding:6px 10px;color:#888">{e(r["severity"])}</td>'
+        f'<td style="padding:6px 10px;color:#bbb">{e(r["message"])}</td></tr>'
         for r in report["tests"])
     bars = "".join(
         f'<div style="margin:4px 0"><span style="display:inline-block;width:130px">{c}</span>'
         f'<span style="display:inline-block;width:200px;background:#222;border-radius:4px;vertical-align:middle">'
         f'<span style="display:inline-block;height:12px;border-radius:4px;background:#1f9d55;'
         f'width:{int(s[c]/CATS[c]*200)}px"></span></span> {s[c]}/{CATS[c]}</div>' for c in CATS)
+    u = report.get("unit_suite") or {"status": "SKIP", "message": "not run"}
+    u_color = "#1f9d55" if u["status"] == "PASS" else "#cc1f1f"
     html = f"""<!doctype html><html><head><meta charset="utf-8"><title>Camillion Audit</title></head>
 <body style="background:#0b0f14;color:#dfe7ee;font-family:system-ui,Arial;margin:0;padding:28px">
 <h1 style="font-size:42px;color:{verdict_color};margin:0">{'✅ GO' if report['go_nogo']=='GO' else '🚫 NO-GO'}</h1>
 <div style="color:#8aa;margin:4px 0 18px">Camillion full-system audit · {ts}</div>
+<div style="background:#11161d;border-left:4px solid {u_color};padding:8px 12px;margin:0 0 14px;border-radius:4px">
+  <b style="color:{u_color}">REPO UNIT TESTS</b> &nbsp;{e(u['message'])}</div>
 <div style="background:#222;border-radius:8px;height:26px;width:100%;max-width:680px;overflow:hidden">
   <div style="height:26px;width:{pct}%;background:{verdict_color};text-align:center;color:#fff;line-height:26px">
   {s['overall']}/{s['overall_max']} ({pct}%)</div></div>
 <h3 style="margin-top:22px">Score by category</h3>{bars}
 <h3>{'NO-GO reasons' if report['go_nogo']!='GO' else 'Warnings to review'}</h3>
-<ul>{''.join('<li style="color:#cc6">'+x+'</li>' for x in (report['nogo_reasons'] or report['warnings'])) or '<li>None 🎉</li>'}</ul>
+<ul>{''.join('<li style="color:#cc6">'+e(x)+'</li>' for x in (report['nogo_reasons'] or report['warnings'])) or '<li>None 🎉</li>'}</ul>
 <h3>All tests</h3>
 <table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr style="color:#88a;text-align:left">
 <th style="padding:6px 10px">Status</th><th style="padding:6px 10px">Test</th><th style="padding:6px 10px">Severity</th>
 <th style="padding:6px 10px">Detail</th></tr></thead><tbody>{rows}</tbody></table>
 <p style="color:#667;margin-top:20px;font-size:12px">RED=critical fail · YELLOW=warning · GREEN=pass · GREY=skip.
 Generated by tools/run_full_audit.py — opens offline, no internet needed.</p></body></html>"""
-    open(os.path.join(OUT, "audit_report.html"), "w").write(html)
+    open(os.path.join(OUT, "audit_report.html"), "w", encoding="utf-8").write(html)
 
 
 if __name__ == "__main__":

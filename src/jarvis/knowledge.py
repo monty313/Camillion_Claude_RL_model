@@ -106,9 +106,10 @@ TROUBLESHOOTING = [
                 "give me a GO or NO-GO",
      "cause": "you want one plain-English health check across PPO math, FTMO rules, the env, JARVIS and "
               "code quality before committing to a challenge",
-     "fix": "run ONE command: `python tools/run_full_audit.py`. It runs 44 checks and writes "
-            "audit_results/audit_report.html (open it in a browser) plus .md/.json, ending in a big GO or "
-            "NO-GO with the exact things to fix first. Exit code 0 = GO, 1 = NO-GO.",
+     "fix": "run ONE command: `python tools/run_full_audit.py`. It runs the repo's full unit suite (~150 "
+            "tests) PLUS 44 system checks and writes audit_results/audit_report.html (open it in a browser) "
+            "plus .md/.json, ending in a big GO or NO-GO with the exact things to fix first. Any failing unit "
+            "test forces NO-GO. Exit code 0 = GO, 1 = NO-GO.",
      "refs": "tools/run_full_audit.py, audit_results/audit_report.html, tests/test_full_audit.py"},
     {"id": "entropy-collapse", "area": "training",
      "symptom": "the bot stopped exploring and always picks HOLD / entropy collapsed to ~0 / the policy went "

@@ -411,3 +411,46 @@ pass FTMO-style challenges more consistently.
 - **C:** Mark can now run `python tools/run_full_audit.py` (or ask JARVIS "is my bot safe to run?")
   and get a plain-English, color-coded GO/NO-GO he can trust — and the two real issues it surfaced
   (the 479 doc drift and JARVIS's two blind spots) are fixed, not just reported.
+
+## [2026-06-26] Audit now runs the repo's own unit suite (one "big test")
+- **I:** Mark wanted the repo's ~150 unit tests folded INTO the big audit, so one command checks
+  everything and the GO/NO-GO accounts for the unit tests too.
+- **R:** Operator request ("add those tests to the big test"). Tooling only; no bot behaviour change.
+- **A:** `tools/run_full_audit.py` gains a STEP-0 check `0.0 Repo unit-test suite` that runs
+  `tools/run_tests.py` in a subprocess (with `RUN_FULL_AUDIT` stripped so it can never recurse into the
+  heavy audit), parses the `X/Y passed, Z failed` summary, and treats ANY failure (or nonzero exit) as a
+  CRITICAL gate -> NO-GO. Reported as its own prominent line in the console + .md + .html. Kept scored=False
+  so the 7-category /42 structure is unchanged; it gates GO/NO-GO via the critical-failure path. Updated the
+  JARVIS `run-the-audit` entry to say the audit runs the unit suite too.
+- **Verified:** injecting one failing unit test flips the audit GO->NO-GO with exit 1 and names the test;
+  removing it restores GO 38/42 exit 0. No recursion (subprocess unit run skips the audit's own test).
+- **C:** `python tools/run_full_audit.py` is now the single "big test": ~150 unit tests + 44 system checks
+  + GO/NO-GO. A broken unit test can no longer hide behind a green audit.
+
+## [2026-06-26] Hardened the audit harness — adversarial review found + fixed 5 real bugs
+- **I:** The audit is the flagship "is it safe?" gate; a silent false GO (or a false NO-GO) is dangerous.
+  Ran a 4-lens adversarial review (false-GO paths, scoring math, the new unit-suite integration, report
+  robustness) with each finding independently verified. 5 confirmed real; fixed all.
+- **R:** Tooling-only hardening (no bot behaviour change). Verified each fix empirically.
+- **A:**
+  - **(HIGH) Colab false NO-GO:** `tools/run_tests.py` bare-called the pytest-parametrized `test_audit`
+    (defined only when pytest is installed, e.g. Colab) -> TypeError -> the audit's unit gate FAILed ->
+    spurious CRITICAL NO-GO. Fixed: the stdlib runner now SKIPS pytest-parametrized / arg-requiring tests
+    (`_needs_args`). Verified zero-arg run, arg-taking skipped.
+  - **(HIGH) Dead-code CRITICAL check:** `t_1_5`'s dead-neuron probe was structurally unreachable (it
+    tested ReLU `>=0` + `requires_grad is False`, but SB3 uses Tanh and the probe ran with grad) -> it
+    ALWAYS reported 0% dead and PASSed, even for a fully collapsed net. Rewrote it: capture post-activation
+    outputs under `no_grad`, detect dead (std~=0) OR saturated (|a|>0.99) units, and assert it captured
+    something. Verified: healthy net PASS, weight-zeroed net -> 100% degenerate -> FAIL.
+  - **(MED) Vacuous unit gate:** `t_0_0` returned PASS on `0/0 passed` (e.g. tests/ glob breaks). Added an
+    `EXPECTED_MIN_TESTS=100` floor -> a collapsed/empty suite is now a NO-GO. Verified the 0/0 path FAILs.
+  - **(MED) HTML report injection:** crash/traceback messages with `<`, `>`, `</td>` corrupted the report
+    table (exactly when a test crashes). Added `html.escape` on every dynamic value. Verified `<script>`
+    is escaped.
+  - **(MED) C/POSIX-locale crash:** the md/html writers used bare `open()`; the ✅/🚫 glyphs raised
+    UnicodeEncodeError under `LC_ALL=C`, killing the audit before its verdict. Added `encoding="utf-8"`.
+    Verified the report writes cleanly under `LC_ALL=C`.
+  - (Two CRITICAL "false GO" candidates were investigated and verified NOT real: crit_fail/WARN gating and
+    the SB3-delegated ppo_math checks — left as-is with rationale.)
+- **C:** The audit can no longer fake-pass a collapsed network, silently lose its unit coverage, self-fail
+  in Colab, or corrupt or hide its own report. Fast suite 151/151; audit still GO 38/42 exit 0.
