@@ -515,3 +515,14 @@ pass FTMO-style challenges more consistently.
 - **Verified:** `GET /0_JARVIS_COCKPIT.html` -> 200 HTML; suite 155/155; audit GO 38/42, 6.6 ✅.
 - **C:** JARVIS shows up inside the Colab notebook regardless of browser/DNS/auth, and the served paths
   are guaranteed 200 by the big test.
+
+## [2026-06-26] run_training: --from/--to date range (fast first run on huge histories)
+- **I:** Mark's data is 2021->2026 x 4 symbols (~2M bars each); a blind full run could churn for a very
+  long time / risk Colab OOM before he's confirmed the pipeline works end-to-end on his real files.
+- **R:** Operator-friendly; no behaviour change to a full run (omit the flags).
+- **A:** `run_training.py` gains `--from`/`--to` (e.g. `--from 2024-01-01 --to 2024-03-31`) -> slices each
+  symbol's DataFrame before building the cache. [2/5] prints the range + per-symbol bar counts. +1 test
+  (`test_prepare_caches_date_range_filters`).
+- **Verified:** 6-month sample -> full 8,736 bars vs Q1-only 4,368; suite green.
+- **C:** First run = a quick few-month slice to confirm the day-by-day report works on his real data,
+  then the same command WITHOUT the flags does the full multi-year train.

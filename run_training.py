@@ -35,8 +35,10 @@ def _find_csv(folder: str, symbol: str):
     return None
 
 
-def prepare_caches(data_dir: str, symbols, cache_dir: str = "data_cache"):
-    """Find each symbol's CSV and build its market-feature cache. Returns the symbols it prepared."""
+def prepare_caches(data_dir: str, symbols, cache_dir: str = "data_cache", date_from=None, date_to=None):
+    """Find each symbol's CSV and build its market-feature cache. Optionally restrict to a date range
+    (date_from/date_to, e.g. '2024-01-01') for a fast first run. Returns the symbols it prepared."""
+    import pandas as _pd
     from src.data.cache_builder import load_ohlcv_csv, build_cache
     found = []
     for s in symbols:
@@ -44,8 +46,16 @@ def prepare_caches(data_dir: str, symbols, cache_dir: str = "data_cache"):
         if not f:
             print(f"      (skipped {s} — no CSV with that name in {data_dir})")
             continue
-        build_cache(load_ohlcv_csv(f), out_dir=cache_dir, symbol=s)
-        print(f"      {s} ready  ({os.path.basename(f)})")
+        df = load_ohlcv_csv(f)
+        if date_from:
+            df = df[df.index >= _pd.Timestamp(date_from)]
+        if date_to:
+            df = df[df.index < _pd.Timestamp(date_to) + _pd.Timedelta(days=1)]   # inclusive of the end day
+        if len(df) == 0:
+            print(f"      (skipped {s} — no rows in the chosen date range)")
+            continue
+        build_cache(df, out_dir=cache_dir, symbol=s)
+        print(f"      {s} ready  ({os.path.basename(f)}, {len(df):,} bars)")
         found.append(s)
     return found
 
@@ -57,6 +67,9 @@ def main(argv=None):
     ap.add_argument("--steps", type=int, default=2_000_000, help="how long to train (more = better but slower)")
     ap.add_argument("--out", default="models/camillion_portfolio_ppo", help="where to save the trained bot")
     ap.add_argument("--cache", default="data_cache", help="where to store the prepared features")
+    ap.add_argument("--from", dest="date_from", default=None,
+                    help="only use data on/after this date, e.g. 2024-01-01 (use for a FAST first run)")
+    ap.add_argument("--to", dest="date_to", default=None, help="only use data up to this date, e.g. 2024-06-30")
     a = ap.parse_args(argv)
     symbols = [s.strip() for s in a.symbols.split(",") if s.strip()]
 
@@ -70,8 +83,11 @@ def main(argv=None):
                  f"/content/drive/MyDrive/Camillion_data")
 
     # 2) prepare the market features
-    print(f"\n[2/5] Preparing market features (one-time)...")
-    found = prepare_caches(a.data, symbols, a.cache)
+    rng = ""
+    if a.date_from or a.date_to:
+        rng = f"  (date range: {a.date_from or 'start'} -> {a.date_to or 'end'})"
+    print(f"\n[2/5] Preparing market features (one-time)...{rng}")
+    found = prepare_caches(a.data, symbols, a.cache, a.date_from, a.date_to)
     if not found:
         sys.exit(f"\n  No matching CSVs in {a.data}. Put files there whose names contain the symbol "
                  f"(e.g. EURUSD_1m.csv, US30.csv).")

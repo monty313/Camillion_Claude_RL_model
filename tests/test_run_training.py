@@ -32,6 +32,22 @@ def test_prepare_caches_finds_and_builds():
     assert ind.shape[1] == 220 and len(close) == 400
 
 
+def test_prepare_caches_date_range_filters():
+    """--from/--to restrict the data (so a first run can be a fast few-month slice)."""
+    from src.data.cache_builder import load_cache
+    d = tempfile.mkdtemp()
+    idx = pd.date_range("2024-01-01", "2024-04-30 23:59", freq="1min")[::20]
+    cl = 1.10 + np.cumsum(np.random.default_rng(0).standard_normal(len(idx)) * 1e-5)
+    pd.DataFrame({"datetime": idx, "open": cl, "high": cl + 1e-4, "low": cl - 1e-4,
+                  "close": cl, "volume": 1.0}).to_csv(os.path.join(d, "EURUSD_1m.csv"), index=False)
+    run_training.prepare_caches(d, ["EURUSD"], cache_dir=os.path.join(d, "full"))
+    run_training.prepare_caches(d, ["EURUSD"], cache_dir=os.path.join(d, "q1"),
+                                date_from="2024-01-01", date_to="2024-02-28")
+    _, cf, _ = load_cache(os.path.join(d, "full"), "EURUSD")
+    _, cq, _ = load_cache(os.path.join(d, "q1"), "EURUSD")
+    assert 0 < len(cq) < len(cf), f"date filter did not restrict ({len(cq)} vs {len(cf)})"
+
+
 def test_main_fails_friendly_without_training_engine():
     try:
         import stable_baselines3  # noqa: F401
