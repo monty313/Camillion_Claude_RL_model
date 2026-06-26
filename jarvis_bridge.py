@@ -96,8 +96,18 @@ def create_app(provider=None):
         return {"ok": True, "model_attached": market.primary().policy is not None,
                 "symbols": market.universe()}
 
-    # serve the HUD + support.js from the repo root LAST (so /state etc. take priority)
+    # Opening the root URL should land you straight on the cockpit (the HUD file lives in the repo root).
     here = os.path.dirname(os.path.abspath(__file__))
+    cockpit = next((f for f in ("0_JARVIS_COCKPIT.html", "JARVIS Cockpit.dc.html")
+                    if os.path.exists(os.path.join(here, f))), "0_JARVIS_COCKPIT.html")
+
+    @app.get("/")
+    def home():
+        from fastapi.responses import RedirectResponse
+        from urllib.parse import quote
+        return RedirectResponse("/" + quote(cockpit))
+
+    # serve the HUD + support.js from the repo root LAST (so /state etc. take priority)
     app.mount("/", StaticFiles(directory=here, html=True), name="static")
     return app
 

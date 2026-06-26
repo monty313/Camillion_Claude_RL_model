@@ -454,3 +454,18 @@ pass FTMO-style challenges more consistently.
     the SB3-delegated ppo_math checks — left as-is with rationale.)
 - **C:** The audit can no longer fake-pass a collapsed network, silently lose its unit coverage, self-fail
   in Colab, or corrupt or hide its own report. Fast suite 151/151; audit still GO 38/42 exit 0.
+
+## [2026-06-26] JARVIS opens at the root URL + reusable one-click Colab notebook
+- **I:** Opening JARVIS didn't "just work": go_live printed a stale cockpit filename
+  (`/JARVIS%20Cockpit.dc.html`) while the real file is `0_JARVIS_COCKPIT.html`, and the root URL `/`
+  served nothing (no index). A non-programmer would hit a 404.
+- **R:** Tooling/UX only; read-only cockpit unchanged (still GET-only).
+- **A:** `jarvis_bridge.create_app` now adds `@app.get("/")` -> RedirectResponse to the cockpit file
+  (auto-detected: `0_JARVIS_COCKPIT.html`, URL-quoted), mounted BEFORE the catch-all StaticFiles so
+  `/state` etc. still win. `go_live` now prints the correct `http://host:port/` to open. Added
+  `notebooks/Camillion_One_Click_Train.ipynb` (13 cells: mount Drive -> clone -> install -> audit ->
+  train -> open JARVIS via Colab `proxyPort`), robust to re-runs.
+- **Verified:** TestClient — `GET /` 307 -> `/0_JARVIS_COCKPIT.html` -> 200 serves the HUD; `/health`
+  and `/ask` 200. Fast suite 151/151.
+- **C:** Mark opens JARVIS by clicking one link (or browsing to the server root) and trains from a
+  single saved notebook — no remembering filenames or commands.

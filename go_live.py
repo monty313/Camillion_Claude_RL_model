@@ -76,8 +76,8 @@ def main():
     except ImportError:
         raise SystemExit("[go_live] FastAPI/uvicorn not installed. Run: pip install -r requirements-jarvis.txt")
     from jarvis_bridge import create_app
-    print(f"[go_live] serving READ-ONLY cockpit on http://{args.host}:{args.port}  "
-          f"(/state /council /ask /knowledge /health). Open /JARVIS%20Cockpit.dc.html")
+    print(f"[go_live] serving READ-ONLY cockpit at  http://{args.host}:{args.port}/  "
+          f"<- open this in your browser  (API: /state /council /ask /knowledge /health)")
     uvicorn.run(create_app(provider), host=args.host, port=args.port)
 
 
