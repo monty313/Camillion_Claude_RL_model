@@ -3,6 +3,23 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Operator manuals (REPO_GUIDE, JARVIS_GUIDE) + JARVIS troubleshooting brain
+- **I (Issue):** Monty wants an extremely detailed guide to how the whole folder works and how
+  JARVIS works, a common-problems-and-fixes section for training & trading, and that knowledge placed
+  where JARVIS ALWAYS has access so he can be asked directly how to fix any issue.
+- **R (Rule):** That request, 2026-06-26 — the fixes must be grounded in the real system (no guessing),
+  and JARVIS must carry them in context every deliberation.
+- **A (Application):** `docs/REPO_GUIDE.md` (every folder/module, the data->decision pipeline, how to
+  run, the locked invariants) and `docs/JARVIS_GUIDE.md` (the cockpit, the council, every endpoint,
+  going live, how to ask for fixes), authored from a parallel directory-mapping pass. New
+  `src/jarvis/knowledge.py` = the always-on knowledge base (system summary + ~30 grounded training/
+  trading/data/bridge fixes + ranked search) wired into the council context + every JARVIS prompt;
+  `council.answer()` + bridge `GET /ask` and `GET /knowledge` (read-only); `docs/TROUBLESHOOTING.md`
+  generated from that single source. 5 new tests (ranking, well-formed entries, council carries
+  knowledge, ask returns the right grounded fix). 136/136 green.
+- **C (Conclusion):** Monty can read the whole system or just ask JARVIS "how do I fix X?" and get a
+  system-correct, file-specific answer that always points at the next step toward a consistent pass.
+
 ## [2026-06-26] JARVIS live bridge + grounded, progressive multi-agent COUNCIL
 - **I (Issue):** Wire the JARVIS cockpit to the real bot (read-only), and make the LLM agents
   (OMEGA/JUSTICE/JARVIS) reason from the live system + chat history, talk to each other, and always

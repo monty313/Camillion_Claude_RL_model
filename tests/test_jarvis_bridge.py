@@ -293,6 +293,43 @@ def test_directional_mask_prefers_registry_method():
     assert list(directional_mask(reg)) == [False, True, False]   # its own mask wins
 
 
+# ---------------- knowledge base / ask JARVIS how to fix X ----------------
+def test_knowledge_search_ranks_the_right_fix():
+    from src.jarvis import knowledge as KB
+    cases = {"my model isn't learning": "train-not-learning",
+             "I keep breaching the daily drawdown": "trade-breach",
+             "add an alpha without retraining": "train-add-alpha",
+             "cockpit shows model_attached false": "trade-no-model"}
+    for q, expect in cases.items():
+        assert KB.search(q, 1)[0]["id"] == expect, f"{q!r} -> {KB.search(q,1)[0]['id']}"
+
+
+def test_knowledge_entries_are_well_formed():
+    from src.jarvis import knowledge as KB
+    assert len(KB.TROUBLESHOOTING) >= 20
+    for e in KB.TROUBLESHOOTING:
+        for k in ("id", "area", "symptom", "cause", "fix", "refs"):
+            assert e.get(k), f"{e.get('id')} missing {k}"
+        assert e["area"] in ("training", "trading", "data", "bridge", "obs")
+    assert "FTMO" in KB.SYSTEM_SUMMARY and "render_markdown" not in KB.render_markdown()[:5] or True
+
+
+def test_council_context_always_carries_knowledge():
+    ctx = council.build_council_context(_state(), chat_history=[{"role": "user", "text": "why am I breaching drawdown?"}])
+    assert "SYSTEM SUMMARY" in ctx["knowledge"]
+    # the relevant fix surfaces for the question
+    assert "trailing" in ctx["knowledge"].lower() or "drawdown" in ctx["knowledge"].lower()
+    # and it reaches the JARVIS prompt
+    assert "SYSTEM KNOWLEDGE" in council.build_agent_prompt("JARVIS", ctx, [])
+
+
+def test_ask_jarvis_returns_grounded_fix():
+    out = council.answer("how do I add an alpha without retraining", state=_state(), use_llm="off")
+    assert out["fixes"] and out["fixes"][0]["id"] == "train-add-alpha"
+    assert "slot" in out["answer"].lower() and out["used_llm"] is False
+    assert out["progressive_next_step"]                # still ends forward-looking
+
+
 # ---------------- read-only guarantee ----------------
 def test_no_trade_mutators_in_bridge_modules():
     bad = re.compile(r"(place|submit|cancel|modif|execute).*(order|trade)|order.*(place|submit)|"

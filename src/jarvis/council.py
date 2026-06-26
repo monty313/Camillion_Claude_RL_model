@@ -26,6 +26,7 @@
 from __future__ import annotations
 import os
 from src.jarvis.consistency import analyze_consistency
+from src.jarvis import knowledge as KB
 
 # Each agent's lens. They share ONE goal: pass the FTMO challenge CONSISTENTLY.
 ROLES = {
@@ -53,11 +54,16 @@ ORDER = ("OMEGA", "JUSTICE", "JARVIS")
 
 
 def build_council_context(state: dict, chat_history=None, prior_messages=None) -> dict:
-    """Assemble everything the agents see: live state + grounded analysis + chat history."""
+    """Assemble everything the agents see: live state + grounded analysis + chat history + KNOWLEDGE."""
     analysis = analyze_consistency(state)
+    last_q = ""
+    for m in reversed(list(chat_history or [])):
+        if (m.get("role") in ("user", "monty")) and m.get("text"):
+            last_q = m["text"]; break
     return {
         "state": state,
         "analysis": analysis,                       # the system-logic the agents cite
+        "knowledge": KB.as_context(last_q or None, k=5),  # how the bot works + relevant fixes (always present)
         "chat_history": list(chat_history or [])[-12:],   # recent operator<->JARVIS turns
         "prior_messages": list(prior_messages or [])[-8:],  # earlier council statements this session
         "directive": PROGRESSIVE_DIRECTIVE,
@@ -133,6 +139,8 @@ def build_agent_prompt(agent: str, ctx: dict, transcript_so_far) -> str:
         f"  net_signal={a['net_signal']}  consensus={a['consensus_strength']}  confidence={a['confidence']}  entropy={a['entropy']}",
         f"  consecutive_losses={a['consecutive_losses']}  top_risk={a['top_risk_to_consistency']}  suggested_next={a['progressive_next_step']}",
     ]
+    if ctx.get("knowledge"):
+        lines += ["", "SYSTEM KNOWLEDGE (how the bot works + grounded fixes you may cite):", ctx["knowledge"]]
     if ctx["chat_history"]:
         lines += ["", "RECENT CHAT WITH MONTY (oldest first):"]
         for m in ctx["chat_history"]:
@@ -147,20 +155,22 @@ def build_agent_prompt(agent: str, ctx: dict, transcript_so_far) -> str:
     return "\n".join(lines)
 
 
-def _call_llm(agent: str, ctx: dict, transcript_so_far) -> str | None:
+def _llm_raw(system: str, user: str, max_tokens: int = 360) -> str | None:
+    """One Anthropic call; returns text or None on any problem (never raises)."""
     try:
         import anthropic
         client = anthropic.Anthropic()
-        msg = client.messages.create(
-            model="claude-opus-4-8", max_tokens=320,
-            system=ctx["roles"][agent] + "\n" + ctx["directive"],
-            messages=[{"role": "user", "content": build_agent_prompt(agent, ctx, transcript_so_far)}],
-        )
+        msg = client.messages.create(model="claude-opus-4-8", max_tokens=max_tokens,
+                                     system=system, messages=[{"role": "user", "content": user}])
         parts = [b.text for b in msg.content if getattr(b, "type", "") == "text"]
-        out = " ".join(parts).strip()
-        return out or None
+        return (" ".join(parts).strip()) or None
     except Exception:
         return None
+
+
+def _call_llm(agent: str, ctx: dict, transcript_so_far) -> str | None:
+    return _llm_raw(ctx["roles"][agent] + "\n" + ctx["directive"],
+                    build_agent_prompt(agent, ctx, transcript_so_far))
 
 
 # --------------------------------------------------------------------------- #
@@ -213,4 +223,36 @@ def deliberate(state: dict, chat_history=None, prior_messages=None, use_llm: str
             "prior_council_messages": len(ctx["prior_messages"]),
             "directive": ctx["directive"],
         },
+    }
+
+
+def answer(question: str, state: dict | None = None, chat_history=None, use_llm: str = "auto") -> dict:
+    """'Ask JARVIS how do I fix X.' Grounded in the knowledge base + (optionally) the live state.
+
+    Always works (deterministic, system-correct fixes); LLM-amplified when a key is present. Returns
+    {answer, fixes, used_llm, posture, progressive_next_step} -- read-only coaching, never a trade.
+    """
+    picks = KB.search(question, k=5)
+    a = analyze_consistency(state) if state else None
+    det = ["Here is how to fix that, sir:"]
+    for e in picks[:3]:
+        det.append(f"- {e['fix']} (see {e['refs']})")
+    if a:
+        det.append(f"In the meantime: posture {a['posture']}, p(pass) {a['p_pass_pct']}%, binding "
+                   f"{a['binding_constraint']} at {a['binding_headroom_pct']:.0f}% headroom. "
+                   f"Next toward a consistent pass: {a['progressive_next_step']}")
+    text, used_llm = "\n".join(det), False
+    if (use_llm == "on") or (use_llm == "auto" and llm_available()):
+        ctx = build_council_context(state or {}, chat_history=list(chat_history or []) + [{"role": "user", "text": question}])
+        user = (f"Monty asks: \"{question}\"\n\nAnswer as JARVIS in 2-4 sentences: tell him exactly how to fix "
+                f"it, cite the file(s) to edit, and end on the next step toward passing CONSISTENTLY. Ground "
+                f"every claim in the knowledge + live numbers below; if a figure is missing, say so.\n\n"
+                + ctx["knowledge"] + (f"\n\nLIVE ANALYSIS: {a}" if a else ""))
+        out = _llm_raw(ROLES["JARVIS"] + "\n" + PROGRESSIVE_DIRECTIVE, user, max_tokens=420)
+        if out:
+            text, used_llm = out, True
+    return {
+        "answer": text, "fixes": picks, "used_llm": used_llm,
+        "posture": a["posture"] if a else None,
+        "progressive_next_step": a["progressive_next_step"] if a else None,
     }

@@ -29,7 +29,8 @@ def create_app(provider=None):
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
     from src.jarvis.state_contract import build_state
-    from src.jarvis.council import deliberate
+    from src.jarvis.council import deliberate, answer
+    from src.jarvis import knowledge as KB
 
     if provider is None:
         from src.jarvis.state_provider import StateProvider
@@ -58,6 +59,16 @@ def create_app(provider=None):
         except Exception:
             hist = None
         return deliberate(build_state(provider.snapshot()), chat_history=hist, use_llm=use_llm)
+
+    @app.get("/knowledge")
+    def knowledge(q: str = ""):
+        """How the bot works + the troubleshooting fixes (search with ?q=). Read-only."""
+        return {"system": KB.SYSTEM_SUMMARY, "fixes": KB.search(q) if q else KB.TROUBLESHOOTING}
+
+    @app.get("/ask")
+    def ask(q: str, use_llm: str = "auto"):
+        """Ask JARVIS how to fix something; grounded in the knowledge base + the live state."""
+        return answer(q, state=build_state(provider.snapshot()), use_llm=use_llm)
 
     @app.get("/health")
     def health():
