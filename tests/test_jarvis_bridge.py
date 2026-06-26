@@ -248,13 +248,65 @@ def test_provider_from_cache_runs_on_real_built_cache():
     assert st["account"]["equity"] > 0 and st["model_attached"] is False
 
 
-def test_go_live_build_provider_demo_fallback():
-    # no --data -> the honest synthetic demo (real env + real alphas, no model)
+def test_go_live_builds_demo_portfolio():
+    # no --data -> a synthetic DEMO portfolio (MarketView over the universe), no model
     import go_live
-    prov = go_live.build_provider(None, "EURUSD", None)
-    st = build_state(prov.snapshot())
-    assert st["position"]["symbol"] == "EURUSD" and st["model_attached"] is False
-    assert len(st["alphas"]) == 16
+    from src.jarvis.market_view import MarketView
+    market = go_live.build_provider(None, ["EURUSD", "US30"], None)
+    assert isinstance(market, MarketView) and set(market.universe()) == {"EURUSD", "US30"}
+    rows = market.rows()
+    assert len(rows) == 2 and all(r["direction"] in ("BUY", "SELL", "FLAT") for r in rows)
+    assert market.primary().policy is None
+
+
+# ---------------- market heatmap (portfolio trader) ----------------
+def test_market_view_heatmap_and_portfolio():
+    from src.jarvis.market_view import MarketView
+    m = MarketView.from_synthetic(["EURUSD", "XAUUSD", "US30"], n=300)
+    for _ in range(5):
+        m.step()
+    rows = m.rows()
+    assert len(rows) == 3
+    for r in rows:
+        assert r["direction"] in ("BUY", "SELL", "FLAT") and 0.0 <= r["strength"] <= 1.0
+        assert set(r) >= {"symbol", "asset_class", "net_signal", "buy_pct", "sell_pct", "hottest_alpha", "position"}
+    assert rows[0]["strength"] >= rows[-1]["strength"]          # hottest first
+    port = m.portfolio()
+    assert port["symbols"] == 3 and port["shared_pot"] is False
+    assert "HEATMAP" in m.summary()
+
+
+# ---------------- policy registry (JARVIS organizes policies) ----------------
+def test_policy_registry_add_rank_champion():
+    import tempfile, os
+    from src.jarvis import policy_registry as PR
+    p = os.path.join(tempfile.mkdtemp(), "reg.json")
+    PR.add_policy(path=p, id="weak", fingerprint="fp1", walk_forward_pass_rate=0.4, max_dd_pct=8, largest_day_share_pct=60)
+    PR.add_policy(path=p, id="strong", fingerprint="fp1", walk_forward_pass_rate=0.9, max_dd_pct=3, largest_day_share_pct=30)
+    PR.add_policy(path=p, id="other-env", fingerprint="fp2", walk_forward_pass_rate=0.95)
+    ranked = PR.list_policies(p)
+    assert ranked[0]["id"] == "strong"                         # best consistency first
+    assert PR.champion(fingerprint="fp1", path=p)["id"] == "strong"
+    PR.set_status("strong", "rejected", path=p)
+    assert PR.champion(fingerprint="fp1", path=p)["id"] == "weak"   # rejected drops out
+    assert PR.get("strong", p)["status"] == "rejected"
+
+
+def test_council_knows_policies_and_market():
+    import tempfile, os
+    from src.jarvis import policy_registry as PR
+    p = os.path.join(tempfile.mkdtemp(), "reg.json")
+    PR.add_policy(path=p, id="champ-x", fingerprint="fpA", walk_forward_pass_rate=0.85)
+    os.environ["CAMILLION_POLICY_REGISTRY"] = p
+    try:
+        ctx = council.build_council_context(_state(), market_summary="MARKET HEATMAP (4 symbols, lean +0.10)")
+        assert "champ-x" in ctx["policies"] and "MARKET HEATMAP" in ctx["market"]
+        prompt = council.build_agent_prompt("JARVIS", ctx, [])
+        assert "POLICY ROSTER" in prompt and "MARKET" in prompt
+        out = council.answer("which policy should I run?", state=_state(), use_llm="off")
+        assert "champ-x" in out["answer"]                      # JARVIS organizes by consistency
+    finally:
+        del os.environ["CAMILLION_POLICY_REGISTRY"]
 
 
 def test_provider_day_history_is_list():
@@ -353,17 +405,23 @@ def test_no_trade_mutators_in_bridge_modules():
 
 
 # ---------------- optional FastAPI smoke (skips if not installed) ----------------
-def test_bridge_routes_are_get_only():
+def test_bridge_routes_are_get_only_and_portfolio():
     try:
         import fastapi  # noqa: F401
+        from fastapi.testclient import TestClient
     except Exception:
-        print("SKIP test_bridge_routes_are_get_only: fastapi not installed")
+        print("SKIP test_bridge_routes_are_get_only_and_portfolio: fastapi not installed")
         return
     from jarvis_bridge import create_app
-    app = create_app(StateProvider.from_synthetic(n=300))
-    methods = set()
-    for r in app.routes:
-        for m in getattr(r, "methods", set()) or set():
-            methods.add((getattr(r, "path", ""), m))
-    assert ("/state", "GET") in methods and ("/council", "GET") in methods
+    from src.jarvis.market_view import MarketView
+    app = create_app(MarketView.from_synthetic(["EURUSD", "US30"], n=300))
+    methods = {(getattr(r, "path", ""), m) for r in app.routes for m in (getattr(r, "methods", set()) or set())}
+    for path in ("/state", "/council", "/heatmap", "/policies", "/ask", "/knowledge"):
+        assert (path, "GET") in methods, f"{path} GET missing"
     assert not any(m in {"POST", "PUT", "PATCH", "DELETE"} for _, m in methods), "bridge must be read-only"
+    c = TestClient(app)
+    st = c.get("/state").json()
+    assert st["universe"] == ["EURUSD", "US30"] and len(st["positions"]) == 2 and "portfolio" in st
+    hm = c.get("/heatmap").json()
+    assert len(hm["rows"]) == 2 and "HEATMAP" in hm["summary"]
+    assert c.post("/order").status_code == 405          # read-only holds across all endpoints

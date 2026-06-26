@@ -30,24 +30,40 @@ def create_app(provider=None):
     from fastapi.staticfiles import StaticFiles
     from src.jarvis.state_contract import build_state
     from src.jarvis.council import deliberate, answer
+    from src.jarvis.market_view import MarketView
     from src.jarvis import knowledge as KB
+    from src.jarvis import policy_registry as PR
 
-    if provider is None:
-        from src.jarvis.state_provider import StateProvider
-        provider = StateProvider.from_synthetic()
+    # The bot is a PORTFOLIO trader -> the bridge is built on a MarketView (the whole FTMO
+    # universe). A single StateProvider is wrapped automatically for back-compat.
+    market = MarketView.wrap(provider)
 
     app = FastAPI(title="JARVIS bridge (read-only)")
     # GET-only CORS: the HUD may be opened from a file:// or another origin.
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
 
+    def _portfolio_state():
+        prim = market.primary()
+        st = build_state(prim.snapshot())            # the featured symbol (account + policy + clock)
+        st["universe"] = market.universe()           # the bot trades ALL of these at once
+        st["positions"] = market.positions()         # per-symbol portfolio positions
+        st["portfolio"] = market.portfolio()
+        st["heatmap"] = market.rows()                # the full-market buy/sell map (also at /heatmap)
+        return st
+
     @app.get("/state")
     def state():
-        provider.step()                       # advance the sim one bar per poll (read-only)
-        return build_state(provider.snapshot())
+        market.step()                                # advance the whole portfolio one bar per poll (read-only)
+        return _portfolio_state()
+
+    @app.get("/heatmap")
+    def heatmap():
+        """The full FTMO-universe buy/sell heatmap (its own cockpit tab). Read-only."""
+        return {"rows": market.rows(), "summary": market.summary(), "portfolio": market.portfolio()}
 
     @app.get("/council")
     def council(use_llm: str = "auto", chat: str = ""):
-        """OMEGA -> JUSTICE -> JARVIS deliberation over the live state (grounded + progressive).
+        """OMEGA -> JUSTICE -> JARVIS deliberation over the live PORTFOLIO (grounded + progressive).
 
         `chat` is an optional URL-encoded JSON array of recent {role,text} turns so the council
         reasons WITH the conversation. Read-only: it only shapes advice, never a trade.
@@ -58,7 +74,12 @@ def create_app(provider=None):
             hist = hist if isinstance(hist, list) else None
         except Exception:
             hist = None
-        return deliberate(build_state(provider.snapshot()), chat_history=hist, use_llm=use_llm)
+        return deliberate(_portfolio_state(), chat_history=hist, use_llm=use_llm, market_summary=market.summary())
+
+    @app.get("/policies")
+    def policies():
+        """The policy roster JARVIS organizes -- ranked by how CONSISTENTLY each passes FTMO."""
+        return {"policies": PR.list_policies(), "champion": PR.champion(), "summary": PR.summary()}
 
     @app.get("/knowledge")
     def knowledge(q: str = ""):
@@ -67,12 +88,13 @@ def create_app(provider=None):
 
     @app.get("/ask")
     def ask(q: str, use_llm: str = "auto"):
-        """Ask JARVIS how to fix something; grounded in the knowledge base + the live state."""
-        return answer(q, state=build_state(provider.snapshot()), use_llm=use_llm)
+        """Ask JARVIS how to fix something / which policy to run; grounded in the live system."""
+        return answer(q, state=_portfolio_state(), use_llm=use_llm, market_summary=market.summary())
 
     @app.get("/health")
     def health():
-        return {"ok": True, "model_attached": provider.policy is not None}
+        return {"ok": True, "model_attached": market.primary().policy is not None,
+                "symbols": market.universe()}
 
     # serve the HUD + support.js from the repo root LAST (so /state etc. take priority)
     here = os.path.dirname(os.path.abspath(__file__))

@@ -3,6 +3,25 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Portfolio cockpit: market heatmap + policy registry JARVIS organizes by consistency
+- **I (Issue):** The bot is a PORTFOLIO trader (one pot, the whole FTMO universe at once), the
+  cockpit needs a market heatmap as its own tab, we must be able to easily add a policy, and JARVIS
+  must know each policy's detail relative to passing the FTMO challenge consistently.
+- **R (Rule):** Operator clarification, 2026-06-26 — portfolio not single-asset; heatmap tab; easy
+  policy add; JARVIS organizes policies by consistency.
+- **A (Application):** `src/jarvis/market_view.py` (a read-only StateProvider per symbol -> the
+  full-universe buy/sell heatmap + per-symbol positions + a portfolio view; honest that the shared-pot
+  ENV is the next build). `src/jarvis/policy_registry.py` (persistent JSON registry: add_policy/list/
+  champion/set_status, ranked by a CONSISTENCY score = pass-rate + low max-DD + low day concentration;
+  CLI `python -m src.jarvis.policy_registry add ...`). The council + JARVIS prompts now carry the
+  market summary + the policy roster; `answer()` handles "which policy should I run?". Bridge gains
+  GET /heatmap + GET /policies and /state gains universe/positions/portfolio/heatmap; go_live.py is
+  portfolio-first (`--symbols`). Knowledge + the two guides + the HUD wiring patch updated. +6 tests,
+  140/140 green; still structurally read-only.
+- **C (Conclusion):** One cockpit shows the whole FTMO book and one ranked, JARVIS-curated view of
+  which policy passes most consistently — the operator picks the right policy and reads the whole
+  market at a glance, all toward a consistent portfolio pass.
+
 ## [2026-06-26] Operator manuals (REPO_GUIDE, JARVIS_GUIDE) + JARVIS troubleshooting brain
 - **I (Issue):** Monty wants an extremely detailed guide to how the whole folder works and how
   JARVIS works, a common-problems-and-fixes section for training & trading, and that knowledge placed

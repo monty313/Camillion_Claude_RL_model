@@ -136,3 +136,33 @@ the `policySnap`/`netSignal` live-preference) + two persona lines. Everything el
 P(pass), playbook, red-folder, voice, EXPORT BRIEF) recomputes from the live fields automatically.
 Nothing in the HUD's look changes — it just runs on the real bot, and JARVIS's council reasons from
 the real system, with the chat, toward a consistent pass.
+
+---
+
+## 6. MARKET HEATMAP tab (the bot trades the WHOLE FTMO universe at once)
+The bot is a **portfolio trader**. `GET /heatmap` returns one row per symbol — its own tab:
+
+```jsonc
+{ "rows": [ { "symbol":"US30", "asset_class":"index", "net_signal":0.42, "direction":"BUY",
+             "strength":0.42, "buy_pct":0.6, "sell_pct":0.1, "hottest_alpha":"ORB NY breakout",
+             "position":"LONG", "n_directional":16 }, ... ],
+  "summary": "MARKET HEATMAP (4 symbols, portfolio lean +0.10): US30 BUY(0.42); ...",
+  "portfolio": { "symbols":4, "net_lean":0.10, "active_symbols":["US30"], "open_positions":1 } }
+```
+Add a **HEATMAP** view + a nav button (like COCKPIT / EVOLVE). Fetch it on a timer and render a grid:
+```js
+async heatmapLive(){
+  try{ const d = await (await fetch('http://localhost:8000/heatmap',{cache:'no-store'})).json();
+       this.setState({ heat:d.rows, heatSummary:d.summary, portfolio:d.portfolio }); }catch(e){}
+}
+// each cell: colour by direction (BUY #39ffb0 / SELL #ff5a5a / FLAT #6f93ab), opacity by strength;
+// label = symbol; subtitle = hottest_alpha. (/state also includes the same rows as `heatmap`.)
+```
+The cockpit's single position becomes the **featured** symbol; `st.positions[]` holds the whole book.
+
+## 7. POLICIES panel (JARVIS organizes them by FTMO consistency)
+`GET /policies` returns the roster ranked by a consistency score (pass-rate, low max-DD, low day-to-day
+concentration), the `champion`, and a `summary`. Show it as a list, highlight the champion, and let
+JARVIS pick: ask *"which policy should I run?"* → he answers from the same roster. **Add a policy** with
+one line: `python -m src.jarvis.policy_registry add --id v2 --path models/... --fingerprint <fp>
+--pass-rate 0.88 --max-dd 3.2 --largest-day 31` — it appears in `/policies` and JARVIS's context at once.

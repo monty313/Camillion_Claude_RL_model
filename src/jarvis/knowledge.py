@@ -248,6 +248,37 @@ TROUBLESHOOTING = [
      "fix": "that's intentional and structural — the bridge has GET routes only (POST/PUT/PATCH/DELETE return "
             "405). JARVIS observes, reasons and advises; he never touches the trading code or places orders.",
      "refs": "jarvis_bridge.py"},
+
+    # ---------------- PORTFOLIO / POLICIES / HEATMAP ----------------
+    {"id": "portfolio-trader", "area": "trading",
+     "symptom": "is the bot a single-asset trader, or does it trade everything at once?",
+     "cause": "the env is single-symbol today, but the GOAL is portfolio trading",
+     "fix": "it is a PORTFOLIO trader — ONE shared equity/drawdown pot across the WHOLE FTMO universe. Train one "
+            "policy across symbols (make_multi_symbol_vec_env, per-asset calibrated size) and watch the full "
+            "market on the heatmap tab. NOTE: a true shared-pot portfolio ENV (simultaneous positions in one "
+            "account) is the next env build; today the MarketView aggregates per-symbol envs for the heatmap.",
+     "refs": "src/training/vector_env_factory.py, src/jarvis/market_view.py, config/asset_specs.py"},
+    {"id": "policy-organize", "area": "training",
+     "symptom": "I have several policies — which do I run, and how do I keep them organized?",
+     "cause": "no single ranked view of policies by how consistently they pass",
+     "fix": "register each trained model in the policy registry; JARVIS ranks them by a CONSISTENCY score "
+            "(walk-forward pass-rate, low max-DD, low day-to-day concentration). champion() = the one to run, "
+            "and only policies at the SAME env fingerprint are comparable. Ask JARVIS 'which policy should I run?'",
+     "refs": "src/jarvis/policy_registry.py, src/training/run_log.py, src/training/env_fingerprint.py"},
+    {"id": "policy-add", "area": "training",
+     "symptom": "how do I add a new policy so JARVIS knows about it?",
+     "cause": "the policy isn't registered yet",
+     "fix": "one line: `python -m src.jarvis.policy_registry add --id my-policy --path models/camillion_ppo "
+            "--fingerprint <fp> --pass-rate 0.8 --max-dd 3.5 --largest-day 30`, or policy_registry.add_policy(...). "
+            "It appears in GET /policies and in JARVIS's context immediately.",
+     "refs": "src/jarvis/policy_registry.py"},
+    {"id": "heatmap-tab", "area": "bridge",
+     "symptom": "where is the market heatmap / how do I see all symbols at once?",
+     "cause": "the heatmap is its own cockpit tab fed by a separate endpoint",
+     "fix": "GET /heatmap returns the buy/sell signal of EVERY FTMO symbol (direction, strength, buy/sell %, "
+            "hottest alpha) — its own tab. Wire the tab per docs/JARVIS_LIVE_WIRING.md; the same rows are also "
+            "on /state as `heatmap`.",
+     "refs": "jarvis_bridge.py (/heatmap), src/jarvis/market_view.py, docs/JARVIS_LIVE_WIRING.md"},
 ]
 
 

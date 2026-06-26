@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 from src.jarvis.consistency import analyze_consistency
 from src.jarvis import knowledge as KB
+from src.jarvis import policy_registry as PR
 
 # Each agent's lens. They share ONE goal: pass the FTMO challenge CONSISTENTLY.
 ROLES = {
@@ -53,8 +54,9 @@ PROGRESSIVE_DIRECTIVE = (
 ORDER = ("OMEGA", "JUSTICE", "JARVIS")
 
 
-def build_council_context(state: dict, chat_history=None, prior_messages=None) -> dict:
-    """Assemble everything the agents see: live state + grounded analysis + chat history + KNOWLEDGE."""
+def build_council_context(state: dict, chat_history=None, prior_messages=None, market_summary=None) -> dict:
+    """Assemble everything the agents see: live PORTFOLIO state + grounded analysis + chat history +
+    KNOWLEDGE + the MARKET heatmap + the POLICY roster (so JARVIS organizes policies by consistency)."""
     analysis = analyze_consistency(state)
     last_q = ""
     for m in reversed(list(chat_history or [])):
@@ -63,12 +65,14 @@ def build_council_context(state: dict, chat_history=None, prior_messages=None) -
     return {
         "state": state,
         "analysis": analysis,                       # the system-logic the agents cite
-        "knowledge": KB.as_context(last_q or None, k=5),  # how the bot works + relevant fixes (always present)
-        "chat_history": list(chat_history or [])[-12:],   # recent operator<->JARVIS turns
-        "prior_messages": list(prior_messages or [])[-8:],  # earlier council statements this session
+        "knowledge": KB.as_context(last_q or None, k=5),  # how the bot works + relevant fixes
+        "policies": PR.summary(),                   # the policy roster, ranked by FTMO consistency
+        "market": market_summary or "",             # the full-universe heatmap (portfolio trader)
+        "chat_history": list(chat_history or [])[-12:],
+        "prior_messages": list(prior_messages or [])[-8:],
         "directive": PROGRESSIVE_DIRECTIVE,
         "roles": ROLES,
-        "goal": "pass the FTMO challenge consistently (+2.5%/day -> +10%, inside the walls)",
+        "goal": "pass the FTMO challenge consistently across the WHOLE FTMO portfolio (one pot, all symbols; +2.5%/day -> +10%, inside the walls)",
     }
 
 
@@ -139,6 +143,10 @@ def build_agent_prompt(agent: str, ctx: dict, transcript_so_far) -> str:
         f"  net_signal={a['net_signal']}  consensus={a['consensus_strength']}  confidence={a['confidence']}  entropy={a['entropy']}",
         f"  consecutive_losses={a['consecutive_losses']}  top_risk={a['top_risk_to_consistency']}  suggested_next={a['progressive_next_step']}",
     ]
+    if ctx.get("market"):
+        lines += ["", "MARKET (the portfolio trades ALL of these at once):", ctx["market"]]
+    if ctx.get("policies"):
+        lines += ["", "POLICY ROSTER (you organize these by FTMO consistency):", ctx["policies"]]
     if ctx.get("knowledge"):
         lines += ["", "SYSTEM KNOWLEDGE (how the bot works + grounded fixes you may cite):", ctx["knowledge"]]
     if ctx["chat_history"]:
@@ -176,13 +184,15 @@ def _call_llm(agent: str, ctx: dict, transcript_so_far) -> str | None:
 # --------------------------------------------------------------------------- #
 # The deliberation.                                                            #
 # --------------------------------------------------------------------------- #
-def deliberate(state: dict, chat_history=None, prior_messages=None, use_llm: str = "auto") -> dict:
-    """Run OMEGA -> JUSTICE -> JARVIS over the live state + chat history.
+def deliberate(state: dict, chat_history=None, prior_messages=None, use_llm: str = "auto",
+               market_summary=None) -> dict:
+    """Run OMEGA -> JUSTICE -> JARVIS over the live PORTFOLIO + chat history + the policy roster.
 
     use_llm: "auto" (LLM if available, else deterministic), "off", or "on".
     Returns {transcript, ruling, analysis, llm_used, grounded_in, context_seen}.
     """
-    ctx = build_council_context(state, chat_history=chat_history, prior_messages=prior_messages)
+    ctx = build_council_context(state, chat_history=chat_history, prior_messages=prior_messages,
+                                market_summary=market_summary)
     a = ctx["analysis"]
     want_llm = (use_llm == "on") or (use_llm == "auto" and llm_available())
 
@@ -226,29 +236,43 @@ def deliberate(state: dict, chat_history=None, prior_messages=None, use_llm: str
     }
 
 
-def answer(question: str, state: dict | None = None, chat_history=None, use_llm: str = "auto") -> dict:
-    """'Ask JARVIS how do I fix X.' Grounded in the knowledge base + (optionally) the live state.
-
-    Always works (deterministic, system-correct fixes); LLM-amplified when a key is present. Returns
-    {answer, fixes, used_llm, posture, progressive_next_step} -- read-only coaching, never a trade.
+def answer(question: str, state: dict | None = None, chat_history=None, use_llm: str = "auto",
+           market_summary=None) -> dict:
+    """'Ask JARVIS how do I fix X / which policy do I run.' Grounded in the knowledge base, the
+    POLICY roster, and the live portfolio. Always works (deterministic); LLM-amplified when a key
+    is present. Returns {answer, fixes, used_llm, posture, progressive_next_step} -- read-only.
     """
+    ql = (question or "").lower()
+    is_policy_q = any(t in ql for t in ("policy", "policies", "which model", "champion", "best model"))
     picks = KB.search(question, k=5)
     a = analyze_consistency(state) if state else None
-    det = ["Here is how to fix that, sir:"]
-    for e in picks[:3]:
-        det.append(f"- {e['fix']} (see {e['refs']})")
+    if is_policy_q:
+        det = ["On the policies, sir — ranked by how consistently each passes:", PR.summary()]
+        champ = PR.champion()
+        if champ:
+            pr = champ.get("walk_forward_pass_rate")
+            det.append(f"I would run '{champ['id']}': consistency {champ['consistency_score']}/100"
+                       + (f", pass-rate {round(float(pr) * 100)}%" if pr is not None else "")
+                       + ". Remember: only policies at the SAME env fingerprint are comparable.")
+    else:
+        det = ["Here is how to fix that, sir:"]
+        for e in picks[:3]:
+            det.append(f"- {e['fix']} (see {e['refs']})")
     if a:
         det.append(f"In the meantime: posture {a['posture']}, p(pass) {a['p_pass_pct']}%, binding "
                    f"{a['binding_constraint']} at {a['binding_headroom_pct']:.0f}% headroom. "
                    f"Next toward a consistent pass: {a['progressive_next_step']}")
     text, used_llm = "\n".join(det), False
     if (use_llm == "on") or (use_llm == "auto" and llm_available()):
-        ctx = build_council_context(state or {}, chat_history=list(chat_history or []) + [{"role": "user", "text": question}])
-        user = (f"Monty asks: \"{question}\"\n\nAnswer as JARVIS in 2-4 sentences: tell him exactly how to fix "
-                f"it, cite the file(s) to edit, and end on the next step toward passing CONSISTENTLY. Ground "
-                f"every claim in the knowledge + live numbers below; if a figure is missing, say so.\n\n"
-                + ctx["knowledge"] + (f"\n\nLIVE ANALYSIS: {a}" if a else ""))
-        out = _llm_raw(ROLES["JARVIS"] + "\n" + PROGRESSIVE_DIRECTIVE, user, max_tokens=420)
+        ctx = build_council_context(state or {}, market_summary=market_summary,
+                                    chat_history=list(chat_history or []) + [{"role": "user", "text": question}])
+        user = (f"Monty asks: \"{question}\"\n\nAnswer as JARVIS in 2-4 sentences: answer exactly (how to fix "
+                f"it, OR which policy to run + why), cite the file(s) to edit, and end on the next step toward "
+                f"passing CONSISTENTLY across the portfolio. Ground every claim in the context below; if a "
+                f"figure is missing, say so.\n\n" + ctx["knowledge"] + "\n\n" + ctx["policies"]
+                + (f"\n\nMARKET: {ctx['market']}" if ctx.get("market") else "")
+                + (f"\n\nLIVE ANALYSIS: {a}" if a else ""))
+        out = _llm_raw(ROLES["JARVIS"] + "\n" + PROGRESSIVE_DIRECTIVE, user, max_tokens=440)
         if out:
             text, used_llm = out, True
     return {

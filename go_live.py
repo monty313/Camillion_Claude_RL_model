@@ -43,28 +43,34 @@ def _reg(AlphaRegistry, register_all):
     r = AlphaRegistry(); register_all(r); return r
 
 
-def build_provider(data_dir: str | None, symbol: str, model_path: str | None):
-    """Build the StateProvider: real cache (+ optional model) if --data, else the synthetic demo."""
-    from src.jarvis.state_provider import StateProvider
+def build_provider(data_dir: str | None, symbols, model_path: str | None):
+    """Build the PORTFOLIO view (MarketView over the whole FTMO universe): real cache (+ optional
+    one policy across the book) if --data, else the honest synthetic demo. The bot trades all symbols."""
+    from src.jarvis.market_view import MarketView
+    syms = list(symbols) if isinstance(symbols, (list, tuple)) else [symbols]
     if data_dir:
-        policy = _load_policy(model_path, data_dir, symbol) if model_path else None
-        print(f"[go_live] LIVE on real cache: {data_dir} ({symbol}) | model={'yes' if policy else 'no (honest fallback)'}")
-        return StateProvider.from_cache(data_dir, symbol=symbol, policy=policy)
-    print("[go_live] no --data given -> running the synthetic DEMO feed (real env + real alphas, placeholder prices).")
-    return StateProvider.from_synthetic(symbol=symbol)
+        policy = _load_policy(model_path, data_dir, syms[0]) if model_path else None
+        print(f"[go_live] LIVE on real cache: {data_dir} | universe={syms} | "
+              f"model={'yes' if policy else 'no (honest fallback)'}")
+        return MarketView.from_cache(data_dir, syms, policy=policy)
+    print(f"[go_live] no --data given -> synthetic DEMO portfolio (real env + real alphas) over {syms}.")
+    return MarketView.from_synthetic(syms)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Launch the read-only JARVIS cockpit (live or demo).")
+    from config import variables as V
+    ap = argparse.ArgumentParser(description="Launch the read-only JARVIS cockpit (portfolio; live or demo).")
     ap.add_argument("--data", default=os.environ.get("CAMILLION_CACHE_DIR"),
                     help="cache dir built by cache_builder.build_cache (else CAMILLION_CACHE_DIR; else demo)")
-    ap.add_argument("--symbol", default=os.environ.get("CAMILLION_SYMBOL", "EURUSD"))
+    ap.add_argument("--symbols", default=os.environ.get("CAMILLION_SYMBOLS", ",".join(V.SYMBOLS)),
+                    help="comma-separated FTMO universe to trade as a portfolio (default: config SYMBOLS)")
     ap.add_argument("--model", default=None, help="optional trained model path (e.g. models/camillion_ppo)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
 
-    provider = build_provider(args.data, args.symbol, args.model)
+    symbols = [s.strip() for s in str(args.symbols).split(",") if s.strip()]
+    provider = build_provider(args.data, symbols, args.model)
     try:
         import uvicorn
     except ImportError:

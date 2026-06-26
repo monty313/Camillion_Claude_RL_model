@@ -90,6 +90,16 @@ THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 
 - **Fix:** fewer envs or a smaller window; turn on High-RAM; as alphas scale, store alpha tables as int8 + share one precomputed table across envs (the road-to-1000-alphas plan).
 - **Where:** `config/training_speed_config.py, docs/ENVIRONMENT_STATE.md (Scaling alphas)`
 
+### I have several policies — which do I run, and how do I keep them organized?
+- **Likely cause:** no single ranked view of policies by how consistently they pass
+- **Fix:** register each trained model in the policy registry; JARVIS ranks them by a CONSISTENCY score (walk-forward pass-rate, low max-DD, low day-to-day concentration). champion() = the one to run, and only policies at the SAME env fingerprint are comparable. Ask JARVIS 'which policy should I run?'
+- **Where:** `src/jarvis/policy_registry.py, src/training/run_log.py, src/training/env_fingerprint.py`
+
+### how do I add a new policy so JARVIS knows about it?
+- **Likely cause:** the policy isn't registered yet
+- **Fix:** one line: `python -m src.jarvis.policy_registry add --id my-policy --path models/camillion_ppo --fingerprint <fp> --pass-rate 0.8 --max-dd 3.5 --largest-day 30`, or policy_registry.add_policy(...). It appears in GET /policies and in JARVIS's context immediately.
+- **Where:** `src/jarvis/policy_registry.py`
+
 ## Trading / FTMO problems
 
 ### the account breached the daily-loss or max-drawdown wall
@@ -131,6 +141,11 @@ THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 
 - **Likely cause:** a non-directional GATE outputs 1 (=movement on), which looks like a +1 buy
 - **Fix:** gates are EXCLUDED from the directional consensus (registry.directional_mask). The bridge sends the directional-only net_signal + net_signal_basis; the HUD must use those, never divide by a hardcoded 15. A gate's 1 means 'the market is moving', not 'buy'.
 - **Where:** `src/signals/signal_summary.py, src/jarvis/state_provider.py (directional_mask)`
+
+### is the bot a single-asset trader, or does it trade everything at once?
+- **Likely cause:** the env is single-symbol today, but the GOAL is portfolio trading
+- **Fix:** it is a PORTFOLIO trader — ONE shared equity/drawdown pot across the WHOLE FTMO universe. Train one policy across symbols (make_multi_symbol_vec_env, per-asset calibrated size) and watch the full market on the heatmap tab. NOTE: a true shared-pot portfolio ENV (simultaneous positions in one account) is the next env build; today the MarketView aggregates per-symbol envs for the heatmap.
+- **Where:** `src/training/vector_env_factory.py, src/jarvis/market_view.py, config/asset_specs.py`
 
 ## Data & cache problems
 
@@ -182,3 +197,8 @@ THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 
 - **Likely cause:** JARVIS is READ-ONLY by design
 - **Fix:** that's intentional and structural — the bridge has GET routes only (POST/PUT/PATCH/DELETE return 405). JARVIS observes, reasons and advises; he never touches the trading code or places orders.
 - **Where:** `jarvis_bridge.py`
+
+### where is the market heatmap / how do I see all symbols at once?
+- **Likely cause:** the heatmap is its own cockpit tab fed by a separate endpoint
+- **Fix:** GET /heatmap returns the buy/sell signal of EVERY FTMO symbol (direction, strength, buy/sell %, hottest alpha) — its own tab. Wire the tab per docs/JARVIS_LIVE_WIRING.md; the same rows are also on /state as `heatmap`.
+- **Where:** `jarvis_bridge.py (/heatmap), src/jarvis/market_view.py, docs/JARVIS_LIVE_WIRING.md`

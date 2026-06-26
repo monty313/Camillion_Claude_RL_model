@@ -106,11 +106,22 @@ statically from the repo root. **No POST/PUT/PATCH/DELETE exist** — that's the
 ## 5. The endpoints (all GET, all read-only)
 | Endpoint | What it returns |
 |---|---|
-| `GET /state` | the contract above (advances the sim one bar per poll) |
-| `GET /council?use_llm=auto&chat=<json>` | OMEGA→JUSTICE→JARVIS transcript + a grounded, progressive ruling (optionally with your chat) |
+| `GET /state` | the contract above **+ portfolio fields**: `universe`, `positions[]` (per symbol), `portfolio`, `heatmap` (advances the whole portfolio one bar per poll) |
+| `GET /heatmap` | the **full-FTMO-universe buy/sell map** (its own cockpit tab) + portfolio summary |
+| `GET /council?use_llm=auto&chat=<json>` | OMEGA→JUSTICE→JARVIS transcript + a grounded, progressive ruling (sees the market + policies + your chat) |
+| `GET /policies` | the **policy roster JARVIS organizes**, ranked by FTMO consistency, + the champion |
 | `GET /knowledge?q=<text>` | the system summary + the most relevant troubleshooting fixes |
-| `GET /ask?q=<text>` | **ask JARVIS how to fix X** — a grounded answer + the fixes + the live posture |
-| `GET /health` | `{ok, model_attached}` |
+| `GET /ask?q=<text>` | **ask JARVIS how to fix X / which policy to run** — grounded answer + fixes + live posture |
+| `GET /health` | `{ok, model_attached, symbols}` |
+
+### Portfolio + policies (the bot trades everything at once)
+The bridge is built on a **`MarketView`** — one read-only provider **per FTMO symbol** — so `/state`
+and `/heatmap` show the **whole book**, and the council reasons at the **portfolio** level. *(Honest
+note: each symbol is its own env today; a true single shared-pot portfolio env is the next env build.)*
+**Policies** live in `src/jarvis/policy_registry.py` (persisted JSON). Add one with
+`python -m src.jarvis.policy_registry add --id v2 --path models/... --pass-rate 0.88 --fingerprint <fp>`;
+JARVIS ranks them by a **consistency score** and `champion()` is the one to run (only same-fingerprint
+policies are comparable). Ask him *"which policy should I run?"* and he answers from the roster.
 
 ## 6. How to run it
 ```bash
