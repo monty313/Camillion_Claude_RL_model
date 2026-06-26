@@ -41,7 +41,40 @@
 
 ---
 
-## 3. Rules for building the GPU trainer (when we create it)
+## 3. Scaling alphas toward ~1000 (how we function, so the obs stays stable)
+
+Settled with the operator. Every future agent follows this so growing the alpha
+library never destabilises the observation:
+
+1. **Keep per-slot — do NOT switch to aggregates.** Each alpha owns one fixed
+   slot → 3 obs inputs (value, mask, streak). That is what lets the **policy
+   learn an individual weight per alpha**, which is the point. Aggregate /
+   consensus features would throw that away; only use them if the operator
+   explicitly asks.
+2. **Filling a slot never changes the obs shape.** Assigning an alpha flips its
+   slot's value `0 → ±1`; the number of inputs is unchanged, so trained policies
+   keep working. Adding alphas up to `MAX_STRATEGIES` is free and shape-stable.
+3. **Empty slots do NOT hurt learning.** A permanently-0 slot is invisible to the
+   network (its weight never trains). 900 empties don't make the bot dumber.
+4. **The only real cost is memory — and we solve it, not avoid it.** The env
+   precomputes a `(bars × slots)` alpha table + streak table once; the hot loop
+   just indexes a row (per-step CPU barely grows), and the per-alpha weighting
+   lives in the **network (GPU work, scales fine)**. What grows is the table's
+   RAM, especially when copied per parallel env. So: **(a)** store alpha/streak
+   tables as **int8** (values are −1/0/+1 → 1 byte, 4× cut); **(b)** compute the
+   table **once and share it read-only across envs**; **(c)** grow the filled
+   count over time — empties then cost only cheap memory.
+5. **Raising `MAX_STRATEGIES` is a deliberate contract bump** (it resizes 3 obs
+   blocks). Follow §2: bump the version, update the contract doc + this file +
+   shape tests; the fingerprint rolls automatically. Set it **once with
+   headroom** — cheap while pre-training, costly once a real policy exists.
+
+TL;DR: per-slot stays; never reshape the obs casually; beat memory with **int8 +
+a shared precomputed table**, not by aggregating away per-alpha weighting.
+
+---
+
+## 4. Rules for building the GPU trainer (when we create it)
 
 The CPU env is the reference. A GPU env/trainer is a *second implementation of the same thing*, so:
 
@@ -59,7 +92,7 @@ The CPU env is the reference. A GPU env/trainer is a *second implementation of t
 
 ---
 
-## 4. Tracking which policy to follow
+## 5. Tracking which policy to follow
 Every training run is recorded in the ledger (`docs/TRAINING_LEDGER.md`, data in
 `records/run_ledger.jsonl`). The current best policy = highest walk-forward **pass-rate** among
 non-rejected runs **of the current fingerprint**: `run_log.best_run(fingerprint=env_fingerprint())`.
