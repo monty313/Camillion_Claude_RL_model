@@ -127,6 +127,15 @@ def test_build_state_is_pure():
     assert snap == before                            # build_state must not mutate its input
 
 
+def test_build_state_defaults_explicit_none_never_crashes():
+    # an explicit None on any optional block must default like a missing key (never raise)
+    for none_key in ("human", "position", "account", "ftmo", "perf", "news"):
+        st = build_state(_snap(**{none_key: None}))
+        for k in TOP_KEYS:
+            assert k in st                           # still a complete, valid contract
+        assert isinstance(st["human"], dict) and isinstance(st["alphas"], list)
+
+
 # ---------------- consistency engine ----------------
 def test_consistency_always_has_progressive_step():
     for st in (_state(), _state(account={"balance": 100000.0, "equity": 100000.0,
@@ -219,6 +228,24 @@ def test_provider_headless_snapshot_is_valid():
     assert st["policy"]["confidence"] == 0.0          # no model -> honest
     assert st["account"]["peak_equity"] >= st["account"]["equity"] - 1e-6
     assert st["net_signal_basis"] == 16               # 16 directional alphas on this branch
+
+
+def test_provider_from_cache_runs_on_real_built_cache():
+    # end-to-end: build a real cache (the same pipeline training uses), then wire the provider to it
+    import tempfile, pandas as pd
+    from src.data.cache_builder import build_cache
+    n = 400
+    idx = pd.date_range("2026-03-02 00:00", periods=n, freq="1min")
+    cl = (100.0 + np.cumsum(np.random.default_rng(7).standard_normal(n) * 0.05))
+    df = pd.DataFrame({"open": cl, "high": cl + 0.05, "low": cl - 0.05, "close": cl, "volume": 1.0}, index=idx)
+    d = tempfile.mkdtemp()
+    build_cache(df, d, symbol="EURUSD")
+    prov = StateProvider.from_cache(d, symbol="EURUSD", warmup=200)
+    for _ in range(5):
+        prov.step()
+    st = build_state(prov.snapshot())
+    assert st["position"]["symbol"] == "EURUSD" and len(st["alphas"]) == 16
+    assert st["account"]["equity"] > 0 and st["model_attached"] is False
 
 
 def test_provider_day_history_is_list():

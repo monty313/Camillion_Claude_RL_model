@@ -83,7 +83,7 @@ def _policy_block(snap, gaps):
     advantage = _gap("policy.advantage", _f(ex.get("advantage", 0.0)), ex.get("advantage") is not None)
     regime = _gap("policy.regime", ex.get("regime", "n/a"), ex.get("regime") not in (None, "n/a"))
     recommended_lots = _gap("policy.recommended_lots(active size, not a sizing-head recommendation)",
-                            _f(ex.get("recommended_lots", snap.get("position", {}).get("lots", 0.0))),
+                            _f(ex.get("recommended_lots", (snap.get("position") or {}).get("lots", 0.0))),
                             ex.get("recommended_lots") is not None)
     expected_dd = _gap("policy.expected_dd_pct(headroom proxy, not a forward prediction)",
                        _f(ex.get("expected_dd_pct", 0.0)), ex.get("expected_dd_pct") is not None)
@@ -108,10 +108,11 @@ def build_state(snap: dict) -> dict:
     touches the env, policy, or network; it only shapes, folds, defaults, and flags.
     """
     gaps: list[str] = []
-    acc = snap.get("account", {}) or {}
-    ftmo = snap.get("ftmo", {}) or {}
-    pos = snap.get("position", {}) or {}
-    perf = snap.get("perf", {}) or {}
+    acc = snap.get("account") or {}
+    ftmo = snap.get("ftmo") or {}
+    pos = snap.get("position") or {}
+    perf = snap.get("perf") or {}
+    human = snap.get("human") or {}    # explicit None must default like a missing key (never crash)
 
     # alphas: pass through {name,signal,streak,directional}; HUD reads the first three
     alphas = []
@@ -124,9 +125,9 @@ def build_state(snap: dict) -> dict:
 
     if not pos.get("age_known", True):
         gaps.append("position.age_min(entry bar not observed)")
-    for field, val in (("news", snap.get("news", [])), ("human.overrides", _f(snap.get("human", {}).get("overrides", 0))),
-                       ("human.panic_closes", _f(snap.get("human", {}).get("panic_closes", 0))),
-                       ("human.discipline_pct", _f(snap.get("human", {}).get("discipline_pct", 0)))):
+    for field, val in (("news", snap.get("news") or []), ("human.overrides", _f(human.get("overrides", 0))),
+                       ("human.panic_closes", _f(human.get("panic_closes", 0))),
+                       ("human.discipline_pct", _f(human.get("discipline_pct", 0)))):
         if (field == "news" and not val) or (field != "news" and val == 0):
             gaps.append(field)
 
@@ -156,11 +157,11 @@ def build_state(snap: dict) -> dict:
             "consecutive_losses": int(_f(perf.get("consecutive_losses", 0))),
             "day_history": [round(_f(x), 2) for x in (perf.get("day_history") or [])],
         },
-        "news": list(snap.get("news", []) or []),
+        "news": list(snap.get("news") or []),
         "human": {
-            "overrides": int(_f(snap.get("human", {}).get("overrides", 0))),
-            "panic_closes": int(_f(snap.get("human", {}).get("panic_closes", 0))),
-            "discipline_pct": int(_f(snap.get("human", {}).get("discipline_pct", 0))),
+            "overrides": int(_f(human.get("overrides", 0))),
+            "panic_closes": int(_f(human.get("panic_closes", 0))),
+            "discipline_pct": int(_f(human.get("discipline_pct", 0))),
         },
         "clock": str(snap.get("clock", "00:00:00")),
         # --- additive (HUD ignores unknown keys; the council + tests use them) ---
