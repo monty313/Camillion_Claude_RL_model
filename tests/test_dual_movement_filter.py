@@ -110,6 +110,55 @@ def test_absent_alpha_private_is_safe():
     assert (env.alpha_matrix[:, 16:18] == 0.0).all()
 
 
+def test_directional_consensus_excludes_gates():
+    # THE PURPOSE FIX: a non-directional gate's 1 must NOT be counted as a buy.
+    from src.signals.signal_summary import summarize, net_balance
+    av = np.array([1, -1, 1, 0], dtype=np.float32)     # buy, sell, GATE(1), empty
+    occ = np.array([1, 1, 1, 0], dtype=np.float32)
+    dirm = np.array([1, 1, 0, 0], dtype=np.float32)    # slot 2 is a non-directional gate
+    # legacy (no mask): the gate's 1 is miscounted as a buy -> polluted
+    s_all = summarize(av, occ)
+    assert abs(s_all[0] - 2 / 3) < 1e-6 and abs(s_all[3] - 1 / 3) < 1e-6
+    assert abs(net_balance(av) - 1 / 3) < 1e-6
+    # with the directional mask: gate excluded -> clean 50/50, net 0
+    s_dir = summarize(av, occ, dirm)
+    assert s_dir[0] == 0.5 and s_dir[1] == 0.5 and s_dir[3] == 0.0
+    assert net_balance(av, dirm) == 0.0
+
+
+def test_registry_marks_movement_alphas_non_directional():
+    reg = AlphaRegistry(); register_all(reg)
+    occ = reg.occupancy_mask(); dm = reg.directional_mask()
+    assert occ[16] == 1.0 and occ[17] == 1.0           # movement alphas ARE assigned (visible)
+    assert dm[16] == 0.0 and dm[17] == 0.0             # but NOT directional (excluded from consensus)
+    assert dm[:16].sum() == 16.0 and dm.sum() == 16.0  # exactly the 16 directional alphas vote
+
+
+def test_env_gate_fires_but_does_not_move_the_consensus():
+    # register ONLY the 5m/30m movement gate, force it "moving": it fires 1 in its slot,
+    # yet the directional consensus (net_signal + alpha_summary) stays empty.
+    from src.strategies.register_dual_movement_filter_5m_30m_alpha import register as reg_gate
+    n = 700
+    idx, df = _synth_df(n, seed=3)
+    ind = build_aligned_indicators(df)
+    K = len(base.ALL_ALPHA_PRIVATE_COLUMNS)
+    ap = np.zeros((n, K), dtype=np.float32)
+    def setcol(name, val):
+        ap[:, base.ALL_ALPHA_PRIVATE_COLUMNS.index(name)] = val
+    for tf in ("5m", "30m"):
+        setcol(f"{tf}__adx14_raw", 30.0); setcol(f"{tf}__adx14_sma1sh5", 20.0)
+        setcol(f"{tf}__atr14_raw", 2.0);  setcol(f"{tf}__atr14_sma1sh5", 1.0)
+    reg = AlphaRegistry(); reg_gate(reg)               # ONLY the gate -> slot 0
+    env = TradingEnv(ind, df["close"].values.astype("float32"),
+                     idx.values.astype("datetime64[ns]").astype("int64"), reg,
+                     warmup=300, symbol="EURUSD", alpha_indicators=ap)
+    o, _ = env.reset()
+    assert (env.alpha_matrix[:, 0] == 1.0).all()       # the gate fires 1 in its own slot
+    assert np.allclose(env.net_signal, 0.0)            # ...but contributes NOTHING to net_signal
+    sl = OC.BLOCK_SLICES["alpha_summary"]
+    assert np.allclose(o[sl], 0.0)                     # buy%/sell%/active%/net% all 0 (no buy vote)
+
+
 def test_cache_builder_alpha_private_aligns():
     n = 3000
     _, df = _synth_df(n, seed=2)

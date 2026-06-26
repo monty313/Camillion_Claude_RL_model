@@ -74,6 +74,13 @@ class AlphaRegistry:
         return np.array([1.0 if s is not None else 0.0 for s in self._slots],
                         dtype=np.float32)
 
+    def directional_mask(self) -> np.ndarray:
+        """Length-64 float32: 1.0 if the slot holds a DIRECTIONAL alpha (votes +1/-1/0 in
+        the consensus), else 0.0 (empty slot OR a non-directional 1/0 gate). Used to keep
+        the directional summary/accuracy clean -- a movement gate's 1 must NOT count as a buy."""
+        return np.array([1.0 if (s is not None and getattr(s, "DIRECTIONAL", True)) else 0.0
+                         for s in self._slots], dtype=np.float32)
+
     def collect_alphas(self, ctx) -> np.ndarray:
         """Length-64 float32 of alpha OUTPUTS (+1/-1/0). Empty slots are 0
         (the occupancy mask tells empty apart from assigned-but-inactive)."""

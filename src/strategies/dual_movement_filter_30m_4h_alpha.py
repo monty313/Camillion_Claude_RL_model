@@ -22,6 +22,7 @@ from src.strategies.base import BaseStrategy
 
 class DualMovementFilter30m4hAlpha(BaseStrategy):
     name = "dual_movement_filter_30m_4h"
+    DIRECTIONAL = False   # 1/0 movement GATE -- excluded from the directional consensus
     LOW_TF, HIGH_TF = "30m", "4h"
     TIMEFRAMES = ("30m", "4h")
     # adx14_raw, adx14_sma1sh5, atr14_raw, atr14_sma1sh5 on each TF (sh5 = value 5 bars ago).

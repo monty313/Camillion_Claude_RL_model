@@ -3,6 +3,23 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Taught the model the alpha's PURPOSE: gates excluded from the directional consensus
+- **I (Issue):** The framework assumed every alpha is directional (+1 buy/-1 sell). The new
+  movement alphas output 1 = "moving" (a gate, not a buy), so their 1 was being miscounted as a
+  bullish vote in `alpha_summary` (buy%/net%), `net_signal`, `signal_memory`, and `signal_accuracy`
+  — the bot's read of "how bullish are my alphas" was being polluted.
+- **R (Rule):** A non-directional gate's 1 is "condition true", not a buy; it must be EXCLUDED from
+  the directional consensus, while still being visible per-slot so the policy learns its purpose.
+- **A (Application):** Added `BaseStrategy.DIRECTIONAL` (default True; the 2 movement alphas set
+  False), `registry.directional_mask()`, and an optional `directional_mask` arg on
+  `summarize()`/`net_balance()`. The env now computes `net_signal` + `alpha_summary` over
+  DIRECTIONAL slots only. Gates still appear in `alpha_values`/`alpha_mask`/`alpha_streak`.
+  Obs shape UNCHANGED (479/v1.5.0). Tests: consensus-excludes-gates, registry mask, env gate fires
+  but moves no consensus.
+- **C (Conclusion):** The policy reads a clean directional consensus AND a separate per-slot gate
+  it can learn to time entries with — so movement filters help (not confuse) the path to a
+  consistent FTMO pass.
+
 ## [2026-06-26] Added 2 non-directional movement alphas (ADX as an ALPHA-PRIVATE indicator)
 - **I (Issue):** Add a "is the market moving?" filter (STRAT-006): on both TFs, ADX rising AND
   ATR rising → 1, else 0 (never −1). It needs ADX, which the repo didn't have — and ADX columns

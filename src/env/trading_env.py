@@ -117,8 +117,11 @@ class TradingEnv:
                                 minute_of_day=int(self._minute_of_day[i]))
             self.alpha_matrix[i] = registry.collect_alphas(ctx)
         self.occupancy = registry.occupancy_mask()
-        self.net_signal = np.array([net_balance(self.alpha_matrix[i]) for i in range(T)],
-                                   dtype=np.float32)
+        # DIRECTIONAL consensus excludes non-directional gates (e.g. movement filters): a
+        # gate's 1 is not a buy, so it must not pollute net_signal / summary / accuracy.
+        self.directional = registry.directional_mask()
+        self.net_signal = np.array([net_balance(self.alpha_matrix[i], self.directional)
+                                    for i in range(T)], dtype=np.float32)
         self.sig_acc = accuracy_features(self.net_signal, self.close)        # (T,2) leak-free
         self.time_feats = np.stack([OB.time_features(pd.Timestamp(self.time_ns[i]))
                                     for i in range(T)]).astype(np.float32)    # (T,6)
@@ -377,7 +380,7 @@ class TradingEnv:
             "indicators": self.ind[i],
             "alpha_values": self.alpha_matrix[i],
             "alpha_mask": self.occupancy,
-            "alpha_summary": summarize(self.alpha_matrix[i], self.occupancy),
+            "alpha_summary": summarize(self.alpha_matrix[i], self.occupancy, self.directional),
             "signal_memory": last5_from_series(self.net_signal, i),
             "signal_accuracy": self.sig_acc[i],
             "account_daily": WL.daily_features(self.acc, self.cfg),

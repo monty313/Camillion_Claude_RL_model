@@ -17,18 +17,26 @@ from __future__ import annotations
 import numpy as np
 
 
-def summarize(alpha_values, occupancy_mask) -> np.ndarray:
+def summarize(alpha_values, occupancy_mask, directional_mask=None) -> np.ndarray:
     """Return float32 [buy_pct, sell_pct, active_pct, net_signal_pct].
 
     buy/sell/net are over ACTIVE (firing) alphas; active_pct is over ASSIGNED
     strategies. All are 0.0 when their denominator is 0 (nothing active/assigned).
     net_signal_pct in [-1, +1]: +1 all-buy, -1 all-sell, 0 balanced/none.
+
+    This is the DIRECTIONAL consensus. If `directional_mask` is given, ONLY directional
+    slots are counted (numerator AND denominator), so a non-directional 1/0 gate (e.g. a
+    movement filter) is excluded -- its 1 is not a buy. directional_mask=None = count all
+    occupied slots (legacy behaviour; identical when every alpha is directional).
     """
     av = np.asarray(alpha_values, dtype=np.float32).ravel()
     om = np.asarray(occupancy_mask, dtype=np.float32).ravel()
-    assigned = float(om.sum())
-    buy = float(np.count_nonzero(av == 1))
-    sell = float(np.count_nonzero(av == -1))
+    keep = (np.asarray(directional_mask, dtype=np.float32).ravel() > 0
+            if directional_mask is not None else om > 0)
+    avd = av[keep]
+    assigned = float(keep.sum())
+    buy = float(np.count_nonzero(avd == 1))
+    sell = float(np.count_nonzero(avd == -1))
     active = buy + sell
     buy_pct = buy / active if active > 0 else 0.0
     sell_pct = sell / active if active > 0 else 0.0
@@ -37,9 +45,15 @@ def summarize(alpha_values, occupancy_mask) -> np.ndarray:
     return np.array([buy_pct, sell_pct, active_pct, net_pct], dtype=np.float32)
 
 
-def net_balance(alpha_values) -> float:
-    """Just the net signal balance in [-1,+1] (for the last-5 signal memory)."""
+def net_balance(alpha_values, directional_mask=None) -> float:
+    """Net DIRECTIONAL signal balance in [-1,+1] (for signal memory + accuracy).
+
+    If `directional_mask` is given, only directional slots count -- a non-directional
+    gate's 1/0 never moves the balance (it is not a buy/sell vote).
+    """
     av = np.asarray(alpha_values, dtype=np.float32).ravel()
+    if directional_mask is not None:
+        av = av[np.asarray(directional_mask, dtype=np.float32).ravel() > 0]
     buy = float(np.count_nonzero(av == 1))
     sell = float(np.count_nonzero(av == -1))
     active = buy + sell
