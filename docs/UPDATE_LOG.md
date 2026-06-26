@@ -501,3 +501,17 @@ pass FTMO-style challenges more consistently.
   audit GO 38/42 with 6.6 ✅.
 - **C:** A malformed JARVIS link (or a 404 cockpit) now fails the big test instead of reaching Mark. The
   link is built by one tested function used by both the notebook and the server.
+
+## [2026-06-26] JARVIS on Colab: render inline (serve_kernel_port_as_iframe), drop URL strings
+- **I:** The link stayed broken because the URL-building lived in a NOTEBOOK CELL — `git pull` updates
+  repo files but NOT the cell already loaded in the user's browser tab, so re-running Step 6 ran the old
+  code. The whole "build a proxyPort URL string" approach is fragile.
+- **R:** Robustness fix; no contract/behaviour change.
+- **A:** Notebook Step 6 now uses Colab's native `output.serve_kernel_port_as_iframe(8000,
+  path='/'+COCKPIT_FILE)` (renders JARVIS INLINE in the notebook — no link, no DNS) plus
+  `serve_kernel_port_as_window(...)` for a pop-out tab. Both take `path=`, so no hand-built URLs.
+  Strengthened the regression test + audit 6.6 to also assert the DIRECT path `/0_JARVIS_COCKPIT.html`
+  serves 200 HTML (the exact path the iframe loads), verified via FastAPI TestClient.
+- **Verified:** `GET /0_JARVIS_COCKPIT.html` -> 200 HTML; suite 155/155; audit GO 38/42, 6.6 ✅.
+- **C:** JARVIS shows up inside the Colab notebook regardless of browser/DNS/auth, and the served paths
+  are guaranteed 200 by the big test.

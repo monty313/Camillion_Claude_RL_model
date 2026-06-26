@@ -585,7 +585,9 @@ def t_6_6():
     c = TestClient(create_app(MarketView.from_synthetic(["EURUSD"], n=200)))
     r = c.get("/", follow_redirects=True)
     assert r.status_code == 200 and "<html" in r.text.lower(), "server root did not serve the cockpit 200"
-    return PASS, f"JARVIS opens: root redirects to {COCKPIT_FILE} (200); link helper slash-correct (no '...dev0_' bug)."
+    direct = c.get("/" + COCKPIT_FILE)                  # the Colab inline panel loads this exact path
+    assert direct.status_code == 200 and "<html" in direct.text.lower(), f"/{COCKPIT_FILE} did not serve 200"
+    return PASS, f"JARVIS opens: root + /{COCKPIT_FILE} serve 200; link helper slash-correct (no '...dev0_' bug)."
 
 
 # --------------------------------------------------------------------- STEP 7 FUTURE

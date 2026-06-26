@@ -464,3 +464,7 @@ def test_root_url_redirects_to_existing_cockpit():
         f"root did not redirect to the cockpit (got {r.status_code} -> {r.headers.get('location')})"
     r2 = c.get("/", follow_redirects=True)
     assert r2.status_code == 200 and "<html" in r2.text.lower(), "cockpit did not serve as HTML 200"
+    # the Colab iframe loads the file path DIRECTLY (path='/<COCKPIT_FILE>') — it must serve 200 HTML
+    direct = c.get("/" + COCKPIT_FILE)
+    assert direct.status_code == 200 and "<html" in direct.text.lower(), \
+        f"/{COCKPIT_FILE} did not serve HTML 200 (the inline notebook panel loads this exact path)"
