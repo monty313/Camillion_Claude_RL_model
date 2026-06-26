@@ -3,6 +3,21 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Added the full-rewrite JAX GPU/TPU trainer blueprint
+- **I (Issue):** We want a future path to run vast data through thousands of parallel sims until
+  the bot passes FTMO consistently, with runtime-changeable target/risk and a pass-likelihood
+  readout — without losing the locked obs contract / FTMO numbers / fingerprint parity.
+- **R (Rule):** A from-scratch on-device JAX/Flax rewrite (co-location) unlocks GPU/TPU, but it
+  must be a *second implementation of the same env* — same observation (v1.5.0/479), same FTMO
+  numbers, same fingerprint, step-parity vs the CPU reference, same policy format.
+- **A (Application):** Wrote `docs/JAX_GPU_TPU_TRAINER_BLUEPRINT.md` (goal, honest cost,
+  non-negotiable invariants, co-location architecture, the 5 rebuild rules, runtime target/risk
+  via % features + domain randomization, pass-likelihood grid, training loop, build order,
+  when-not-to). Cross-linked from `ENVIRONMENT_STATE.md` §4. Docs only; no code/obs change.
+- **C (Conclusion):** Captures the high-throughput path (play thousands of trading lifetimes at
+  once, dial risk live, read the odds of passing) while guaranteeing it can never drift from the
+  CPU reference — so scaling speed never costs us a consistently-passing policy.
+
 ## [2026-06-26] Recorded the GPU-trainer learning principle (data-parallel RL)
 - **I (Issue):** When we build the GPU trainer, a future agent must understand WHY the GPU runs
   thousands of sims in lockstep — and that "all do the same thing" does not defeat learning.

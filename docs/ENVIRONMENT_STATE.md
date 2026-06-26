@@ -106,6 +106,13 @@ The CPU env is the reference. A GPU env/trainer is a *second implementation of t
 5. **Don't diverge silently.** Any intended behaviour change goes through §2 (bump + docs + tests),
    on **both** implementations, in the same PR.
 
+**Full-rewrite blueprint (GPU *and* TPU, when CPU is the wall):** the complete on-device
+JAX/Flax plan — co-location, fixed-shape + masking, branchless `lax.select`, custom PPO,
+runtime-changeable target/risk, and a pass-likelihood readout — lives in
+`docs/JAX_GPU_TPU_TRAINER_BLUEPRINT.md`. It keeps every invariant above (same obs contract,
+FTMO numbers, fingerprint, policy format). Build only when training *time* is the proven
+bottleneck; TPU stays a last resort (see §3 framing and the TPU analysis).
+
 ---
 
 ## 5. Tracking which policy to follow
