@@ -279,6 +279,23 @@ TROUBLESHOOTING = [
             "hottest alpha) — its own tab. Wire the tab per docs/JARVIS_LIVE_WIRING.md; the same rows are also "
             "on /state as `heatmap`.",
      "refs": "jarvis_bridge.py (/heatmap), src/jarvis/market_view.py, docs/JARVIS_LIVE_WIRING.md"},
+    {"id": "see-daily-results", "area": "training",
+     "symptom": "how do I see day-by-day results — did I make +2.5% of initial and stay inside the trailing DD?",
+     "cause": "a final equity number hides whether you passed CONSISTENTLY",
+     "fix": "run the day-by-day report: `python -m src.training.daily_report --data data_cache --symbol "
+            "EURUSD --model models/camillion_ppo`. It prints one row per day — P&L%, +TGT? (made +2.5% of "
+            "initial), TRAIL_DD% + <WALL? (inside the 4% trailing wall), DAILY_LOSS%, BREACH, cumulative % — "
+            "plus a PASS/FAIL summary. Full steps in docs/TRAINING_INSTRUCTIONS.md.",
+     "refs": "src/training/daily_report.py, docs/TRAINING_INSTRUCTIONS.md"},
+    {"id": "train-all-symbols-balance", "area": "training",
+     "symptom": "should I train per symbol, or on all four at once?",
+     "cause": "training one symbol at a time can't learn to balance the portfolio",
+     "fix": "train on ALL FOUR Google-Drive symbols TOGETHER with train_multi_symbol — one policy over "
+            "EURUSD/GBPUSD/XAUUSD/US30 with per-asset calibrated size + the cross-asset features. That is how "
+            "the bot learns to BALANCE the book (read every asset in common units, allocate risk across them) "
+            "instead of overfitting the easiest one. Mount Drive, build a cache per symbol, then "
+            "train_multi_symbol({sym: load_cache(...)}, ...).",
+     "refs": "src/training/trainer.py (train_multi_symbol), src/training/vector_env_factory.py, docs/TRAINING_INSTRUCTIONS.md"},
 ]
 
 
