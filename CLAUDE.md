@@ -16,6 +16,13 @@
 ## Core design (do not drift)
 - Each strategy = a signal generator. Output: `+1` buy, `-1` sell, `0` inactive
   (0 is "no setup", NOT a HOLD action). Empty slot = no strategy assigned.
+- **Two kinds of alpha** (both fill slots, both weighted per-slot by the policy):
+  *DIRECTIONAL* (default, `+1/-1/0`) vote in the directional consensus
+  (`alpha_summary` buy%/sell%/net% + `signal_accuracy`); *NON-DIRECTIONAL gates*
+  (`BaseStrategy.DIRECTIONAL = False`, output `1`/`0`, e.g. the movement filters)
+  are **excluded** from that consensus via `registry.directional_mask()` — a gate's
+  `1` is "condition true", NOT a buy, so it must never be miscounted as a bull vote.
+  The policy still sees a gate in its own slot + streak and learns its purpose.
 - The RL action space {HOLD, BUY, SELL, CLOSE} is SEPARATE from alpha outputs.
 - Observation = raw indicators (200) + alpha values (64) + alpha occupancy
   mask (64) + alpha summary % (4) + last-5 signal memory (5) + signal

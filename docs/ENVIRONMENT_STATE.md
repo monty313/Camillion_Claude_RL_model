@@ -19,7 +19,8 @@
 | Reward | equity-change/step **+ deliberate shaping**: −breach_penalty, +pass_bonus(+10%), +NY index bonus *(when merged)* |
 | FTMO rules | +2.5%/day of **initial**; phase-1 **4% trailing**; two-phase bank → optional **1% trailing**; **+10%** challenge pass; daily 5% / total 10% hard lines |
 | Per-asset sizing | `config/asset_specs.py` — each symbol sized so ~one daily range ≈ +2.5%, full adverse day < 4% |
-| Alpha roster | gravity + the pack *(15 on `main`; 16 once the ORB PR merges)* |
+| Alpha roster | **18** — gravity + 14-pack + ORB (15) + 2 dual-movement filters (16-17, non-directional 1/0) |
+| Alpha-private indicators | ADX(14) + 5-bar-shift columns: read by alphas via `ctx`, **NOT in the obs** (obs stays 479). Built by `cache_builder.build_aligned_alpha_private`, passed to the env as `alpha_indicators=` |
 | Transaction cost | per-side fraction of notional (`TRANSACTION_COST_FRAC_PER_SIDE`) |
 
 > Print the exact live values any time with `env_spec()` / `env_fingerprint()` — never trust memory.
@@ -71,6 +72,17 @@ library never destabilises the observation:
 
 TL;DR: per-slot stays; never reshape the obs casually; beat memory with **int8 +
 a shared precomputed table**, not by aggregating away per-alpha weighting.
+
+**ALPHA-PRIVATE INDICATORS (how a new alpha can need a NEW indicator without changing the
+obs).** When an alpha needs an indicator the obs doesn't have (e.g. ADX for the dual-movement
+filters), do **not** add it to the obs indicator block (that would resize the observation).
+Instead add it to the **alpha-private** set: `config/constants.py` (ADX_PERIODS,
+ALPHA_PRIVATE_SHIFT) → `src/indicators/base.py` (`per_tf_alpha_private_columns` /
+`compute_timeframe_alpha_private`, kept SEPARATE from the 220 obs indicators) →
+`cache_builder.build_aligned_alpha_private` → passed to the env as `alpha_indicators=` and
+merged into `ctx` **only**. The bot still perceives it — but **through the alpha's output slot**
+(e.g. a 1/0 movement signal), so the observation never changes. Operator rule (2026-06-26):
+*"if we don't have to add the extra indicator to the obs, don't — we just need the signal."*
 
 ---
 

@@ -25,6 +25,7 @@ from src.indicators.cci import cci_raw, cci_post
 from src.indicators.rsi import rsi_raw, rsi_post
 from src.indicators.bollinger import bollinger
 from src.indicators.atr import atr_raw, atr_post
+from src.indicators.adx import adx_raw
 
 
 def per_tf_columns() -> list[str]:
@@ -94,4 +95,51 @@ def compute_timeframe_indicators(high, low, close) -> np.ndarray:
     out[:, col] = sma(high, C.SMA_HL_PERIOD, C.SMA_HL_SHIFT); col += 1   # sma4_sh4_high
     out[:, col] = sma(low, C.SMA_HL_PERIOD, C.SMA_HL_SHIFT); col += 1    # sma4_sh4_low
     assert col == len(PER_TF_COLUMNS), (col, len(PER_TF_COLUMNS))
+    return out
+
+
+# =====================================================================
+# ALPHA-PRIVATE INDICATORS (NOT in the observation). Read by alphas via ctx only.
+# Order: all ADX raw, then all ADX SMA(1)-shift5, then all ATR SMA(1)-shift5.
+# SMA(1)-shift5 = the indicator's value 5 bars ago, so "raw > shift5" == "rising".
+# =====================================================================
+def per_tf_alpha_private_columns() -> list[str]:
+    """Alpha-private indicator column names for ONE timeframe, in canonical order.
+
+    Self-contained: the movement filter reads ALL four inputs from here (raw + the
+    5-bars-ago value for both ADX and ATR), so the alpha never depends on the obs.
+    """
+    s = C.ALPHA_PRIVATE_SHIFT
+    cols: list[str] = []
+    cols += [f"adx{p}_raw" for p in C.ADX_PERIODS]
+    cols += [f"adx{p}_sma1sh{s}" for p in C.ADX_PERIODS]
+    cols += [f"atr{p}_raw" for p in C.ATR_PERIODS]
+    cols += [f"atr{p}_sma1sh{s}" for p in C.ATR_PERIODS]
+    return cols
+
+
+PER_TF_ALPHA_PRIVATE_COLUMNS: list[str] = per_tf_alpha_private_columns()
+ALL_ALPHA_PRIVATE_COLUMNS: list[str] = [
+    f"{tf}__{name}" for tf in C.TIMEFRAMES for name in PER_TF_ALPHA_PRIVATE_COLUMNS
+]
+
+
+def compute_timeframe_alpha_private(high, low, close) -> np.ndarray:
+    """Compute the alpha-private indicators for one timeframe -> (N, K) float32.
+
+    K = len(PER_TF_ALPHA_PRIVATE_COLUMNS). Output length == input bar count.
+    """
+    close = np.asarray(close, dtype=np.float64).ravel()
+    high = np.asarray(high, dtype=np.float64).ravel() if high is not None else close
+    low = np.asarray(low, dtype=np.float64).ravel() if low is not None else close
+    s = C.ALPHA_PRIVATE_SHIFT
+    cols: list[np.ndarray] = []
+    adx_by_p = {p: adx_raw(high, low, close, p) for p in C.ADX_PERIODS}
+    atr_by_p = {p: atr_raw(high, low, close, p) for p in C.ATR_PERIODS}
+    cols += [adx_by_p[p] for p in C.ADX_PERIODS]                      # adx raw
+    cols += [sma(adx_by_p[p], 1, shift=s) for p in C.ADX_PERIODS]     # adx 5 bars ago
+    cols += [atr_by_p[p] for p in C.ATR_PERIODS]                      # atr raw
+    cols += [sma(atr_by_p[p], 1, shift=s) for p in C.ATR_PERIODS]     # atr 5 bars ago
+    out = np.column_stack(cols).astype(np.float32)
+    assert out.shape[1] == len(PER_TF_ALPHA_PRIVATE_COLUMNS), (out.shape[1], len(PER_TF_ALPHA_PRIVATE_COLUMNS))
     return out

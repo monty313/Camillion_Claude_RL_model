@@ -26,7 +26,7 @@ from config import constants as C
 from config.ftmo_config import load_active_config
 from config import variables as V
 from config import asset_specs as A
-from src.indicators.base import ALL_INDICATOR_COLUMNS
+from src.indicators.base import ALL_INDICATOR_COLUMNS, ALL_ALPHA_PRIVATE_COLUMNS
 from src.strategies.context import MarketContext
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
@@ -51,8 +51,22 @@ class TradingEnv:
                  cost_frac: float | None = None, pass_bonus: float | None = None,
                  symbol: str | None = None, value_per_point: float | None = None,
                  window: int | None = None, warmup: int = 200,
-                 random_window: bool = False, seed: int | None = None):
+                 random_window: bool = False, seed: int | None = None,
+                 alpha_indicators=None):
         self.ind = np.asarray(indicators, dtype=np.float32)
+        # ALPHA-PRIVATE indicators (e.g. ADX): read by alphas via ctx, NEVER in the obs.
+        # Optional -- if absent, alphas needing them just read NaN and stay inactive (0).
+        self.alpha_ind = None
+        if alpha_indicators is not None:
+            self.alpha_ind = np.asarray(alpha_indicators, dtype=np.float32)
+            if self.alpha_ind.shape[0] != self.ind.shape[0]:
+                raise ValueError(
+                    f"alpha_indicators rows ({self.alpha_ind.shape[0]}) must match "
+                    f"indicators rows ({self.ind.shape[0]})")
+            if self.alpha_ind.shape[1] != len(ALL_ALPHA_PRIVATE_COLUMNS):
+                raise ValueError(
+                    f"alpha_indicators has {self.alpha_ind.shape[1]} cols; "
+                    f"expected {len(ALL_ALPHA_PRIVATE_COLUMNS)} (ALL_ALPHA_PRIVATE_COLUMNS)")
         self.close = np.asarray(close, dtype=np.float64).ravel()
         self.time_ns = np.asarray(time_ns).astype("int64").ravel()
         self.T = self.close.shape[0]
@@ -95,15 +109,19 @@ class TradingEnv:
         T = self.T
         self.alpha_matrix = np.zeros((T, C.MAX_STRATEGIES), dtype=np.float32)
         for i in range(T):
-            ctx = MarketContext(close=float(self.close[i]),
-                                indicators=dict(zip(ALL_INDICATOR_COLUMNS,
-                                                    self.ind[i].tolist())),
+            ind_map = dict(zip(ALL_INDICATOR_COLUMNS, self.ind[i].tolist()))
+            if self.alpha_ind is not None:   # add alpha-private indicators (ADX etc.) to ctx ONLY
+                ind_map.update(zip(ALL_ALPHA_PRIVATE_COLUMNS, self.alpha_ind[i].tolist()))
+            ctx = MarketContext(close=float(self.close[i]), indicators=ind_map,
                                 bar_index=i, symbol=self.symbol or "",
                                 minute_of_day=int(self._minute_of_day[i]))
             self.alpha_matrix[i] = registry.collect_alphas(ctx)
         self.occupancy = registry.occupancy_mask()
-        self.net_signal = np.array([net_balance(self.alpha_matrix[i]) for i in range(T)],
-                                   dtype=np.float32)
+        # DIRECTIONAL consensus excludes non-directional gates (e.g. movement filters): a
+        # gate's 1 is not a buy, so it must not pollute net_signal / summary / accuracy.
+        self.directional = registry.directional_mask()
+        self.net_signal = np.array([net_balance(self.alpha_matrix[i], self.directional)
+                                    for i in range(T)], dtype=np.float32)
         self.sig_acc = accuracy_features(self.net_signal, self.close)        # (T,2) leak-free
         self.time_feats = np.stack([OB.time_features(pd.Timestamp(self.time_ns[i]))
                                     for i in range(T)]).astype(np.float32)    # (T,6)
@@ -362,7 +380,7 @@ class TradingEnv:
             "indicators": self.ind[i],
             "alpha_values": self.alpha_matrix[i],
             "alpha_mask": self.occupancy,
-            "alpha_summary": summarize(self.alpha_matrix[i], self.occupancy),
+            "alpha_summary": summarize(self.alpha_matrix[i], self.occupancy, self.directional),
             "signal_memory": last5_from_series(self.net_signal, i),
             "signal_accuracy": self.sig_acc[i],
             "account_daily": WL.daily_features(self.acc, self.cfg),

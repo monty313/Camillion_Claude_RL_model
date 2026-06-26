@@ -64,15 +64,42 @@ def build_aligned_indicators(df1m: pd.DataFrame) -> np.ndarray:
     return mat
 
 
+def build_aligned_alpha_private(df1m: pd.DataFrame) -> np.ndarray:
+    """Return (T, K) float32 ALPHA-PRIVATE indicators aligned to the 1m index,
+    columns == base.ALL_ALPHA_PRIVATE_COLUMNS order. Same leak-free alignment as the
+    obs indicators, but these are NEVER added to the observation -- alphas read them
+    via ctx; the bot perceives them only through the alpha's signal. (No obs change.)"""
+    open_ns = df1m.index.values.astype("datetime64[ns]").astype(np.int64)
+    close1m_ns = open_ns + _NS_PER_MIN
+    blocks = []
+    for tf in C.TIMEFRAMES:
+        d = resample_ohlcv(df1m, tf)
+        m = base.compute_timeframe_alpha_private(d["high"].values, d["low"].values, d["close"].values)
+        tf_open_ns = d.index.values.astype("datetime64[ns]").astype(np.int64)
+        blocks.append(_align_to_1m(m, tf_open_ns, _TF_MIN[tf], close1m_ns))
+    mat = np.hstack(blocks).astype(np.float32)
+    assert mat.shape[1] == len(base.ALL_ALPHA_PRIVATE_COLUMNS)
+    return mat
+
+
 def build_cache(df1m: pd.DataFrame, out_dir: str, symbol: str = "EURUSD") -> dict:
-    """Precompute + persist float32 cache (indicators, close, timestamps)."""
+    """Precompute + persist float32 cache (indicators, alpha-private, close, timestamps)."""
     os.makedirs(out_dir, exist_ok=True)
     mat = build_aligned_indicators(df1m)
+    ap = build_aligned_alpha_private(df1m)
     np.save(os.path.join(out_dir, f"{symbol}_indicators.npy"), mat)
+    np.save(os.path.join(out_dir, f"{symbol}_alpha_private.npy"), ap)
     np.save(os.path.join(out_dir, f"{symbol}_close.npy"), df1m["close"].values.astype(np.float32))
     np.save(os.path.join(out_dir, f"{symbol}_time_ns.npy"),
             df1m.index.values.astype("datetime64[ns]").astype(np.int64))
-    return {"symbol": symbol, "bars": int(len(df1m)), "indicator_cols": int(mat.shape[1])}
+    return {"symbol": symbol, "bars": int(len(df1m)),
+            "indicator_cols": int(mat.shape[1]), "alpha_private_cols": int(ap.shape[1])}
+
+
+def load_alpha_private(out_dir: str, symbol: str = "EURUSD"):
+    """memmap-load the alpha-private matrix (or None if it was not built)."""
+    p = os.path.join(out_dir, f"{symbol}_alpha_private.npy")
+    return np.load(p, mmap_mode="r") if os.path.exists(p) else None
 
 
 def load_cache(out_dir: str, symbol: str = "EURUSD"):
