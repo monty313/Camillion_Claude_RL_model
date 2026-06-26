@@ -3,6 +3,18 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Made VERSION PAIRING the governing rule for CPU/GPU/TPU
+- **I (Issue):** With three implementations (CPU, GPU, TPU) we could get confused about which
+  produced a policy and whether they're comparable.
+- **R (Rule):** Operator decision — they are ONE bot written three ways: same contract version,
+  same fingerprint, same behaviour, same policy format; only the code differs. One shared version
+  number; any behaviour change bumps all three together in the same PR.
+- **A (Application):** Made version pairing the governing rule of §2 in
+  `docs/JAX_GPU_TPU_TRAINER_BLUEPRINT.md` and added it to §4 of `docs/ENVIRONMENT_STATE.md`.
+  Docs only.
+- **C (Conclusion):** A policy is identified by version+fingerprint, never by machine — so all
+  three are ranked in one ledger with zero confusion, on the road to a consistent FTMO pass.
+
 ## [2026-06-26] Added the full-rewrite JAX GPU/TPU trainer blueprint
 - **I (Issue):** We want a future path to run vast data through thousands of parallel sims until
   the bot passes FTMO consistently, with runtime-changeable target/risk and a pass-likelihood

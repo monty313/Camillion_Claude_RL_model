@@ -92,6 +92,13 @@ The *output is identical in kind* to the CPU trainer: the same policy file (see 
 CPU-vs-GPU framing — same destination, different vehicle; use the GPU when training *time*
 becomes the wall).
 
+**VERSION PAIRING (the rule that prevents confusion).** CPU, GPU, and TPU are **one bot
+written three ways** — same contract version, same `env_fingerprint()`, same behaviour, same
+policy-file format; only the code differs per hardware. They carry **one shared version
+number**, and any behaviour change **bumps all of them together in the same PR**. A policy is
+identified by version+fingerprint, never by which machine made it, so all three are ranked in
+the same ledger.
+
 The CPU env is the reference. A GPU env/trainer is a *second implementation of the same thing*, so:
 
 1. **Match the fingerprint.** The GPU env MUST yield the **same `env_fingerprint()`** as the CPU env
