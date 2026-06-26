@@ -110,6 +110,11 @@ THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 
 - **Fix:** train on ALL FOUR Google-Drive symbols TOGETHER with train_multi_symbol — one policy over EURUSD/GBPUSD/XAUUSD/US30 with per-asset calibrated size + the cross-asset features. That is how the bot learns to BALANCE the book (read every asset in common units, allocate risk across them) instead of overfitting the easiest one. Mount Drive, build a cache per symbol, then train_multi_symbol({sym: load_cache(...)}, ...).
 - **Where:** `src/training/trainer.py (train_multi_symbol), src/training/vector_env_factory.py, docs/TRAINING_INSTRUCTIONS.md`
 
+### how do I train the bot? I don't trade and I don't want a bunch of confusing steps
+- **Likely cause:** training used to be several manual steps
+- **Fix:** ONE command: put your four 1-minute CSVs (filenames containing EURUSD/GBPUSD/XAUUSD/US30) in one folder, then run `python run_training.py --data <that_folder>`. It finds the files, prepares the features, trains ONE bot on all four from one shared account, prints the DAY-BY-DAY +2.5% / 4%-trailing results, and files the policy. In Colab it's one cell: `!python run_training.py --data /content/drive/MyDrive/Camillion_data`. Install the engine once with `pip install stable-baselines3 torch`.
+- **Where:** `run_training.py, docs/TRAINING_INSTRUCTIONS.md`
+
 ## Trading / FTMO problems
 
 ### the account breached the daily-loss or max-drawdown wall

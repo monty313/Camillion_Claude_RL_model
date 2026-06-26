@@ -1,13 +1,37 @@
-# TRAINING — step by step (and see the DAY-BY-DAY +2.5% / trailing-DD results)
+# TRAINING — the easy way (one command) + the manual steps if you want them
 
-> Goal: train one policy that trades the **whole FTMO portfolio**, then read its results the way the
-> challenge is judged — **day by day**: did it make **+2.5% of the initial balance**, and did it stay
-> inside the **4% trailing-drawdown wall**? (2.5% is the FTMO daily target; if you really want 2.4%,
-> set `FTMO_DAILY_TARGET_PCT = 2.4` in `config/variables.py` — every report below uses whatever you set.)
-
-Do these in order. Steps 1–4 train; **step 5 is the day-by-day report you asked for.**
+> Goal: train **one bot that trades your whole portfolio**, then read the results the way the challenge
+> is judged — **day by day**: did it make **+2.5% of your balance**, and did it stay inside the **4%
+> trailing-drawdown wall**? You do **not** need to understand trading to run this.
 
 ---
+
+## ⭐ THE EASY WAY — one command (recommended)
+1. Put your four 1-minute CSVs in one folder (names containing **EURUSD, GBPUSD, XAUUSD, US30**). On
+   Colab that's your Google Drive folder.
+2. Install the engine once: `pip install stable-baselines3 torch` (the Colab notebook does this for you).
+3. Run **one line**:
+```bash
+python run_training.py --data /content/drive/MyDrive/Camillion_data
+```
+That's it. It finds your files, prepares the features, trains **one bot on all four from one account**,
+then prints the **day-by-day** table and a plain summary:
+```
+[1/5] Looking for your 1-minute data ...        EURUSD ready, GBPUSD ready, XAUUSD ready, US30 ready
+[3/5] Teaching ONE bot to trade all 4 together, from one account ...
+[4/5] How it did, DAY BY DAY — did it make +2.5% and stay inside the 4% wall:
+   DAY  DATE         P&L%   +TGT?  TRAIL_DD%  <WALL?   ...   CUM%
+     1  2026-03-02   2.61    YES      1.30      ok            2.61
+     ...
+ALL DONE.  2/4 days hit +2.5%  |  4/4 stayed inside the 4% wall  |  final +7.24%   Challenge: not yet
+```
+**In Colab it's literally one cell:** `!python run_training.py --data /content/drive/MyDrive/Camillion_data`.
+*(Want the daily target at 2.4% instead of 2.5%? Set `FTMO_DAILY_TARGET_PCT = 2.4` in
+`config/variables.py` once — the report re-judges against it.)*
+
+---
+
+## The manual steps (only if you want the detail — the one command above does all of this)
 
 ## 0. Open the environment
 - **Colab (recommended):** open `notebooks/Camillion_One_Click_Train.ipynb`. Training needs

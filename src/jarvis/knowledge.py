@@ -298,6 +298,16 @@ TROUBLESHOOTING = [
             "instead of overfitting the easiest one. Mount Drive, build a cache per symbol, then "
             "train_multi_symbol({sym: load_cache(...)}, ...).",
      "refs": "src/training/trainer.py (train_multi_symbol), src/training/vector_env_factory.py, docs/TRAINING_INSTRUCTIONS.md"},
+    {"id": "how-to-train-one-command", "area": "training",
+     "symptom": "how do I train the bot? I don't trade and I don't want a bunch of confusing steps",
+     "cause": "training used to be several manual steps",
+     "fix": "ONE command: put your four 1-minute CSVs (filenames containing EURUSD/GBPUSD/XAUUSD/US30) in "
+            "one folder, then run `python run_training.py --data <that_folder>`. It finds the files, prepares "
+            "the features, trains ONE bot on all four from one shared account, prints the DAY-BY-DAY +2.5% / "
+            "4%-trailing results, and files the policy. In Colab it's one cell: "
+            "`!python run_training.py --data /content/drive/MyDrive/Camillion_data`. Install the engine once "
+            "with `pip install stable-baselines3 torch`.",
+     "refs": "run_training.py, docs/TRAINING_INSTRUCTIONS.md"},
 ]
 
 
