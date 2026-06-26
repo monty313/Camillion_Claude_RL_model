@@ -179,6 +179,11 @@ THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 
 - **Fix:** load_ohlcv_csv accepts flexible names (datetime/timestamp/date+time; open/high/low/close/volume with common aliases). You at least need a datetime column and a close. Check the CSV header.
 - **Where:** `src/data/cache_builder.py (load_ohlcv_csv)`
 
+### training crashes with 'no datetime column found' / MetaTrader (MT5) export won't load / header looks like <DATE>\t<TIME>\t<OPEN>... / only one column / 1 bar per day
+- **Likely cause:** MT5 history exports are TAB-separated with angle-bracket headers and SPLIT <DATE>/<TIME> columns and dotted dates (2021.01.13) — old loaders assumed a comma file with one datetime column
+- **Fix:** the loader now auto-detects comma/TAB/semicolon delimiters, strips <...> from headers, COMBINES split <DATE>+<TIME> (keeping 1-minute resolution), parses dotted MT5 dates, and uses TICK volume (<VOL> is usually 0 on forex). Just point run_training at the folder and re-run. If it still fails, open the first row and confirm it has O/H/L/C plus a date and time.
+- **Where:** `src/data/cache_builder.py (load_ohlcv_csv), tests/test_csv_loader.py`
+
 ### a symbol's sizing/asset-class is wrong or unknown
 - **Likely cause:** the symbol isn't in SPECS / not classified
 - **Fix:** add it to config/asset_specs.SPECS (contract_size, pip, typical_daily_range, asset_class) or rely on infer_asset_class for the class. Unknown symbols fall back to a sane default size.

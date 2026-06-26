@@ -84,31 +84,50 @@ def load_cache(out_dir: str, symbol: str = "EURUSD"):
 
 
 def load_ohlcv_csv(path):
-    """Load a 1-minute OHLCV CSV with flexible column names -> DataFrame indexed by
-    datetime (sorted, de-duplicated). Column values are taken positionally so they
-    align to the parsed timestamps, not to the CSV's original integer index.
+    """Load a 1-minute OHLCV file with flexible column names AND delimiter -> DataFrame indexed by
+    datetime (sorted, de-duplicated). Handles comma / TAB / semicolon files, angle-bracket headers,
+    and MetaTrader-style SPLIT date+time columns (e.g. MT5 export: `<DATE>\\t<TIME>\\t<OPEN>...` with
+    dotted dates `2021.01.13`). Values are positional so they align to the parsed timestamps.
     Feed the result to build_aligned_indicators(df)."""
     import numpy as _np, pandas as _pd
-    df = _pd.read_csv(path)
-    low = {c.lower().strip(): c for c in df.columns}
-    def pick(opts):
+    # 1) sniff the delimiter from the header line (fast C engine; MT5 history exports are TAB-separated)
+    with open(path, "r", encoding="utf-8-sig") as f:
+        header = f.readline()
+    counts = {d: header.count(d) for d in ("\t", ";", "|", ",")}
+    sep = max(counts, key=counts.get)
+    if counts[sep] == 0:
+        sep = ","
+    df = _pd.read_csv(path, sep=sep, encoding="utf-8-sig")
+    # 2) normalize headers: lowercase, strip whitespace AND angle brackets  (<DATE> -> date)
+    low = {c.lower().strip().strip("<>").strip(): c for c in df.columns}
+    def pick(*opts):
         for o in opts:
             if o in low:
                 return low[o]
         return None
-    tcol = pick(("datetime", "date_time", "timestamp", "time", "date", "<date>", "gmt time", "gmt_time"))
-    if tcol is not None:
-        idx = _pd.to_datetime(df[tcol], errors="coerce")
-    elif "date" in low and "time" in low:
-        idx = _pd.to_datetime(df[low["date"]].astype(str) + " " + df[low["time"]].astype(str), errors="coerce")
+    # 3) build the timestamp — combine SEPARATE date+time first (MT5), else a single datetime column
+    dt_col, date_col, time_col = pick("datetime", "date_time", "timestamp", "gmt time", "gmt_time"), pick("date"), pick("time")
+    if dt_col is not None:
+        raw = df[dt_col].astype(str)
+    elif date_col is not None and time_col is not None:
+        raw = df[date_col].astype(str).str.strip() + " " + df[time_col].astype(str).str.strip()
+    elif date_col is not None:
+        raw = df[date_col].astype(str)
+    elif time_col is not None:
+        raw = df[time_col].astype(str)
     else:
         raise ValueError(f"{path}: no datetime column found (cols={list(df.columns)})")
-    def col(opts):
-        nm = pick(opts)
+    idx = _pd.to_datetime(raw, errors="coerce")
+    for fmt in ("%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d"):   # MT5 dotted dates if default parse failed
+        if idx.isna().mean() > 0.5:
+            idx = _pd.to_datetime(raw, format=fmt, errors="coerce")
+    def col(*opts):
+        nm = pick(*opts)
         return _pd.to_numeric(df[nm], errors="coerce").to_numpy() if nm else None
-    o = col(("open", "o", "<open>")); h = col(("high", "h", "<high>")); l = col(("low", "l", "<low>"))
-    c = col(("close", "c", "<close>", "adj close", "price"))
-    v = col(("volume", "vol", "v", "<vol>", "tickvol", "tick_volume"))
+    o = col("open", "o"); h = col("high", "h"); l = col("low", "l")
+    c = col("close", "c", "adj close", "price")
+    # prefer TICK volume (real <VOL> is usually 0 on forex MT5 exports)
+    v = col("tickvol", "tick_volume", "tickvolume", "volume", "vol", "v")
     if c is None:
         raise ValueError(f"{path}: no close column found (cols={list(df.columns)})")
     out = _pd.DataFrame({"open": o if o is not None else c, "high": h if h is not None else c,

@@ -469,3 +469,19 @@ pass FTMO-style challenges more consistently.
   and `/ask` 200. Fast suite 151/151.
 - **C:** Mark opens JARVIS by clicking one link (or browsing to the server root) and trains from a
   single saved notebook — no remembering filenames or commands.
+
+## [2026-06-26] Loader understands MetaTrader 5 exports + JARVIS link slash fix
+- **I:** Real run blew up at cache-build: `no datetime column found (cols=['<DATE>\t<TIME>\t<OPEN>...'])`.
+  Mark's data is an MT5 history export — TAB-separated, angle-bracket headers, SPLIT <DATE>/<TIME>,
+  dotted dates (2021.01.13), real <VOL>=0. The loader assumed a comma file with one datetime column
+  (and would have matched <DATE> as a full timestamp, collapsing 1440 bars/day -> 1). Also the Colab
+  JARVIS link was missing a '/' -> DNS NXDOMAIN.
+- **R:** Bug fix; no contract/FTMO change. Regression-tested.
+- **A:** `load_ohlcv_csv` now sniffs the delimiter (comma/TAB/semicolon/pipe) from the header, strips
+  `<...>` from column names, COMBINES separate date+time before any single-datetime fallback (preserving
+  1-minute resolution), parses dotted MT5 dates, and prefers TICK volume. +2 tests (MT5 export +
+  semicolon/no-volume) in tests/test_csv_loader.py. Notebook JARVIS cell now health-checks the server
+  and builds the URL with exactly one slash. Added JARVIS knowledge `data-mt5-format`.
+- **Verified:** MT5 sample -> 120 bars at 1-min spacing, tickvol used, close correct, 220-indicator cache
+  builds; comma + semicolon files still load. Fast suite 153/153; audit GO 38/42.
+- **C:** Mark's MetaTrader CSVs load as-is — no manual reformatting — and the JARVIS link opens.
