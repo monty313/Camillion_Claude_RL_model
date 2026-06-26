@@ -248,6 +248,15 @@ def test_provider_from_cache_runs_on_real_built_cache():
     assert st["account"]["equity"] > 0 and st["model_attached"] is False
 
 
+def test_go_live_build_provider_demo_fallback():
+    # no --data -> the honest synthetic demo (real env + real alphas, no model)
+    import go_live
+    prov = go_live.build_provider(None, "EURUSD", None)
+    st = build_state(prov.snapshot())
+    assert st["position"]["symbol"] == "EURUSD" and st["model_attached"] is False
+    assert len(st["alphas"]) == 16
+
+
 def test_provider_day_history_is_list():
     prov = StateProvider.from_synthetic(n=300, seed=2)
     for _ in range(20):
