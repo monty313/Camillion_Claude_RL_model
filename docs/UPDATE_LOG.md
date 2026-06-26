@@ -383,3 +383,31 @@ pass FTMO-style challenges more consistently.
   - +4 tests (`tests/test_env_governance.py`). 101/101 green. Live fingerprint: 83d880a5f3bf.
 - **C:** The environment can never get lost (it's recorded + hashed), every run is tracked vs the
   FTMO pass-rate, and CPU/GPU runs stay version-locked by a shared fingerprint -> no confusion.
+
+## [2026-06-26] Brutal full-system audit harness (one command) + 2 real fixes it surfaced
+- **I:** Mark (a non-programmer) needs ONE command to know whether the bot is safe to run an FTMO
+  challenge, in plain English, covering PPO/MLP math, FTMO rule enforcement, env integrity, JARVIS,
+  stability, code quality and future risk — and it must FIX whatever it finds broken.
+- **R:** Operator-supplied audit spec. Diagnostic/tooling only (no behaviour change to the bot);
+  tests the REAL repo, marks delegated/missing items honestly (no fake passes).
+- **A:**
+  - `tools/run_full_audit.py`: 44 checks across 7 categories -> `audit_results/audit_report.{json,md,html}`
+    + a GO/NO-GO verdict (exit 0/1). Tests the live SB3 PPO instance (entropy=ln4, MLP 4+1 heads,
+    gradient flow, determinism, 100-step train), the real 479-obs contract, `breach_detector`
+    (4% trailing fires before FTMO's 5%/10%; isolates the hard lines with trailing off), env
+    reset/step/leak-freedom, JARVIS diagnosis of 5 seeded bug categories, and code/contract health.
+  - `tests/test_full_audit.py`: dual-mode — SKIPS under the fast stdlib runner (heavy: spins a real
+    PPO), parametrized + severity-marked under pytest (`pytest -m critical`).
+  - `audit_results/ASSUMPTIONS.md`: STEP-0 discovery (real module map + the 367->479 / SB3 / 5-TF /
+    missing-LIVE-controls assumptions Mark should verify).
+  - **Fix 1 (doc bug):** `CLAUDE.md` rule #1 + the obs breakdown said **367 / v1.1.0** — stale. The
+    locked contract is **479 / v1.5.0**; updated the headline number and the full 14-block breakdown.
+  - **Fix 2 (JARVIS coverage):** added two grounded knowledge entries — `entropy-collapse` (ent_coef=0
+    -> deterministic HOLD) and `alpha-vs-hold` (alpha-space 0 vs ACTION_HOLD) — so JARVIS now diagnoses
+    all 5 audit bug categories (JARVIS 5/5).
+  - Verdict: **GO 38/42**, zero critical failures; 4 honest LIVE-readiness warnings (weekend
+    auto-close, regime-coverage-depends-on-data, checkpoint contract-version guard, reconnect layer).
+    Fast suite **151/151** green.
+- **C:** Mark can now run `python tools/run_full_audit.py` (or ask JARVIS "is my bot safe to run?")
+  and get a plain-English, color-coded GO/NO-GO he can trust — and the two real issues it surfaced
+  (the 479 doc drift and JARVIS's two blind spots) are fixed, not just reported.

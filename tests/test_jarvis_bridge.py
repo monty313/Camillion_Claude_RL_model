@@ -371,7 +371,7 @@ def test_knowledge_entries_are_well_formed():
     for e in KB.TROUBLESHOOTING:
         for k in ("id", "area", "symptom", "cause", "fix", "refs"):
             assert e.get(k), f"{e.get('id')} missing {k}"
-        assert e["area"] in ("training", "trading", "data", "bridge", "obs")
+        assert e["area"] in ("training", "trading", "data", "bridge", "obs", "ops")
     assert "FTMO" in KB.SYSTEM_SUMMARY and "render_markdown" not in KB.render_markdown()[:5] or True
 
 

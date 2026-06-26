@@ -5,7 +5,7 @@
 
 ## The three rules that override everything
 1. **NEVER silently change the observation shape.** It is locked in
-   `config/constants.py` (367 float32, contract `v1.1.0`). If a change would
+   `config/constants.py` (479 float32, contract `v1.5.0`). If a change would
    alter it, **STOP and explain first**, then bump the contract version and
    update `docs/OBSERVATION_CONTRACT.md` + the shape tests.
 2. **NEVER change FTMO numbers** (2.5% daily target, 4% trailing wall,
@@ -17,10 +17,11 @@
 - Each strategy = a signal generator. Output: `+1` buy, `-1` sell, `0` inactive
   (0 is "no setup", NOT a HOLD action). Empty slot = no strategy assigned.
 - The RL action space {HOLD, BUY, SELL, CLOSE} is SEPARATE from alpha outputs.
-- Observation = raw indicators (200) + alpha values (64) + alpha occupancy
-  mask (64) + alpha summary % (4) + last-5 signal memory (5) + signal
-  accuracy (2) + account daily (7) + account episode (7) + time (6) +
-  portfolio (8) = **367**. Adding strategies fills slots; shape never changes.
+- Observation = raw indicators (220 = 44 x 5 TFs) + alpha values (64) + alpha
+  occupancy mask (64) + alpha summary % (4) + last-5 signal memory (5) + signal
+  accuracy (2) + account daily (7) + account episode (7) + time (6) + portfolio
+  (8) + alpha streak (64) + sizing (10) + cross-asset (10) + recent context (8)
+  = **479** (contract v1.5.0). Adding strategies fills slots; shape never changes.
 - Percentages, not raw counts, so adding strategies does not confuse the bot.
 
 ## Scaling alphas toward ~1000 (do not drift from this)

@@ -60,6 +60,16 @@ THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 
 - **Fix:** the cache aligns higher TFs by the LAST CLOSED bar (close_time <= this 1m close); signal accuracy is computed leak-free; ALWAYS judge on held-out walk-forward windows, not in-sample.
 - **Where:** `src/data/cache_builder.py (_align_to_1m), src/signals/signal_accuracy.py, src/training (walk-forward)`
 
+### the bot stopped exploring and always picks HOLD / entropy collapsed to ~0 / the policy went deterministic too early / entropy is 0.05 after training
+- **Likely cause:** the entropy bonus (ent_coef) is off or too small, so the policy stopped exploring and locked onto one action — usually HOLD, the safe default — before it learned anything
+- **Fix:** raise ent_coef in PPO_HPARAMS (src/training/trainer.py) from 0.0 to a small positive value (~0.005-0.02) so the policy keeps exploring; watch that entropy stays above ~0.3 early in training. Also check the reward isn't so tiny/sparse that HOLD is a local minimum. A deterministic (low-entropy) policy is dangerous live — it cannot adapt when the market shifts.
+- **Where:** `src/training/trainer.py (PPO_HPARAMS ent_coef), src/barbershop/policy_doctor.py`
+
+### the bot never trades even when I add strategies / alpha=0 seems to force a HOLD / adding alphas doesn't make it take setups
+- **Likely cause:** conflating alpha-space with action-space — treating alpha=0 (no setup) as if it were ACTION_HOLD
+- **Fix:** alpha=0 means 'that strategy has no setup right now' (alpha-space); ACTION_HOLD means 'the policy chose not to trade this step' (action-space). They share the integer 0 but are DIFFERENT spaces — the env must NEVER force HOLD just because the alphas are 0; the policy decides the action independently. If the bot never trades, look at the open-gate (5m CCI threshold) / day-lock / two-phase bank, NOT the alphas. See CLAUDE.md 'Alpha-state 0 vs action HOLD'.
+- **Where:** `CLAUDE.md, src/strategies/base.py, src/env/trading_env.py`
+
 ### the model trades well in training but poorly in eval
 - **Likely cause:** eval did not load the saved VecNormalize stats, so the observation is mis-scaled
 - **Fix:** use trainer.load_for_eval (training=False) which loads the frozen mean/std saved next to the model; never eval a normalized-trained model on raw obs.

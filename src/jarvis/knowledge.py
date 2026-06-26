@@ -101,6 +101,35 @@ TROUBLESHOOTING = [
      "fix": "the cache aligns higher TFs by the LAST CLOSED bar (close_time <= this 1m close); signal "
             "accuracy is computed leak-free; ALWAYS judge on held-out walk-forward windows, not in-sample.",
      "refs": "src/data/cache_builder.py (_align_to_1m), src/signals/signal_accuracy.py, src/training (walk-forward)"},
+    {"id": "run-the-audit", "area": "ops",
+     "symptom": "am I ready / is the bot safe to run / pre-flight check / how do I know it all works / "
+                "give me a GO or NO-GO",
+     "cause": "you want one plain-English health check across PPO math, FTMO rules, the env, JARVIS and "
+              "code quality before committing to a challenge",
+     "fix": "run ONE command: `python tools/run_full_audit.py`. It runs 44 checks and writes "
+            "audit_results/audit_report.html (open it in a browser) plus .md/.json, ending in a big GO or "
+            "NO-GO with the exact things to fix first. Exit code 0 = GO, 1 = NO-GO.",
+     "refs": "tools/run_full_audit.py, audit_results/audit_report.html, tests/test_full_audit.py"},
+    {"id": "entropy-collapse", "area": "training",
+     "symptom": "the bot stopped exploring and always picks HOLD / entropy collapsed to ~0 / the policy went "
+                "deterministic too early / entropy is 0.05 after training",
+     "cause": "the entropy bonus (ent_coef) is off or too small, so the policy stopped exploring and locked onto "
+              "one action — usually HOLD, the safe default — before it learned anything",
+     "fix": "raise ent_coef in PPO_HPARAMS (src/training/trainer.py) from 0.0 to a small positive value "
+            "(~0.005-0.02) so the policy keeps exploring; watch that entropy stays above ~0.3 early in training. "
+            "Also check the reward isn't so tiny/sparse that HOLD is a local minimum. A deterministic (low-entropy) "
+            "policy is dangerous live — it cannot adapt when the market shifts.",
+     "refs": "src/training/trainer.py (PPO_HPARAMS ent_coef), src/barbershop/policy_doctor.py"},
+    {"id": "alpha-vs-hold", "area": "training",
+     "symptom": "the bot never trades even when I add strategies / alpha=0 seems to force a HOLD / adding alphas "
+                "doesn't make it take setups",
+     "cause": "conflating alpha-space with action-space — treating alpha=0 (no setup) as if it were ACTION_HOLD",
+     "fix": "alpha=0 means 'that strategy has no setup right now' (alpha-space); ACTION_HOLD means 'the policy "
+            "chose not to trade this step' (action-space). They share the integer 0 but are DIFFERENT spaces — the "
+            "env must NEVER force HOLD just because the alphas are 0; the policy decides the action independently. "
+            "If the bot never trades, look at the open-gate (5m CCI threshold) / day-lock / two-phase bank, NOT the "
+            "alphas. See CLAUDE.md 'Alpha-state 0 vs action HOLD'.",
+     "refs": "CLAUDE.md, src/strategies/base.py, src/env/trading_env.py"},
     {"id": "train-eval-mismatch", "area": "training",
      "symptom": "the model trades well in training but poorly in eval",
      "cause": "eval did not load the saved VecNormalize stats, so the observation is mis-scaled",
