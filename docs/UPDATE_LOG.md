@@ -3,6 +3,45 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Made VERSION PAIRING the governing rule for CPU/GPU/TPU
+- **I (Issue):** With three implementations (CPU, GPU, TPU) we could get confused about which
+  produced a policy and whether they're comparable.
+- **R (Rule):** Operator decision — they are ONE bot written three ways: same contract version,
+  same fingerprint, same behaviour, same policy format; only the code differs. One shared version
+  number; any behaviour change bumps all three together in the same PR.
+- **A (Application):** Made version pairing the governing rule of §2 in
+  `docs/JAX_GPU_TPU_TRAINER_BLUEPRINT.md` and added it to §4 of `docs/ENVIRONMENT_STATE.md`.
+  Docs only.
+- **C (Conclusion):** A policy is identified by version+fingerprint, never by machine — so all
+  three are ranked in one ledger with zero confusion, on the road to a consistent FTMO pass.
+
+## [2026-06-26] Added the full-rewrite JAX GPU/TPU trainer blueprint
+- **I (Issue):** We want a future path to run vast data through thousands of parallel sims until
+  the bot passes FTMO consistently, with runtime-changeable target/risk and a pass-likelihood
+  readout — without losing the locked obs contract / FTMO numbers / fingerprint parity.
+- **R (Rule):** A from-scratch on-device JAX/Flax rewrite (co-location) unlocks GPU/TPU, but it
+  must be a *second implementation of the same env* — same observation (v1.5.0/479), same FTMO
+  numbers, same fingerprint, step-parity vs the CPU reference, same policy format.
+- **A (Application):** Wrote `docs/JAX_GPU_TPU_TRAINER_BLUEPRINT.md` (goal, honest cost,
+  non-negotiable invariants, co-location architecture, the 5 rebuild rules, runtime target/risk
+  via % features + domain randomization, pass-likelihood grid, training loop, build order,
+  when-not-to). Cross-linked from `ENVIRONMENT_STATE.md` §4. Docs only; no code/obs change.
+- **C (Conclusion):** Captures the high-throughput path (play thousands of trading lifetimes at
+  once, dial risk live, read the odds of passing) while guaranteeing it can never drift from the
+  CPU reference — so scaling speed never costs us a consistently-passing policy.
+
+## [2026-06-26] Recorded the GPU-trainer learning principle (data-parallel RL)
+- **I (Issue):** When we build the GPU trainer, a future agent must understand WHY the GPU runs
+  thousands of sims in lockstep — and that "all do the same thing" does not defeat learning.
+- **R (Rule):** Operator-confirmed principle — ONE shared policy learns from thousands of sims
+  running the same math on DIFFERENT market data (different experiences pooled into one update);
+  the rewrite's hard part is turning branchy FTMO logic into lockstep mask/array math; output is
+  the same policy file as the CPU trainer.
+- **A (Application):** Added the principle to §4 of `docs/ENVIRONMENT_STATE.md` and to the
+  "RULES FOR THE FUTURE GPU TRAINER" header in `src/training/env_fingerprint.py`. Comments only.
+- **C (Conclusion):** Locks the intended GPU design so whoever builds it gets 10–100× more varied
+  experience per unit time into one bot — faster path to a consistently FTMO-passing policy.
+
 ## [2026-06-26] Documented the alpha-scaling logic so the obs stays stable forever
 - **I (Issue):** The plan is to grow toward ~1000 alphas. Future agents must not
   destabilise the locked observation (or wrongly "fix" empty slots by reshaping it

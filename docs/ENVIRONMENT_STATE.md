@@ -76,6 +76,29 @@ a shared precomputed table**, not by aggregating away per-alpha weighting.
 
 ## 4. Rules for building the GPU trainer (when we create it)
 
+**The principle we expect to use (data-parallel RL).** The GPU trainer is **ONE shared
+policy (one brain) learning from THOUSANDS of simulations running at once.** The GPU's
+rule is that every sim runs the **same math instruction at the same moment** — but each
+sim runs it on **different market data** (different day/slice/start + exploration noise),
+so each produces a **different experience** (different trades, wins, losses). Those
+thousands of diverse experiences are **pooled into one weight update.** So "all do the
+same thing" means **same operation, different worlds** — it does NOT mean they learn the
+same thing; it means one brain learns from a thousand different lives at once. This is
+*why* the GPU is worth it: far more varied experience per unit of wall-clock → faster,
+steadier learning. The hard part (and the whole job of the rewrite) is turning the
+**branchy FTMO logic** (if breached / if banked / if day passed) into that **lockstep
+math** — every per-sim decision becomes a mask/array op applied across all sims at once.
+The *output is identical in kind* to the CPU trainer: the same policy file (see §3 of the
+CPU-vs-GPU framing — same destination, different vehicle; use the GPU when training *time*
+becomes the wall).
+
+**VERSION PAIRING (the rule that prevents confusion).** CPU, GPU, and TPU are **one bot
+written three ways** — same contract version, same `env_fingerprint()`, same behaviour, same
+policy-file format; only the code differs per hardware. They carry **one shared version
+number**, and any behaviour change **bumps all of them together in the same PR**. A policy is
+identified by version+fingerprint, never by which machine made it, so all three are ranked in
+the same ledger.
+
 The CPU env is the reference. A GPU env/trainer is a *second implementation of the same thing*, so:
 
 1. **Match the fingerprint.** The GPU env MUST yield the **same `env_fingerprint()`** as the CPU env
@@ -89,6 +112,13 @@ The CPU env is the reference. A GPU env/trainer is a *second implementation of t
    compare like-for-like and never confuse which environment produced a policy.
 5. **Don't diverge silently.** Any intended behaviour change goes through §2 (bump + docs + tests),
    on **both** implementations, in the same PR.
+
+**Full-rewrite blueprint (GPU *and* TPU, when CPU is the wall):** the complete on-device
+JAX/Flax plan — co-location, fixed-shape + masking, branchless `lax.select`, custom PPO,
+runtime-changeable target/risk, and a pass-likelihood readout — lives in
+`docs/JAX_GPU_TPU_TRAINER_BLUEPRINT.md`. It keeps every invariant above (same obs contract,
+FTMO numbers, fingerprint, policy format). Build only when training *time* is the proven
+bottleneck; TPU stays a last resort (see §3 framing and the TPU analysis).
 
 ---
 
