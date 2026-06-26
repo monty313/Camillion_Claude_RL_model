@@ -23,6 +23,18 @@
   portfolio (8) = **367**. Adding strategies fills slots; shape never changes.
 - Percentages, not raw counts, so adding strategies does not confuse the bot.
 
+## Scaling alphas toward ~1000 (do not drift from this)
+The plan is to grow to ~1000 alphas WITHOUT ever destabilising the observation.
+Keep **per-slot** (one slot per alpha = the policy learns a weight per alpha).
+Empty slots do NOT hurt learning (the net ignores constant-0 inputs); their
+only cost is **memory**. Beat that memory with **int8 alpha/streak tables +
+one shared precomputed table across envs** — NOT by switching to aggregate /
+consensus features (that throws away per-alpha weighting). Raising
+`MAX_STRATEGIES` is a deliberate **contract bump** (resizes 3 obs blocks):
+follow the obs-contract protocol; set it once with headroom. Full logic at the
+`MAX_STRATEGIES` comment in `config/constants.py` and in
+`docs/ENVIRONMENT_STATE.md`.
+
 ## File header standard (every important file)
 WHEN / WHO / WHY / WHERE / HOW / DEPENDS_ON / USED_BY / CHANGE_NOTES(IRAC).
 IRAC = Issue, Rule, Application, Conclusion(why it helps pass FTMO).

@@ -69,6 +69,47 @@ N_INDICATORS_PER_TF: int = (
 N_INDICATORS_TOTAL: int = N_INDICATORS_PER_TF * N_TIMEFRAMES          # 220
 
 # --- Strategy / alpha slots ---
+# =====================================================================
+# HOW WE SCALE ALPHAS IN THE FUTURE  (read this before raising MAX_STRATEGIES)
+# Goal: grow toward ~1000 alphas WITHOUT ever destabilising the observation.
+# The logic, settled with the operator, that every future agent must follow:
+#
+#  1. PER-SLOT IS INTENTIONAL, KEEP IT. Each alpha owns one fixed slot ->
+#     3 obs inputs (value, mask, streak). This is what lets the POLICY learn
+#     an individual weight per alpha. Do NOT replace per-slot with aggregate /
+#     consensus features (that throws away the per-alpha weighting the
+#     operator wants) unless the operator explicitly decides to.
+#
+#  2. FILLING A SLOT NEVER CHANGES THE OBS SHAPE. Assigning an alpha flips its
+#     slot's VALUE (0 -> +/-1); the NUMBER of inputs is unchanged. So adding
+#     alphas up to MAX_STRATEGIES is free and shape-stable. The trained policy
+#     keeps working. (Rule #1 in CLAUDE.md: shape is sacred.)
+#
+#  3. EMPTY SLOTS DO NOT HURT LEARNING. A slot that is always 0 is invisible to
+#     the network (its weight gets no gradient and never trains). 900 empty
+#     slots do NOT make the bot dumber. Their ONLY cost is MEMORY (see #4).
+#
+#  4. THE REAL COST AT SCALE IS MEMORY, AND IT IS SOLVED, NOT AVOIDED. The env
+#     precomputes a (bars x slots) alpha table (and a streak table) ONCE, then
+#     the hot loop just indexes a row -- per-step CPU barely grows with slots,
+#     and the per-alpha weighting lives in the NETWORK (GPU work, scales fine).
+#     What grows is the table's RAM, especially when copied per parallel env.
+#     To afford many slots: (a) store alpha/streak tables as int8 (values are
+#     -1/0/+1 -> 1 byte, a 4x cut), (b) compute the table ONCE and SHARE it
+#     read-only across envs (not one full copy per worker), (c) only grow the
+#     filled count over time -- empties cost only the (now-cheap) memory.
+#
+#  5. RAISING THIS NUMBER IS A DELIBERATE CONTRACT BUMP. It resizes 3 obs
+#     blocks -> the obs total changes -> follow the protocol: bump
+#     OBSERVATION_CONTRACT_VERSION, update docs/OBSERVATION_CONTRACT.md +
+#     docs/ENVIRONMENT_STATE.md + the shape tests, and the env_fingerprint
+#     rolls automatically. Set it ONCE to the target with headroom rather than
+#     resizing repeatedly. Cheap to do while pre-training; costly once a policy
+#     you care about is trained.
+#
+#  TL;DR: keep per-slot, never reshape the obs casually, beat the memory with
+#  int8 + a shared precomputed table -- not by switching to aggregates.
+# =====================================================================
 MAX_STRATEGIES: int = 64
 ALPHA_BUY: int = 1
 ALPHA_SELL: int = -1

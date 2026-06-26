@@ -3,6 +3,20 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Documented the alpha-scaling logic so the obs stays stable forever
+- **I (Issue):** The plan is to grow toward ~1000 alphas. Future agents must not
+  destabilise the locked observation (or wrongly "fix" empty slots by reshaping it
+  or aggregating away per-alpha weighting).
+- **R (Rule):** Operator decision — keep per-slot (policy learns a weight per alpha);
+  empty slots don't hurt learning, only memory; beat memory with int8 + a shared
+  precomputed table; raising `MAX_STRATEGIES` is a deliberate contract bump.
+- **A (Application):** Wrote the logic where an agent will read it — a comment block at
+  `MAX_STRATEGIES` in `config/constants.py`, a new "Scaling alphas" rule in `CLAUDE.md`,
+  and §3 in `docs/ENVIRONMENT_STATE.md`. Docs only; no code/obs change.
+- **C (Conclusion):** Locks the design intent so the observation contract survives the
+  road to 1000 alphas — one policy keeps training as the library grows, the prerequisite
+  for repeatedly passing FTMO.
+
 ## [2026-06-21] Phase 0 — bare-bones framework initialized
 - **I (Issue):** Need a fresh, modular RL framework where strategies are alphas the
   agent learns to combine, with a fixed observation that never breaks when strategies
