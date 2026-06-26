@@ -68,6 +68,19 @@ N_INDICATORS_PER_TF: int = (
 )  # 44
 N_INDICATORS_TOTAL: int = N_INDICATORS_PER_TF * N_TIMEFRAMES          # 220
 
+# =====================================================================
+# ALPHA-PRIVATE INDICATORS -- NOT part of the observation (obs stays 479).
+# These are extra indicator columns that ALPHAS may read via ctx, but which are
+# deliberately EXCLUDED from the obs indicator block. Rationale (operator,
+# 2026-06-26): "if we don't have to add the extra indicator to the obs, don't --
+# we just need the signal." The bot still perceives them, but ONLY through the
+# alpha's output slot (e.g. a 1/0 movement signal), so adding an indicator a new
+# alpha needs NEVER changes the observation shape. Built into a SEPARATE matrix
+# (cache_builder.build_aligned_alpha_private) and merged into ctx only.
+# Columns live in src/indicators/base.py: per_tf_alpha_private_columns().
+ADX_PERIODS: tuple[int, ...] = (14,)   # Wilder ADX = trend STRENGTH (non-directional)
+ALPHA_PRIVATE_SHIFT: int = 5           # SMA(1) shift 5 = the indicator's value 5 bars ago
+
 # --- Strategy / alpha slots ---
 # =====================================================================
 # HOW WE SCALE ALPHAS IN THE FUTURE  (read this before raising MAX_STRATEGIES)

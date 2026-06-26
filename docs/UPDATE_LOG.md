@@ -3,6 +3,27 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-26] Added 2 non-directional movement alphas (ADX as an ALPHA-PRIVATE indicator)
+- **I (Issue):** Add a "is the market moving?" filter (STRAT-006): on both TFs, ADX rising AND
+  ATR rising → 1, else 0 (never −1). It needs ADX, which the repo didn't have — and ADX columns
+  in the obs would resize the locked observation.
+- **R (Rule):** Operator 2026-06-26 — "if we don't have to add the extra indicator to the obs,
+  don't; we just need the signal." Keep the obs frozen at 479/v1.5.0; expose the movement only
+  through the alpha's 1/0 slot.
+- **A (Application):** New `src/indicators/adx.py` (Wilder ADX, TA-Lib fast-path). New
+  **alpha-private** indicator path (`constants.py` ADX_PERIODS/ALPHA_PRIVATE_SHIFT;
+  `base.py` per_tf_alpha_private_columns/compute_timeframe_alpha_private, SEPARATE from the 220
+  obs indicators; `cache_builder.build_aligned_alpha_private` + `load_alpha_private`). Env takes
+  optional `alpha_indicators=` and merges them into `ctx` ONLY (obs untouched). Two alphas
+  `dual_movement_filter_5m_30m` (slot 16) and `dual_movement_filter_30m_4h` (slot 17), registered
+  in `alpha_pack`. Multi-symbol factory accepts an optional per-symbol 4th element. Streak is the
+  existing alpha_streak block (1,1,1→1,2,3 confirmed). Tests: `test_dual_movement_filter.py`
+  (logic, obs-unchanged, env wiring, absent-is-safe, cache alignment); `test_alpha_pack` 16→18.
+- **C (Conclusion):** The policy gains a movement gate (and a reusable "add an alpha that needs a
+  new indicator WITHOUT changing the obs" pattern) — more selective entries toward a consistent
+  FTMO pass, with the observation contract still frozen on the road to 1000 alphas. Obs **479 /
+  v1.5.0 unchanged**; alpha roster 16→18 (fingerprint rolls = new experiment line).
+
 ## [2026-06-26] Made VERSION PAIRING the governing rule for CPU/GPU/TPU
 - **I (Issue):** With three implementations (CPU, GPU, TPU) we could get confused about which
   produced a policy and whether they're comparable.
