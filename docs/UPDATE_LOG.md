@@ -236,3 +236,21 @@ pass FTMO-style challenges more consistently.
   full profitability needs real training scale (Colab GPU, millions of steps).
 - **C:** The one-bot-trades-everything training path is wired and proven to learn; it generalises
   across asset types via the cross-asset perception, improving with training. The portfolio bridge.
+
+## [2026-06-25] Governance — living env record, env fingerprint (CPU/GPU parity), training ledger
+- **I:** As runs multiply (CPU/GPU, seeds, evolving env) we risk losing track of WHAT the env
+  includes and WHICH policy to trust. Need a living record + update rules + run records + a way to
+  keep CPU and GPU versions identical.
+- **R:** Operator request. No behaviour change (records/tooling only); reads the LIVE config.
+- **A:**
+  - `src/training/env_fingerprint.py`: `env_spec()` + `env_fingerprint()` -- a 12-char hash of
+    everything that defines the env (obs contract+size, alpha roster, FTMO rules, reward). SAME
+    fingerprint = same environment = comparable policies (CPU or GPU). Header carries the RULES
+    for building the future GPU trainer (match fingerprint + step-parity + same policy format).
+  - `src/training/run_log.py`: append-only JSONL ledger -- `log_run/load_runs/best_run`.
+    `best_run(fingerprint=...)` = which policy to follow (top walk-forward pass-rate, same env).
+  - `docs/ENVIRONMENT_STATE.md`: living single-source-of-truth + UPDATE RULES + GPU-build rules.
+  - `docs/TRAINING_LEDGER.md` + `records/`: how every run is recorded vs FTMO pass-rate.
+  - +4 tests (`tests/test_env_governance.py`). 101/101 green. Live fingerprint: 83d880a5f3bf.
+- **C:** The environment can never get lost (it's recorded + hashed), every run is tracked vs the
+  FTMO pass-rate, and CPU/GPU runs stay version-locked by a shared fingerprint -> no confusion.
