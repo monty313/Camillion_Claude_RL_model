@@ -46,6 +46,16 @@ FTMO_PHASE2_TRAILING_PCT: float = 1.0       # PHASE-2 trailing wall after bankin
 FTMO_PHASE2_CONTINUE: bool = False          # after banking +2.5%: False=stop for the day; True=keep trading under the 1% trail
 FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episode +10%)
 
+# --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
+# decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York
+# session on INDEX instruments. NY open = 13:30 UTC. A bonus QUALIFIES when, on indices, the
+# session's CLOSED-IN-PROFIT P&L reaches: HALF >=50% of the daily target within 2h (13:30-15:30);
+# FULL >=100% within 3h (13:30-16:30); each once/day, index share of closed P&L >=50%. It is only
+# PAID at day-end IF THE DAY PASSES (day closed >= +2.5% of initial). If the day fails or breaches,
+# the bonus is erased (never paid). Set both to 0.0 to disable. ---
+FTMO_NY_HALF_TARGET_BONUS: float = 0.15
+FTMO_NY_FULL_TARGET_BONUS: float = 0.45     # 3x the half bonus
+
 # --- Transaction cost (per SIDE, as a fraction of notional; ~0.000035 ~= 0.8 pip round-trip on EURUSD) ---
 TRANSACTION_COST_FRAC_PER_SIDE: float = 0.000035
 

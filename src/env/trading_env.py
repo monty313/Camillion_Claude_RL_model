@@ -17,7 +17,8 @@
 #   per-day FTMO reset; breach terminates. C: honest training signal aligned to
 #   passing FTMO, fast enough to train on CPU.
 # =====================================================================
-"""TradingEnv: cached-observation FTMO env. Reward = equity change only."""
+"""TradingEnv: cached-observation FTMO env. Reward = equity change + deliberate FTMO shaping
+(breach penalty, +10% pass bonus, and the operator's NY-session index bonus)."""
 from __future__ import annotations
 import numpy as np
 import pandas as pd
@@ -83,7 +84,10 @@ class TradingEnv:
         self.window = window
         self.random_window = bool(random_window)
         self.rng = np.random.default_rng(seed)
-        self._dates = pd.to_datetime(self.time_ns).normalize().values  # day boundaries
+        _ts = pd.to_datetime(self.time_ns)
+        self._dates = _ts.normalize().values                          # day boundaries
+        self._minute_of_day = (_ts.hour * 60 + _ts.minute).to_numpy().astype(np.int32)  # UTC, for NY session
+        self._is_index = (A.asset_class(symbol) == "index")           # ORB + NY bonus apply to indices
         self._precompute(alpha_registry)
 
     # ---- precompute (once): alphas, net signal, leak-free accuracy, time ----
@@ -94,7 +98,8 @@ class TradingEnv:
             ctx = MarketContext(close=float(self.close[i]),
                                 indicators=dict(zip(ALL_INDICATOR_COLUMNS,
                                                     self.ind[i].tolist())),
-                                bar_index=i)
+                                bar_index=i, symbol=self.symbol or "",
+                                minute_of_day=int(self._minute_of_day[i]))
             self.alpha_matrix[i] = registry.collect_alphas(ctx)
         self.occupancy = registry.occupancy_mask()
         self.net_signal = np.array([net_balance(self.alpha_matrix[i]) for i in range(T)],
@@ -199,6 +204,7 @@ class TradingEnv:
         self.entry_price = float(self.close[self.ptr])
         self._cur_date = self._dates[self.ptr]
         self._days_elapsed = 0          # trading days into this episode (for the time-to-pass pace)
+        self._ny_reset()                # NY-session index-bonus state (per day)
         self._reset_phase2()
         return self._obs(), {"ptr": self.ptr}
 
@@ -207,6 +213,46 @@ class TradingEnv:
         self._phase2_active = False    # banked +2.5% today AND chose to keep trading (1% trail)
         self._phase2_peak = 0.0        # equity peak since the phase-2 (1%) trail started
         self._day_locked = False       # done trading for the day -> no new opens
+
+    # ---- NY-session index bonus (DELIBERATE reward shaping; operator decision) ----
+    def _ny_reset(self) -> None:
+        """Per-day NY-bonus state (called on reset + each midnight)."""
+        self._ny_start_realized = None     # realized PnL banked at NY session open today
+        self._ny_half_qualified = False    # session closed >=50% of daily target within 2h
+        self._ny_full_qualified = False    # session closed >=100% of daily target within 3h
+
+    def _ny_qualify(self) -> None:
+        """On an INDEX during the NY session (open 13:30 UTC), mark the half/full bonus QUALIFIED
+        once the session's CLOSED-IN-PROFIT P&L reaches >=50% (within 2h, 13:30-15:30) / >=100%
+        (within 3h, 13:30-16:30) of the daily target. Index share of closed session P&L is 1.0 in
+        the single-symbol env (>=50% ok). Paid only at day-end IF the day passes (_ny_day_end_bonus)."""
+        if not self._is_index:
+            return
+        mod = int(self._minute_of_day[self.ptr])
+        if mod >= 810 and self._ny_start_realized is None:                 # 13:30 UTC -> session start
+            self._ny_start_realized = self.acc.daily_realized_pnl
+        if self._ny_start_realized is None:
+            return
+        session_closed = self.acc.daily_realized_pnl - self._ny_start_realized
+        if session_closed <= 0:                                            # must be CLOSED in profit
+            return
+        target = self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance   # 2.5% of initial
+        if not self._ny_half_qualified and 810 <= mod < 930 and session_closed >= 0.5 * target:
+            self._ny_half_qualified = True
+        if not self._ny_full_qualified and 810 <= mod < 990 and session_closed >= target:
+            self._ny_full_qualified = True
+
+    def _ny_day_end_bonus(self) -> float:
+        """Pay the qualified NY bonus IFF the ENDING day PASSED (closed >= +2.5% of initial). If the
+        day failed (or breached -> the episode already terminated before here), the bonus is erased."""
+        if not (self._ny_half_qualified or self._ny_full_qualified):
+            return 0.0
+        target = self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance
+        if self.acc.daily_realized_pnl < target:                           # day did NOT pass -> no bonus
+            return 0.0
+        bonus = float(getattr(V, "FTMO_NY_HALF_TARGET_BONUS", 0.0)) if self._ny_half_qualified else 0.0
+        bonus += float(getattr(V, "FTMO_NY_FULL_TARGET_BONUS", 0.0)) if self._ny_full_qualified else 0.0
+        return bonus
 
     def _flatten(self) -> None:
         """Close any open position at close[ptr] and bank it via record_close (the single
@@ -260,12 +306,17 @@ class TradingEnv:
         # 3) REWARD = equity change as a fraction of starting balance (objective only)
         reward = float((self.acc.equity - equity_before) / self.cfg.starting_balance) * self.reward_scale
 
-        # 4) day boundary -> reset daily FTMO state + per-day two-phase engine (after reward)
+        # 4) day boundary -> PAY any qualified NY index bonus IF the ending day passed (closed
+        #    >= +2.5% of initial), then reset daily FTMO + two-phase + NY-bonus state.
         if self._dates[self.ptr] != self._cur_date:
+            reward += self._ny_day_end_bonus()   # 0 unless the ending day passed (else erased)
             self.acc.reset_day()
             self._reset_phase2()
+            self._ny_reset()
             self._cur_date = self._dates[self.ptr]
             self._days_elapsed += 1     # one more trading day into the episode
+        # 4b) NY-session index bonus QUALIFY (closed-in-profit during the 13:30-UTC NY session)
+        self._ny_qualify()
 
         # 5) breach check (FTMO/free) -> terminate with penalty (still objective)
         rep = BD.detect(self.acc, self.cfg)

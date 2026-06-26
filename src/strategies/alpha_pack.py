@@ -14,6 +14,7 @@ from src.strategies.register_sma_stack_trend_30m_4h_alpha import register as _r_
 from src.strategies.register_sma_stack_pullback_30m_4h_alpha import register as _r_sma_stack_pullback_30m_4h_alpha
 from src.strategies.register_sma_reversion_rally_5m_30m_alpha import register as _r_sma_reversion_rally_5m_30m_alpha
 from src.strategies.register_sma_reversion_rally_30m_4h_alpha import register as _r_sma_reversion_rally_30m_4h_alpha
+from src.strategies.register_orb_ny_breakout_indices_alpha import register as _r_orb_ny_breakout_indices_alpha
 
 
 def register_all(registry):
@@ -32,4 +33,5 @@ def register_all(registry):
     _r_sma_stack_pullback_30m_4h_alpha(registry)
     _r_sma_reversion_rally_5m_30m_alpha(registry)
     _r_sma_reversion_rally_30m_4h_alpha(registry)
+    _r_orb_ny_breakout_indices_alpha(registry)   # slot 15: ORB NY-open breakout (INDICES only)
     return registry

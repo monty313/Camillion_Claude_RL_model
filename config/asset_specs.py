@@ -68,9 +68,12 @@ _METAL_ROOTS  = ("XAU", "XAG", "XPT", "XPD", "GOLD", "SILVER")                  
 _ENERGY_ROOTS = ("USOIL", "UKOIL", "WTI", "BRENT", "OIL", "NGAS", "NATGAS", "XNG", "XBR", "XTI")
 _CRYPTO_ROOTS = ("BTC", "ETH", "LTC", "XRP", "ADA", "DOT", "DOGE", "SOL", "BNB", "XLM",
                  "AAVE", "LINK", "BCH", "AVAX", "MATIC", "UNI", "ATOM", "ALGO", "TRX", "ETC")
+# FTMO indices (their symbol names): US30 US100 US500 US2000 GER40 UK100 FRA40 EU50 SPN35
+# JP225 HK50 AUS200 (+ .cash variants -> handled by substring after stripping non-alnum).
 _INDEX_ROOTS  = ("US30", "US500", "US100", "US2000", "SPX", "NAS", "NDX", "DJI", "DOW", "GER",
                  "DE40", "DE30", "UK100", "FTSE", "JP225", "JPN", "HK50", "AUS200", "EU50",
-                 "STOXX", "FRA", "FRA40", "ESP", "ESP35", "NETH", "SWI", "USTEC")
+                 "STOXX", "FRA", "FRA40", "ESP", "ESP35", "SPN", "SPN35", "NETH", "NED", "SWI",
+                 "SUI", "USTEC", "CHINA50", "CN50", "US2000")
 
 
 def infer_asset_class(symbol: str | None) -> str | None:

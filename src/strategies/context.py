@@ -24,6 +24,7 @@ class MarketContext:
     indicators: dict = field(default_factory=dict)   # {"{tf}__{col}": value}
     bar_index: int = -1
     symbol: str = ""
+    minute_of_day: int = -1   # UTC minute-of-day of the bar close (0..1439); -1 = unknown
 
     def ind(self, col: str, tf: str = "1m") -> float:
         """Indicator value for column `col` on timeframe `tf` (NaN if absent)."""
