@@ -45,10 +45,11 @@
 - [x] ✅ Clear "machine: X cores / Y GB / GPU … → using …" report; wired into `train_portfolio` (n_envs + device + threads)
 - [x] ✅ Honest utilization note printed; +4 tests (172/172); verified end-to-end with cache reuse
 
-**Part 2 ⬜ — true multi-core (the actual ~70–80% on a big paid tier)** 💬 *Mark's call*
-- [ ] ⬜ Multi-worker (subprocess) training where each worker **LOADS its data + features from disk** (now safe thanks to #1b — no pickle blowup), with a DummyVecEnv fallback when RAM is tight
-- [ ] ⬜ autotune chooses processes vs single based on cores + RAM; trades RAM for cores
-- [ ] ⬜ Honest profile of the achieved utilization before/after
+**Part 2 ✅ (commit pending) — true multi-core (the actual ~70–80% on a big paid tier)**
+- [x] ✅ Multi-worker (subprocess) training where each worker **LOADS its data + features from disk** (no pickle blowup), with a single-process DummyVecEnv fallback
+- [x] ✅ autotune chooses processes vs single based on cores + RAM (memory-safe; reserves one env for the parent; collapses to single process on small machines)
+- [x] ✅ Verified: 2 workers spawn + load from disk + step cleanly; from-disk worker builder tested (173/173); audit GO
+- [ ] ⬜ *Profile on Mark's actual paid tier* to confirm the real % (can't measure true many-core here — 2-core box)
 
 ---
 

@@ -84,3 +84,28 @@ def test_build_portfolio_subs_round_trips_via_cache():
     # a manifest.json exists and says what it's for
     sub_dirs = [os.path.join(base, d) for d in os.listdir(base)]
     assert any(os.path.isfile(os.path.join(d, "manifest.json")) for d in sub_dirs)
+
+
+def test_from_disk_worker_builds_env_via_cache():
+    # The multi-core worker builds its env by LOADING data (indicator cache) + features (feature cache)
+    # from disk -- nothing large is pickled. This tests that builder in-process (no subprocess).
+    from src.data.cache_builder import build_cache, load_cache
+    from src.env.portfolio_env import align_symbol_data, build_portfolio_subs
+    from src.training.gym_adapter import make_portfolio_gym_env_from_disk
+    dcache, fcache = tempfile.mkdtemp(), tempfile.mkdtemp()
+    n = 900
+    idx = pd.date_range("2026-03-02", periods=n, freq="1min")
+    rng = np.random.default_rng(1)
+    syms = ["EURUSD", "US30"]
+    for s, b, sc in [("EURUSD", 1.10, 3e-4), ("US30", 38000.0, 2.0)]:
+        c = b + np.cumsum(rng.standard_normal(n) * sc)
+        df = pd.DataFrame({"open": c, "high": c + sc, "low": c - sc, "close": c, "volume": 1000.0}, index=idx)
+        build_cache(df, dcache, s)
+    sd = align_symbol_data({s: load_cache(dcache, s) for s in syms})
+    build_portfolio_subs(sd, _reg, progress=False, feature_cache_dir=fcache)   # parent populates the cache
+    # the worker rebuilds purely from disk -> must be a cache HIT and a valid 479 obs
+    env = make_portfolio_gym_env_from_disk(dcache, syms, feature_cache_dir=fcache, warmup=0)
+    obs, _ = env.reset()
+    assert obs.shape == (479,) and np.all(np.isfinite(obs))
+    ind, close, tns = sd["EURUSD"]
+    assert FC.load(fcache, "EURUSD", ind, close, tns, _reg()) is not None   # cache populated + fingerprint matches

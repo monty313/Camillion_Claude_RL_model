@@ -122,7 +122,8 @@ def main(argv=None):
           f"(grab a coffee; this is the slow part)...")
     if feat_cache:
         print(f"      prepared features will be saved/reused at: {feat_cache}")
-    train_portfolio(sd, _reg, total_timesteps=a.steps, save_path=a.out, feature_cache_dir=feat_cache)
+    train_portfolio(sd, _reg, total_timesteps=a.steps, save_path=a.out, feature_cache_dir=feat_cache,
+                    data_cache_dir=a.cache, symbols=found)   # data_cache_dir+symbols enable multi-core workers
     print(f"      trained + saved -> {a.out} (+ its _vecnorm.pkl)")
 
     # 4) the day-by-day results (the part you care about)

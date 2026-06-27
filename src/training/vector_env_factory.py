@@ -57,39 +57,63 @@ def make_multi_symbol_vec_env(symbol_data: dict, registry_factory, n_envs: int |
 
 
 def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | None = None,
-                           feature_cache_dir: str | None = None, **env_kwargs):
+                           feature_cache_dir: str | None = None, data_cache_dir: str | None = None,
+                           symbols=None, use_subproc: bool = False, **env_kwargs):
     """ONE bot, ONE shared pot, ALL symbols at once -- the true portfolio trainer. Every worker is a
     full PortfolioEnv over `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned), so the
     single policy learns to BALANCE risk across simultaneous positions in one account, and scales to the
     full FTMO broker list without changing the locked 479 observation."""
+    import os
     from stable_baselines3.common.vec_env import DummyVecEnv
     from src.training.gym_adapter import make_portfolio_gym_env
     from src.env.portfolio_env import build_portfolio_subs
-    # IMPORTANT: the aligned portfolio arrays are LARGE (every symbol x the full history -> gigabytes).
-    # SubprocVecEnv would PICKLE the whole dataset to EACH worker (gigabytes x N_ENVS) -> on Colab that
-    # OOM/thrashes and HANGS before training starts. DummyVecEnv runs the envs in ONE process so they
-    # SHARE the arrays BY REFERENCE (one copy total) and start immediately.
     n = n_envs or min(4, TS.N_ENVS)
-    # EPISODE DIVERSITY: each worker gets a DIFFERENT seed and a random training window, so the N
-    # DummyVecEnv workers explore DIFFERENT stretches of history instead of replaying the SAME
-    # trajectory (identical workers = no exploration diversity = wasted parallel envs).
+    # EPISODE DIVERSITY: each worker gets a DIFFERENT seed and a random training window, so the workers
+    # explore DIFFERENT stretches of history instead of replaying the SAME trajectory.
     random_window = bool(env_kwargs.pop("random_window", TS.RANDOM_WINDOW_TRAINING))
     window = env_kwargs.pop("window", TS.WINDOW_LENGTH_BARS)
-    warmup = env_kwargs.get("warmup", 200)
-    cfg = env_kwargs.get("cfg", None)
-    # BUILD ONCE, SHARE ACROSS WORKERS: the per-symbol precompute (alphas/streaks over the whole history)
-    # is the slow + memory-heavy part. Doing it ONCE and sharing the read-only result across the N workers
-    # cuts build time AND memory ~N-fold -- the fix for the multi-hour "stuck building" hang (was rebuilding
-    # 4 symbols x N workers = 16 times). The shared sub-envs are read-only, so this is safe in one process.
-    print(f"      building shared features for {len(symbol_data)} symbols ONCE (shared by all {n} workers)...",
-          flush=True)
+    warmup = env_kwargs.pop("warmup", 200)
+    cfg = env_kwargs.pop("cfg", None)
+    # BUILD ONCE: do the slow per-symbol precompute a single time in the parent. This both warms the env
+    # AND (if feature_cache_dir) SAVES the features to disk -- so multi-core workers can LOAD them rather
+    # than each rebuilding (or each receiving a gigabyte pickle, the original OOM hang).
+    print(f"      building shared features for {len(symbol_data)} symbols ONCE...", flush=True)
     subs = build_portfolio_subs(symbol_data, registry_factory, cfg=cfg, warmup=warmup, progress=True,
                                 feature_cache_dir=feature_cache_dir)
 
+    # TRUE MULTI-CORE: separate worker PROCESSES each step the market in parallel. To avoid pickling the
+    # gigabyte dataset to each worker, the workers LOAD their data (indicator cache) + features (feature
+    # cache) FROM DISK -- so only small strings are pickled. Requires both caches on disk + posix (fork,
+    # which is Colab-notebook-safe). Falls back to single-process DummyVecEnv otherwise.
+    can_subproc = bool(use_subproc and n >= 2 and data_cache_dir and feature_cache_dir and symbols
+                       and os.name == "posix")
+    if can_subproc:
+        try:
+            from stable_baselines3.common.vec_env import SubprocVecEnv
+            from src.training.gym_adapter import make_portfolio_gym_env_from_disk
+            del subs   # free the parent copy; each worker loads its own from disk
+            syms = list(symbols)
+
+            def _disk_thunk(seed):
+                def _f():
+                    return make_portfolio_gym_env_from_disk(
+                        data_cache_dir, syms, feature_cache_dir=feature_cache_dir, cfg=cfg, warmup=warmup,
+                        window=window, random_window=random_window, seed=seed, **env_kwargs)
+                return _f
+
+            print(f"      starting {n} worker processes (multi-core; each loads from disk)...", flush=True)
+            return SubprocVecEnv([_disk_thunk(i) for i in range(n)], start_method="fork")
+        except Exception as e:   # never let multi-core break a run -> fall back to single process
+            print(f"      (multi-core unavailable: {e}; using single process)", flush=True)
+            subs = build_portfolio_subs(symbol_data, registry_factory, cfg=cfg, warmup=warmup,
+                                        progress=False, feature_cache_dir=feature_cache_dir)
+
+    # SINGLE PROCESS (DummyVecEnv): workers SHARE the one read-only `subs` (no pickling, one copy total).
     def _thunk(seed):
         def _f():
-            return make_portfolio_gym_env(None, registry_factory, subs=subs, seed=seed,
-                                          random_window=random_window, window=window, **env_kwargs)
+            return make_portfolio_gym_env(None, registry_factory, subs=subs, seed=seed, cfg=cfg,
+                                          warmup=warmup, random_window=random_window, window=window,
+                                          **env_kwargs)
         return _f
 
     return DummyVecEnv([_thunk(i) for i in range(n)])

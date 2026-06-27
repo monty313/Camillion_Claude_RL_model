@@ -658,3 +658,21 @@ report covers all days, model save/load works).
   cache on a 2nd run ("loaded saved features ✓"). +4 tests; suite 172/172; audit ✅ GO 38/42.
 - **C:** sensible, memory-safe resource use out of the box with a truthful utilisation picture; Phase 1
   (build-once+share, Drive cache, autocalibrate part 1) complete.
+
+## [2026-06-27] Training perf #1c (part 2): TRUE multi-core training (workers load data+features from disk)
+- **I:** Owner wants ~70–80% of CPU AND RAM used (don't waste paid Colab time). The single-process
+  DummyVecEnv path steps the market on ~1 core. Going multi-process naively pickles the gigabyte dataset
+  to every worker -> the original OOM hang.
+- **R:** perf; obs/FTMO/`step()` unchanged. **A:** new top-level `make_portfolio_gym_env_from_disk()` builds
+  a PortfolioEnv by LOADING its data (indicator cache) + features (the #1b feature cache) FROM DISK, so a
+  SubprocVecEnv worker pickles only small strings -- no gigabyte pickling. `make_portfolio_vec_env` now: builds
+  the features ONCE in the parent (populates the cache), then if multi-core is chosen starts N **worker
+  processes** (`SubprocVecEnv`, `start_method="fork"` = Colab-notebook-safe) that each load from disk; else
+  falls back to single-process DummyVecEnv (shared subs). `autotune` sizes the worker count to ~`target_util`
+  of cores AND a memory-safe cap (reserves one env for the parent; collapses to single process when RAM is
+  tight or <2 cores). `train_portfolio`/`run_training` thread `data_cache_dir`+`symbols`+`use_subproc`.
+- **Verified:** forced 2-worker run spawns processes, each loads from disk (no pickle blowup), resets to
+  (2,479) and steps cleanly with finite rewards; the from-disk worker builder is a cache HIT and yields a
+  valid 479 obs (+test); single-process fallback intact. Suite 173/173; audit ✅ GO 38/42.
+- **C:** on a big paid tier training now auto-scales to multiple cores (~70–80%) without the pickle-OOM,
+  and safely drops to one process on small machines. Phase 1 fully complete.

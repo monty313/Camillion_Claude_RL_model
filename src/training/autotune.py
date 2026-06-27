@@ -66,12 +66,21 @@ def autotune(*, target_util: float = 0.80, prefer_cpu: bool = True, max_envs: in
     """
     d = detect()
     cores = d["cores"]
-    threads = max(1, min(8, round(cores * target_util)))     # small model: a handful of threads is plenty
     device = "cuda" if (d["gpu"] and not prefer_cpu) else "cpu"
-    # memory-safe parallel copies (never over-subscribe RAM -> never the freeze)
-    by_cores = max(1, cores // 2)
-    by_ram = max(1, int((d["ram_avail_gb"] or 8.0) // per_env_gb)) if d["ram_avail_gb"] else 4
-    n_envs = max(1, min(max_envs, by_cores, by_ram if d["ram_avail_gb"] else by_cores))
+    # WORKER PROCESSES (true multi-core): aim for ~target_util of the cores, but never over-subscribe RAM
+    # (reserve one env's worth for the parent process). Each worker is a separate process stepping the
+    # market in parallel, so workers ~= cores used. RAM is the hard cap that prevents the freeze.
+    by_cores = max(1, round(cores * target_util))
+    if d["ram_avail_gb"]:
+        by_ram = max(1, int((d["ram_avail_gb"] * target_util - per_env_gb) // per_env_gb))
+    else:
+        by_ram = by_cores
+    n_workers = max(1, min(max_envs, by_cores, by_ram))
+    use_subproc = (n_workers >= 2) and (os.name == "posix")   # multi-process only when it actually helps
+    n_envs = n_workers
+    # compute threads: with many WORKERS we want FEW threads each (avoid oversubscription); single-process
+    # benefits from a handful. Keep small -- the 3x256 MLP never needs many.
+    threads = 1 if use_subproc else max(1, min(4, round(cores * target_util)))
     if apply:
         try:
             import torch
@@ -83,15 +92,15 @@ def autotune(*, target_util: float = 0.80, prefer_cpu: bool = True, max_envs: in
     if verbose:
         ram = f"{d['ram_total_gb']:.0f} GB" if d["ram_total_gb"] else "unknown RAM"
         avail = f"{d['ram_avail_gb']:.0f} GB free" if d["ram_avail_gb"] else "free RAM unknown"
+        mode = f"MULTI-CORE: {n_workers} worker processes" if use_subproc else f"single process ({n_envs} copies)"
         print(f"      [autotune] machine: {cores} CPU cores · {ram} ({avail}) · GPU: {d['gpu'] or 'none'}",
               flush=True)
-        print(f"      [autotune] using: {n_envs} parallel copies · {threads} compute threads · device={device}",
-              flush=True)
+        print(f"      [autotune] using: {mode} · {threads} thread(s) each · device={device}", flush=True)
         if device == "cpu" and d["gpu"]:
             print("      [autotune] (a GPU is present but the model is tiny — CPU is faster; "
                   "pass prefer_cpu=False to force GPU)", flush=True)
-        print("      [autotune] note: training steps the market one copy at a time (single process), so on a "
-              "big machine CPU use stays modest;", flush=True)
-        print("      [autotune]       ask to enable MULTI-WORKER mode to truly use ~70–80% of many cores.",
-              flush=True)
-    return {"n_envs": int(n_envs), "threads": int(threads), "device": device, **d}
+        if not use_subproc:
+            print("      [autotune] note: single process here (few cores / tight RAM) — on a bigger paid tier "
+                  "this auto-scales to multi-core workers to use ~70–80%.", flush=True)
+    return {"n_envs": int(n_envs), "n_workers": int(n_workers), "use_subproc": bool(use_subproc),
+            "threads": int(threads), "device": device, **d}
