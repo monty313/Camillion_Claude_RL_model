@@ -596,3 +596,22 @@ report covers all days, model save/load works).
     `test_portfolio_random_window_diversifies_even_on_short_history`. Also: guarded the heartbeat against an
     empty rollout buffer (no `nan`), and refreshed the JARVIS `entropy-collapse` knowledge entry to say
     ent_coef is now 0.01 (was stale at 0.0). Suite 163/163; audit ✅ GO.
+
+## [2026-06-27] Training perf #1a: build per-symbol features ONCE and SHARE across workers (+ build progress bar)
+- **I:** A real Colab run sat on "building the training environment..." for ~5 hours and never started
+  training. Root cause (measured): `make_portfolio_vec_env` built a fresh `PortfolioEnv` per worker, and
+  each `PortfolioEnv` precomputed one `TradingEnv` per symbol -> **4 workers × 4 symbols = 16 redundant
+  precomputes** over the full 1.8M-bar history (~7,400 bars/s here -> ~65 min on a fast box, more on Colab),
+  plus ~15 GB of redundant alpha+streak arrays (vs Colab free ~12.7 GB). And no progress output -> looked
+  frozen. **R:** perf only; obs(479)/FTMO/`step()` unchanged. Tracked in `TRAINING_REQUIREMENTS.md` (#1).
+- **A:** New `build_portfolio_subs()` builds the per-symbol `TradingEnv`s ONCE; `make_portfolio_vec_env`
+  builds them once and passes the SAME dict to every worker via `PortfolioEnv(subs=...)`. The sub-envs are
+  read-only after precompute (PortfolioEnv only reads them; never calls `sub.step`), so sharing one copy
+  across the DummyVecEnv workers (one process) is safe. Cuts build time AND memory ~N-fold (16 builds -> 4).
+  Added a `progress=` flag to `TradingEnv` -> a per-symbol "[SYM] 30% (…bars)" build bar so it is never a
+  silent multi-hour mystery again.
+- **Verified:** factory build prints once for 4 symbols (not 16); all 4 workers share ONE set of sub-envs
+  (`is` identity) yet keep DIFFERENT random-window starts; suite 163/163.
+- **C:** the full-history build drops from ~16 redundant builds/~15 GB to 4 builds/~3.7 GB with a live
+  progress bar -> the run actually reaches training on a reasonable Colab tier. (Still TODO in #1:
+  save-features-to-disk for instant re-runs, and auto-calibrate workers/threads/device to ~70–80%.)

@@ -67,31 +67,58 @@ def align_symbol_data(symbol_data: dict) -> dict:
     return out
 
 
+def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmup: int = 200,
+                         progress: bool = True) -> dict:
+    """Build ONE TradingEnv per symbol -- the expensive precompute (alphas/streaks/cross-asset over the
+    whole history) -- so the result can be SHARED across every vectorised PortfolioEnv worker.
+
+    The per-symbol arrays are READ-ONLY after this (PortfolioEnv only reads them; it never calls sub.step
+    or mutates sub state), so sharing one copy across all workers is safe AND avoids rebuilding them once
+    per worker -- which was 4 workers x 4 symbols = 16 redundant builds over 1.8M bars (the multi-hour
+    "stuck building" hang). Build once here, share everywhere.
+    """
+    cfg = cfg or load_active_config()
+    subs: dict = {}
+    n = len(symbol_data)
+    for k, (sym, (ind, close, time_ns)) in enumerate(symbol_data.items(), 1):
+        if progress:
+            print(f"      [{k}/{n}] building features for {sym} ...", flush=True)
+        ps = A.calibrated_position_size(sym) if sym in A.SPECS else 100_000.0
+        subs[sym] = TradingEnv(np.asarray(ind), np.asarray(close), np.asarray(time_ns),
+                               registry_factory(), cfg=cfg, symbol=sym, position_size=ps,
+                               warmup=warmup, progress=progress)
+    return subs
+
+
 class PortfolioEnv:
     """One shared pot, many symbols, per-symbol decisions. Gym-style single obs(479)/action(4)."""
 
     observation_shape = C.OBS_SHAPE
     n_actions = C.N_ACTIONS
 
-    def __init__(self, symbol_data: dict, registry_factory, *, cfg=None, warmup: int = 200,
+    def __init__(self, symbol_data: dict | None = None, registry_factory=None, *, cfg=None, warmup: int = 200,
                  breach_penalty: float = 1.0, reward_scale: float = 1.0, pass_bonus: float | None = None,
-                 window: int | None = None, random_window: bool = False, seed: int | None = None):
+                 window: int | None = None, random_window: bool = False, seed: int | None = None,
+                 subs: dict | None = None):
         self.cfg = cfg or load_active_config()
-        self.symbols = list(symbol_data)
-        if not self.symbols:
-            raise ValueError("PortfolioEnv needs at least one {symbol: (indicators, close, time_ns)}")
         self.breach_penalty = float(breach_penalty)
         self.reward_scale = float(reward_scale)
         self.pass_bonus = float(self.breach_penalty if pass_bonus is None else pass_bonus)
         self.profit_target_frac = float(getattr(self.cfg, "profit_target_total_pct", 10.0)) / 100.0
-        # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step)
-        self.subs: dict[str, TradingEnv] = {}
+        # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
+        # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
+        # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
+        if subs is not None:
+            self.subs = subs
+            self.symbols = list(subs)
+        elif symbol_data:
+            self.subs = build_portfolio_subs(symbol_data, registry_factory, cfg=self.cfg,
+                                             warmup=warmup, progress=False)
+            self.symbols = list(self.subs)
+        else:
+            raise ValueError("PortfolioEnv needs symbol_data {symbol:(ind,close,time)} OR pre-built subs=")
         T = None
-        for sym, (ind, close, time_ns) in symbol_data.items():
-            ps = A.calibrated_position_size(sym) if sym in A.SPECS else 100_000.0
-            sub = TradingEnv(np.asarray(ind), np.asarray(close), np.asarray(time_ns),
-                             registry_factory(), cfg=self.cfg, symbol=sym, position_size=ps, warmup=warmup)
-            self.subs[sym] = sub
+        for sym, sub in self.subs.items():
             if T is None:
                 T = sub.T
             elif sub.T != T:

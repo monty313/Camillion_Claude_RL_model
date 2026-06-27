@@ -63,21 +63,30 @@ def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | No
     full FTMO broker list without changing the locked 479 observation."""
     from stable_baselines3.common.vec_env import DummyVecEnv
     from src.training.gym_adapter import make_portfolio_gym_env
+    from src.env.portfolio_env import build_portfolio_subs
     # IMPORTANT: the aligned portfolio arrays are LARGE (every symbol x the full history -> gigabytes).
     # SubprocVecEnv would PICKLE the whole dataset to EACH worker (gigabytes x N_ENVS) -> on Colab that
     # OOM/thrashes and HANGS before training starts. DummyVecEnv runs the envs in ONE process so they
-    # SHARE the arrays BY REFERENCE (one copy total) and start immediately. Fewer envs by default too,
-    # since each PortfolioEnv already builds one sub-env per symbol.
+    # SHARE the arrays BY REFERENCE (one copy total) and start immediately.
     n = n_envs or min(4, TS.N_ENVS)
     # EPISODE DIVERSITY: each worker gets a DIFFERENT seed and a random training window, so the N
     # DummyVecEnv workers explore DIFFERENT stretches of history instead of replaying the SAME
     # trajectory (identical workers = no exploration diversity = wasted parallel envs).
     random_window = bool(env_kwargs.pop("random_window", TS.RANDOM_WINDOW_TRAINING))
     window = env_kwargs.pop("window", TS.WINDOW_LENGTH_BARS)
+    warmup = env_kwargs.get("warmup", 200)
+    cfg = env_kwargs.get("cfg", None)
+    # BUILD ONCE, SHARE ACROSS WORKERS: the per-symbol precompute (alphas/streaks over the whole history)
+    # is the slow + memory-heavy part. Doing it ONCE and sharing the read-only result across the N workers
+    # cuts build time AND memory ~N-fold -- the fix for the multi-hour "stuck building" hang (was rebuilding
+    # 4 symbols x N workers = 16 times). The shared sub-envs are read-only, so this is safe in one process.
+    print(f"      building shared features for {len(symbol_data)} symbols ONCE (shared by all {n} workers)...",
+          flush=True)
+    subs = build_portfolio_subs(symbol_data, registry_factory, cfg=cfg, warmup=warmup, progress=True)
 
     def _thunk(seed):
         def _f():
-            return make_portfolio_gym_env(symbol_data, registry_factory, seed=seed,
+            return make_portfolio_gym_env(None, registry_factory, subs=subs, seed=seed,
                                           random_window=random_window, window=window, **env_kwargs)
         return _f
 

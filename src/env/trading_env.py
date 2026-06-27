@@ -51,7 +51,8 @@ class TradingEnv:
                  cost_frac: float | None = None, pass_bonus: float | None = None,
                  symbol: str | None = None, value_per_point: float | None = None,
                  window: int | None = None, warmup: int = 200,
-                 random_window: bool = False, seed: int | None = None):
+                 random_window: bool = False, seed: int | None = None,
+                 progress: bool = False):
         self.ind = np.asarray(indicators, dtype=np.float32)
         self.close = np.asarray(close, dtype=np.float64).ravel()
         self.time_ns = np.asarray(time_ns).astype("int64").ravel()
@@ -88,12 +89,14 @@ class TradingEnv:
         self._dates = _ts.normalize().values                          # day boundaries
         self._minute_of_day = (_ts.hour * 60 + _ts.minute).to_numpy().astype(np.int32)  # UTC, for NY session
         self._is_index = (A.asset_class(symbol) == "index")           # ORB + NY bonus apply to indices
+        self._progress = bool(progress)   # print a build progress bar during the (one-time) precompute
         self._precompute(alpha_registry)
 
     # ---- precompute (once): alphas, net signal, leak-free accuracy, time ----
     def _precompute(self, registry):
         T = self.T
         self.alpha_matrix = np.zeros((T, C.MAX_STRATEGIES), dtype=np.float32)
+        _rep = max(1, T // 10) if getattr(self, "_progress", False) else 0   # ~10 progress ticks/symbol
         for i in range(T):
             ctx = MarketContext(close=float(self.close[i]),
                                 indicators=dict(zip(ALL_INDICATOR_COLUMNS,
@@ -101,6 +104,10 @@ class TradingEnv:
                                 bar_index=i, symbol=self.symbol or "",
                                 minute_of_day=int(self._minute_of_day[i]))
             self.alpha_matrix[i] = registry.collect_alphas(ctx)
+            if _rep and i and i % _rep == 0:
+                print(f"          [{self.symbol or '?'}] {100 * i // T:3d}%  ({i:,}/{T:,} bars)", flush=True)
+        if _rep:
+            print(f"          [{self.symbol or '?'}] 100%  ({T:,}/{T:,} bars) done", flush=True)
         self.occupancy = registry.occupancy_mask()
         self.net_signal = np.array([net_balance(self.alpha_matrix[i]) for i in range(T)],
                                    dtype=np.float32)
