@@ -38,6 +38,11 @@ class FTMOConfig:
     phase2_trailing_pct: float = 1.0
     phase2_continue: bool = False          # after banking +2.5%: keep trading under the 1% trail?
     profit_target_total_pct: float = 10.0
+    # alpha-shaping (ON by default 2026-06-27; deliberate departure from "reward=equity only" for PortfolioEnv)
+    alpha_reward_enabled: bool = True
+    alpha_agree_bonus: float = 0.001       # USE the alphas: profitable close that agreed with >=50% firing alphas
+    alpha_against_penalty: float = 0.001   # penalty for OPENING against >=50% firing alphas
+    alpha_beat_bonus: float = 0.001        # BEAT the alphas: closed-trade PnL out-earned following the consensus
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,10 @@ def load_ftmo_config() -> FTMOConfig:
         phase2_trailing_pct=V.FTMO_PHASE2_TRAILING_PCT,
         phase2_continue=getattr(V, "FTMO_PHASE2_CONTINUE", False),
         profit_target_total_pct=V.FTMO_PROFIT_TARGET_PCT,
+        alpha_reward_enabled=getattr(V, "FTMO_ALPHA_REWARD_ENABLED", True),
+        alpha_agree_bonus=getattr(V, "FTMO_ALPHA_AGREE_BONUS", 0.001),
+        alpha_against_penalty=getattr(V, "FTMO_ALPHA_AGAINST_PENALTY", 0.001),
+        alpha_beat_bonus=getattr(V, "FTMO_ALPHA_BEAT_BONUS", 0.001),
     )
 
 

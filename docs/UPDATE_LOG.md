@@ -751,3 +751,27 @@ report covers all days, model save/load works).
   Suite 183/183; audit ✅ GO 38/42.
 - **C:** the bot can finally SEE the daily wall approaching while a trade is open -> it can actually learn to
   cut losses before the daily breach, the most important behaviour for passing CONSISTENTLY.
+
+## [2026-06-27] ALPHA-SHAPING in the portfolio reward (ON by default — operator decision; DELIBERATE departure)
+- **I:** Operator wants the portfolio bot to both (a) USE the alphas and (b) BEAT them, expressed in the reward.
+  **This is a conscious departure from the locked "reward = equity only / NEVER alpha" design rule** — which
+  STILL holds for the single-symbol `TradingEnv` and its `test_reward_independent_of_alphas` (left untouched,
+  still green). Recorded loudly here so it is not mistaken for drift. (NOTE: `CLAUDE.md`'s "reward = equity
+  only" line is now superseded for `PortfolioEnv`; flag to update CLAUDE.md if desired.)
+- **R:** owner-approved after the tradeoffs were laid out (leader-chasing risk; relative-vs-absolute; that the
+  profit conditions are already rewarded by equity). Obs SHAPE unchanged (479); `step()` stays light (reads
+  cached alpha arrays only); breach/FTMO numbers unchanged.
+- **A:** `PortfolioEnv.step` adds three SMALL alpha-conditioned terms, gated by `cfg.alpha_reward_enabled`
+  (True by default): (1) **USE** — bonus when a trade that AGREED with >=50% of the FIRING, unmasked alphas
+  closes in profit with the day net up; (2) **BEAT** — bonus when a closed trade OUT-EARNED what following the
+  alpha consensus would have made; (3) **AGAINST** — penalty for OPENING a trade against >=50% of firing
+  alphas. **Every bonus is CAPPED at the trade's own PnL** (operator rule: "reward can never exceed the PnL")
+  and only pays when the day is net up. Coefs in `config/variables.py` (FTMO_ALPHA_*), all 0.001 default; set
+  `FTMO_ALPHA_REWARD_ENABLED=False` to restore the alpha-free reward.
+- **Verified:** +5 white-box tests (`tests/test_portfolio_alpha_reward.py`) forcing a known consensus — agree
+  bonus fires, against penalty fires, beat bonus fires, the bonus is CAPPED at the trade PnL (not the coef),
+  and with the toggle OFF the reward is alpha-INDEPENDENT. `test_reward_independent_of_alphas` (TradingEnv)
+  still green. Suite 188/188; audit ✅ GO 38/42.
+- **C:** the portfolio bot is now trained to lean on the alphas when they pay AND to be rewarded for beating
+  them — a deliberate, reversible, PnL-capped design choice. (Honest caveat: this trains toward consensus-use,
+  which the `policy_doctor` leader-chasing detector exists to watch; judge it on a real run.)

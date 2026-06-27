@@ -46,6 +46,15 @@ FTMO_PHASE2_TRAILING_PCT: float = 1.0       # PHASE-2 trailing wall after bankin
 FTMO_PHASE2_CONTINUE: bool = True           # after banking +2.5%: keep trading under a tight 1% trail (operator 2026-06-27); False=stop
 FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episode +10%)
 
+# --- ALPHA-SHAPING (ON by default — operator 2026-06-27). DELIBERATE, DOCUMENTED departure from the old
+#     "reward = equity only / never alpha" design rule (which still holds for the single-symbol TradingEnv).
+#     EVERY bonus is CAPPED at the trade's own PnL (it can amplify a real win, never fabricate reward) and
+#     only pays when the DAY is net up; the penalty is applied at entry. Set False to restore alpha-free reward. ---
+FTMO_ALPHA_REWARD_ENABLED: bool = True       # master switch for the three alpha terms below
+FTMO_ALPHA_AGREE_BONUS: float = 0.001       # USE the alphas: profitable close that AGREED with >=50% of firing alphas
+FTMO_ALPHA_AGAINST_PENALTY: float = 0.001   # penalty for OPENING a trade against >=50% of firing alphas
+FTMO_ALPHA_BEAT_BONUS: float = 0.001        # BEAT the alphas: closed-trade PnL out-earned following the consensus
+
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
 # decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York
 # session on INDEX instruments. NY open = 13:30 UTC. A bonus QUALIFIES when, on indices, the

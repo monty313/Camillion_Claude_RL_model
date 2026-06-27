@@ -27,6 +27,13 @@
 #   A: random_window/seed per worker (DIFFERENT stretches) + pot-level two-phase (bank ALL at
 #   +2.5%, stop or 1% trail) mirroring TradingEnv; episode/window end is now truncated (breach/pass
 #   stay terminated). C: parallel envs actually diversify, and the portfolio bot banks +2.5% & stops.
+#   [2026-06-27] ALPHA-SHAPING (ON by default — operator decision). DELIBERATE departure from the
+#   "reward = equity only / NEVER alpha" rule (still true for single-symbol TradingEnv + its test).
+#   I: operator wants the bot to (a) USE the alphas and (b) BEAT them. A: small reward terms tied to the
+#   firing-alpha consensus -- a bonus for a profitable close that agreed with >=50% of alphas, a bonus for
+#   a closed trade that OUT-EARNED following the consensus, and a penalty for OPENING against >=50%; every
+#   bonus is CAPPED at the trade's own PnL and only pays when the day is net up; toggle via cfg.alpha_reward_enabled.
+#   C: reward is no longer alpha-independent in PortfolioEnv by default (documented, reversible).
 # =====================================================================
 """PortfolioEnv: one policy trades ALL symbols from ONE shared pot (obs stays 479)."""
 from __future__ import annotations
@@ -135,6 +142,12 @@ class PortfolioEnv:
         # passes in a row, over and over). EVAL / a real challenge ends at +10% (default False).
         self.continue_after_pass = bool(continue_after_pass)
         self.profit_target_frac = float(getattr(self.cfg, "profit_target_total_pct", 10.0)) / 100.0
+        # ALPHA-SHAPING (opt-in via cfg; ON by default 2026-06-27). Small terms tied to the alpha consensus;
+        # every bonus is CAPPED at the trade's own PnL (amplify a real win, never fabricate reward).
+        self._alpha_on = bool(getattr(self.cfg, "alpha_reward_enabled", False))
+        self._alpha_agree = float(getattr(self.cfg, "alpha_agree_bonus", 0.0))
+        self._alpha_against = float(getattr(self.cfg, "alpha_against_penalty", 0.0))
+        self._alpha_beat = float(getattr(self.cfg, "alpha_beat_bonus", 0.0))
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -191,8 +204,28 @@ class PortfolioEnv:
         self._reset_phase2()                                   # per-day two-phase state on the shared pot
         self._daily_pass_streak = 0                            # consecutive days that banked +2.5% (consistency)
         self._day_passed = False                               # did TODAY bank +2.5% (net of fees)?
+        self._entry_agreed = {}                                # per-open: did the entry agree with >=50% firing alphas?
+        self._entry_alpha_dir = {}                             # per-open: the alpha consensus direction at entry
         self._mark()
         return self._obs(), {"t": self.t}
+
+    def _alpha_consensus(self, sub, t, d):
+        """(agree_frac, disagree_frac, net_dir) among the FIRING, UNMASKED alphas at bar t, for direction d.
+        agree = share of firing alphas pointing WITH d; net_dir = the alphas' overall lean (+1/-1/0)."""
+        am = sub.alpha_matrix[t]
+        occ = np.asarray(sub.occupancy, dtype=bool)
+        fired = (am != 0) & occ
+        nf = int(fired.sum())
+        if nf == 0:
+            return 0.0, 0.0, 0
+        buys = int(((am > 0) & fired).sum())
+        sells = int(((am < 0) & fired).sum())
+        net_dir = 1 if buys > sells else (-1 if sells > buys else 0)
+        if d > 0:
+            return buys / nf, sells / nf, net_dir
+        if d < 0:
+            return sells / nf, buys / nf, net_dir
+        return 0.0, 0.0, net_dir
 
     def _reset_phase2(self) -> None:
         """Reset the per-DAY two-phase state on the SHARED pot (reset + each midnight)."""
@@ -288,11 +321,27 @@ class PortfolioEnv:
         # symbol until tomorrow. Holds (target==current) and closes (target==0) still pass through.
         if self._day_locked and target != 0 and target != self.position[sym]:
             target = 0
+        alpha_shaping = 0.0
         if target != self.position[sym]:
             if self.position[sym] != 0:                        # realize the closing leg into the POT
-                realized = self.position[sym] * (sub.close[t] - self.entry[sym]) * sub.position_size
+                old_dir = self.position[sym]
+                realized = old_dir * (sub.close[t] - self.entry[sym]) * sub.position_size
                 realized -= sub.cost_frac * sub.close[t] * sub.position_size
                 self.th.record_close(self.acc, realized, bar_index=t)   # single P&L truth
+                # ALPHA-SHAPING bonuses (paid only on a profitable close with the DAY net up; capped at PnL)
+                day0 = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
+                if self._alpha_on and realized > 0.0 and self.acc.balance > day0:
+                    pnl_frac = realized / self.cfg.starting_balance
+                    bonus = 0.0
+                    if self._entry_agreed.get(sym, False):                  # USE the alphas: agreed >=50% and won
+                        bonus += self._alpha_agree
+                    move = sub.close[t] - self.entry[sym]                   # BEAT the alphas: out-earned a follow
+                    alpha_gross = self._entry_alpha_dir.get(sym, 0) * move * sub.position_size
+                    bot_gross = old_dir * move * sub.position_size
+                    if bot_gross > alpha_gross:
+                        bonus += min(self._alpha_beat, (bot_gross - alpha_gross) / self.cfg.starting_balance)
+                    alpha_shaping += min(bonus, pnl_frac)                   # CAP: bonus can never exceed the trade PnL
+                self._entry_agreed.pop(sym, None); self._entry_alpha_dir.pop(sym, None)
             self.position[sym] = target
             if target != 0:
                 self.entry[sym] = float(sub.close[t])
@@ -300,6 +349,12 @@ class PortfolioEnv:
                 self.acc.balance -= ecost
                 self.acc.daily_realized_pnl -= ecost
                 self.acc.episode_realized_pnl -= ecost
+                # record the alpha consensus AT ENTRY (for the close-time bonuses) + penalise fighting it
+                agree, disagree, net_dir = self._alpha_consensus(sub, t, target)
+                self._entry_agreed[sym] = (agree >= 0.5)
+                self._entry_alpha_dir[sym] = net_dir
+                if self._alpha_on and disagree >= 0.5:                      # opened AGAINST >=50% firing alphas
+                    alpha_shaping -= self._alpha_against
 
         # advance the cursor: next symbol; when it wraps, advance the bar
         self.j += 1
@@ -310,6 +365,7 @@ class PortfolioEnv:
             bar_advanced = True
         self._mark()
         reward = float((self.acc.equity - eq_before) / self.cfg.starting_balance) * self.reward_scale
+        reward += alpha_shaping            # alpha-shaping (0 unless enabled AND an alpha consensus event fired)
 
         terminated = False
         truncated = False

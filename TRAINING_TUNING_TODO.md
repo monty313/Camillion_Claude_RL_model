@@ -64,6 +64,14 @@ Same toy market (a clean, learnable momentum edge), same 120k-step budget, same 
 - **Note:** target the **4% trailing** wall (the one that bites first), *not* the 10% total — trailing is tighter
   whenever the account isn't already deep underwater.
 
+### ✅ DONE (2026-06-27) — ALPHA-SHAPING in the portfolio reward (ON by default, operator decision)
+- **Built:** USE bonus (profitable close that agreed with ≥50% firing alphas) + BEAT bonus (closed trade
+  out-earned following the consensus) + AGAINST penalty (opening against ≥50%); **every bonus CAPPED at the
+  trade's PnL**, only pays when the day is net up. Toggle `FTMO_ALPHA_REWARD_ENABLED` (default True).
+- **Deliberate departure** from "reward = equity only" (still holds for single-symbol TradingEnv). +5 tests; 188/188; audit GO.
+- **Honest watch:** this trains toward *consensus-use* — the very thing `policy_doctor`'s leader-chasing
+  detector flags. Judge it on a REAL run; if it's just following the alpha majority without beating it, reconsider.
+
 ### 3. 🟡 SMA-cross-while-losing penalty  *(defer; prefer observation over reward)*
 - **Idea:** penalize holding a losing trade that **crosses the 1m 30-SMA against its direction**.
 - **Why NOT (as a reward):** (a) it **bakes a tactic into the reward** instead of the goal — RL should *discover*
