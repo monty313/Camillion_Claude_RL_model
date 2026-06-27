@@ -1,7 +1,8 @@
 # 🗂️ Camillion — Training Build Tasks (tracker)
 
 > **The checklist so we never forget anything.** Companion to **`TRAINING_REQUIREMENTS.md`** (the *what*);
-> this file is the *how + status*. **Owner:** Mark (monty313) · **Updated:** 2026-06-27
+> this file is the *how + status*. Consistency-tuning ideas + the *why/why-not* live in **`TRAINING_TUNING_TODO.md`**.
+> **Owner:** Mark (monty313) · **Updated:** 2026-06-27
 >
 > **Legend:** ✅ done & pushed · 🔄 in progress · ⬜ to do · 💬 needs Mark's decision
 
