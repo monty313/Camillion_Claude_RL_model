@@ -81,14 +81,17 @@
 
 ---
 
-## ✅ Done on EVERY change (guardrails)
-- [ ] 🔒 Observation stays **479** (never silently change the shape)
-- [ ] 🔒 FTMO numbers change **only** where Mark explicitly decided (the rules above)
-- [ ] ⚡ Nothing slow (TA-Lib / MT5 / pandas) inside the trading loop
-- [ ] 🧪 `python tools/run_tests.py` stays green · `python tools/run_full_audit.py` stays ✅ GO
-- [ ] 📝 Every change logged in `docs/UPDATE_LOG.md`
+## 🎉 ALL PHASES COMPLETE (Phases 1–4) — suite 180/180 · audit ✅ GO · all pushed to `feat/jarvis-bridge`
+> Next real-world step: run the full training on Colab and read the live day-by-day table; then open JARVIS on the trained model.
+
+## ✅ Done on EVERY change (guardrails — all held)
+- [x] 🔒 Observation stayed **479** (shape never changed)
+- [x] 🔒 FTMO numbers changed **only** where Mark explicitly decided (Phase 3)
+- [x] ⚡ Nothing slow (TA-Lib / MT5 / pandas) added inside the trading loop
+- [x] 🧪 `python tools/run_tests.py` green (180/180) · `python tools/run_full_audit.py` ✅ GO 38/42
+- [x] 📝 Every change logged in `docs/UPDATE_LOG.md`
 
 ---
 
-## 💬 Open decisions (waiting on Mark)
-- [ ] Drive base folder: **`MyDrive/Camillion/`** (recommended) vs `MyDrive/Camillion_data/`
+## 💬 Open decisions
+- [x] ✅ Drive base folder = **`MyDrive/Camillion/`** (Mark chose recommended)
