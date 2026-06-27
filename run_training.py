@@ -19,6 +19,14 @@
 # =====================================================================
 """Train the Camillion portfolio bot in ONE command (data folder in -> day-by-day results out)."""
 from __future__ import annotations
+# --- quiet the noisy third-party banners BEFORE heavy imports (clean output, owner's request) ---
+import os as _os
+import warnings as _warnings
+_os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")      # silence TensorFlow C++ banners (cuda/cpu_feature_guard)
+_os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+_warnings.filterwarnings("ignore", message=".*Gym has been unmaintained.*")
+_warnings.filterwarnings("ignore", category=DeprecationWarning)
+_warnings.filterwarnings("ignore", category=FutureWarning)
 import argparse
 import glob
 import os

@@ -44,44 +44,91 @@ def _vecnorm_path(save_path: str) -> str:
 
 
 def _make_heartbeat(total_timesteps):
-    """A tiny SB3 callback that prints LIVE progress after each rollout, so a long run is NEVER silently
-    stuck AND you can WATCH IT LEARN: steps/s + ETA, the ACTION MIX (% HOLD/BUY/SELL/CLOSE -> is it
-    actually trading or stuck on HOLD?), and the mean step reward (is it making money?). This is the
-    plain-language 'is it working?' read-out. Built lazily so this module imports without SB3."""
+    """A SPARSE 'still working' tick: prints only when crossing each ~10% of training, so a long run is
+    never a silent freeze WITHOUT spamming the screen. The day-by-day pass metrics come from the separate
+    progress-check callback below. Built lazily so this module imports without SB3."""
     from stable_baselines3.common.callbacks import BaseCallback
     import time as _time
 
-    _NAMES = ["HOLD", "BUY", "SELL", "CLOSE"]
-
     class _HB(BaseCallback):
         def _on_training_start(self) -> None:
-            self._t0 = _time.time()
+            self._t0 = _time.time(); self._next_pct = 10
 
         def _on_rollout_end(self) -> None:
-            el = max(1e-9, _time.time() - self._t0)
             n = self.num_timesteps
-            rate = n / el
-            eta_min = (total_timesteps - n) / max(1e-9, rate) / 60.0
-            extra = ""
-            try:    # read the just-collected rollout: what did it DO, and did it make money?
-                import numpy as _np
-                buf = self.model.rollout_buffer
-                acts = _np.asarray(buf.actions).astype(int).ravel()
-                if acts.size:                                  # skip cleanly if a rollout is somehow empty
-                    counts = _np.bincount(acts, minlength=len(_NAMES))[:len(_NAMES)]
-                    tot = max(1, int(counts.sum()))
-                    mix = " ".join(f"{_NAMES[k]} {100.0 * counts[k] / tot:.0f}%" for k in range(len(_NAMES)))
-                    mean_r = float(_np.asarray(buf.rewards).mean())
-                    extra = f"  | trading: {mix}  | mean reward {mean_r:+.2e}"
-            except Exception:
-                pass
-            print(f"      ...{n:,}/{total_timesteps:,} steps  ({rate:.0f} steps/s, ~{eta_min:.1f} min left){extra}",
-                  flush=True)
+            pct = int(100 * n / max(1, total_timesteps))
+            if pct >= self._next_pct:
+                el = max(1e-9, _time.time() - self._t0)
+                eta = (total_timesteps - n) / max(1e-9, n / el) / 60.0
+                print(f"      training… {min(pct, 100)}% done  (~{eta:.1f} min left)", flush=True)
+                self._next_pct = (pct // 10) * 10 + 10
 
         def _on_step(self) -> bool:
             return True
 
     return _HB()
+
+
+def _make_entropy_anneal(start, total_timesteps):
+    """Linearly fade the exploration bonus (ent_coef) from `start` -> ~0 over training, so the bot explores
+    early but ends fully DECISIVE/dynamic (nothing forces the finished policy's action mix)."""
+    from stable_baselines3.common.callbacks import BaseCallback
+
+    class _EA(BaseCallback):
+        def _on_rollout_start(self) -> None:
+            frac = max(0.0, 1.0 - self.num_timesteps / max(1, total_timesteps))
+            try:
+                self.model.ent_coef = float(start) * frac
+            except Exception:
+                pass
+
+        def _on_step(self) -> bool:
+            return True
+
+    return _EA()
+
+
+def _make_day_report_callback(report_env, total_timesteps, *, evals=3, max_days=6):
+    """Every ~(1/evals) of training, run the day-by-day FTMO report on a FIXED test stretch with the CURRENT
+    policy and print each day's pass metrics + ACCOUNT BALANCE -- so you watch the SAME test improve as it
+    learns. Best-effort: fully wrapped so it can never break training."""
+    from stable_baselines3.common.callbacks import BaseCallback
+
+    class _DR(BaseCallback):
+        def _on_training_start(self) -> None:
+            self._every = max(1, total_timesteps // max(1, evals))
+            self._next = self._every
+
+        def _print(self) -> None:
+            from src.training.daily_report import daily_report
+            init = float(report_env.cfg.starting_balance)
+            pol = sb3_policy_fn(self.model, self.model.get_vec_normalize_env())
+            rows, summary = daily_report(report_env, policy=pol, max_days=max_days)
+            print(f"\n      ── progress check on a fixed test stretch (after {self.num_timesteps:,} steps) ──",
+                  flush=True)
+            for r in rows:
+                bal = init * (1.0 + r["cum_pnl_pct"] / 100.0)
+                tgt = "YES" if r["passed_target"] else "no"
+                wall = "ok" if r["within_trailing"] else "BREACH"
+                print(f"        Day {r['day']:>2}  {r['date']}  bal ${bal:>12,.0f}  {r['day_pnl_pct']:+6.2f}%  "
+                      f"+2.5%? {tgt:<3}  DD {r['trailing_dd_pct']:>4.1f}% {wall:<6}  breach "
+                      f"{'YES' if r['breached'] else 'no'}", flush=True)
+            print(f"        -> {summary['days_passed_target']}/{summary['days']} days hit +2.5% · "
+                  f"{summary['breaches']} breaches · final {summary['final_cum_pct']:+.2f}%", flush=True)
+
+        def _on_rollout_end(self) -> None:
+            if self.num_timesteps < self._next:
+                return
+            self._next += self._every
+            try:
+                self._print()
+            except Exception as e:
+                print(f"      (progress check skipped: {e})", flush=True)
+
+        def _on_step(self) -> bool:
+            return True
+
+    return _DR()
 
 
 def train(indicators, close, time_ns, registry_factory, *, total_timesteps=1_000_000,
@@ -161,8 +208,21 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
                                   symbols=symbols, use_subproc=tuned["use_subproc"], **env_kwargs)
     venv = VecNormalize(venv, **VECNORM_KW)
     model = PPO("MlpPolicy", venv, verbose=0, device=tuned["device"], **PPO_HPARAMS)
-    print("      environment ready; training now (you'll see a heartbeat each update)...", flush=True)
-    cbs = [_make_heartbeat(total_timesteps)]
+    print("      environment ready; training now...", flush=True)
+    cbs = [_make_heartbeat(total_timesteps),
+           _make_entropy_anneal(PPO_HPARAMS["ent_coef"], total_timesteps)]
+    # LIVE day-by-day progress check on a fixed test stretch (loads features from the cache -> fast).
+    # Best-effort: if the cache is off or anything fails, training still runs (just without the live table).
+    if feature_cache_dir:
+        try:
+            from src.env.portfolio_env import PortfolioEnv, build_portfolio_subs
+            _cfg = env_kwargs.get("cfg"); _warm = env_kwargs.get("warmup", 200)
+            rsubs = build_portfolio_subs(symbol_data, registry_factory, cfg=_cfg, warmup=_warm,
+                                         progress=False, feature_cache_dir=feature_cache_dir)
+            report_env = PortfolioEnv(subs=rsubs, cfg=_cfg, warmup=_warm)
+            cbs.append(_make_day_report_callback(report_env, total_timesteps))
+        except Exception as e:
+            print(f"      (live day-by-day check disabled: {e})", flush=True)
     if eval_env is not None:
         freq = int(eval_freq or PPO_HPARAMS["n_steps"])
         cbs.append(EvalCallback(eval_env, eval_freq=max(1, freq), n_eval_episodes=3,

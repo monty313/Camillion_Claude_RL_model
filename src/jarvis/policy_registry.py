@@ -75,7 +75,7 @@ def add_policy(path: str | None = None, **fields) -> dict:
     entry["status"] = fields.get("status") if fields.get("status") in _STATUSES else "candidate"
     if not entry.get("created"):
         try:
-            entry["created"] = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+            entry["created"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         except Exception:
             entry["created"] = "n/a"
     entry["consistency_score"] = consistency_score(entry)

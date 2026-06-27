@@ -676,3 +676,23 @@ report covers all days, model save/load works).
   valid 479 obs (+test); single-process fallback intact. Suite 173/173; audit ✅ GO 38/42.
 - **C:** on a big paid tier training now auto-scales to multiple cores (~70–80%) without the pickle-OOM,
   and safely drops to one process on small machines. Phase 1 fully complete.
+
+## [2026-06-27] Training Phase 2: clean output — day-by-day pass metrics + balance, streamed (no spam)
+- **I:** The training output was noisy (TensorFlow/CUDA/Gym banners + a per-rollout `...steps … HOLD 25%
+  BUY 26%…` line) and the day-by-day table only printed at the very END. Owner wants ONLY the metrics that
+  matter for passing -- each day as produced -- plus the account balance, and the action % removed (it's a
+  readout, not a control; he found it confusing/alarming).
+- **R:** output/UX; obs/FTMO/`step()` unchanged. **A:** (1) `run_training` silences the third-party banners
+  before heavy imports (`TF_CPP_MIN_LOG_LEVEL=3`, gym/deprecation/future warning filters) and the
+  `utcnow()` deprecation is fixed. (2) The heartbeat is now a SPARSE "training… X% done (~ETA)" tick (only on
+  ~10% milestones — never a silent freeze, never spam) and the action-mix line is gone. (3) A new
+  progress-check callback runs the day-by-day FTMO report on a FIXED test stretch with the CURRENT policy a
+  few times during training and prints each day's `bal $… +P&L% +2.5%? DD% ok/BREACH breach` — so you watch
+  the SAME test improve as it learns (loads features from the #1b cache → fast; best-effort, never breaks
+  training). (4) `ent_coef` now ANNEALS 0.01 → ~0 over training, so the finished policy is fully decisive
+  (nothing forces its action mix).
+- **Verified:** end-to-end run shows the sparse tick + the live per-day table with balances (e.g. "Day 2
+  2026-03-03 bal $97,740 -0.00% +2.5%? no DD 0.6% ok breach no"); `run_training` imports cleanly with the
+  suppression; suite 173/173; audit ✅ GO 38/42.
+- **C:** the screen now shows exactly what the owner asked for — day-by-day pass metrics + balance as they
+  are produced — and the finished bot explores early but ends fully dynamic.

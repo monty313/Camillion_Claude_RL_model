@@ -53,12 +53,13 @@
 
 ---
 
-## 🧹 PHASE 2 — Clean live output ⬜
-- [ ] ⬜ Remove the TensorFlow / CUDA / Gym warning noise
-- [ ] ⬜ Remove the `...steps … HOLD 25% BUY 26%…` spam
-- [ ] ⬜ Stream the **day-by-day pass metrics + account balance** as each day is produced (test on a fixed held-out stretch, so you watch the same test improve)
-- [ ] ⬜ Keep one tiny "still working / % done" line so it's never a silent freeze
-- [ ] ⬜ Make the exploration nudge **anneal to ~0** by the end so the finished bot is fully decisive/dynamic
+## 🧹 PHASE 2 — Clean live output ✅ (commit pending)
+- [x] ✅ Removed the TensorFlow / CUDA / Gym warning noise (`run_training` silences before heavy imports) + fixed the `utcnow` deprecation
+- [x] ✅ Removed the `...steps … HOLD 25% BUY 26%…` spam
+- [x] ✅ Stream the **day-by-day pass metrics + account balance** during training (progress check on a fixed test stretch — watch the same test improve)
+- [x] ✅ One tiny "training… X% done (~ETA)" tick on ~10% milestones (never a silent freeze, never spam)
+- [x] ✅ Exploration nudge **anneals 0.01 → ~0** so the finished bot is fully decisive/dynamic
+- [x] ✅ Verified end-to-end (live per-day table with balances); suite 173/173; audit GO
 
 ---
 
