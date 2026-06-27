@@ -734,3 +734,20 @@ report covers all days, model save/load works).
   the big bonus · halving the account ~halves the position size. Suite 180/180; audit ✅ GO 38/42.
 - **C:** the trained bot now behaves the way Mark trades it — bank the day net of fees, keep pushing under a
   tight leash, reward consistent 4-in-a-row passing, scale to any FTMO account, with a tunable risk wall.
+
+## [2026-06-27] FIX: the daily-DD gauge the bot SEES now matches the actual breach (was blind to open losses)
+- **I:** In `win_loss_features.daily_features`, `dd_used`/`risk_remaining` were built from `daily_realized_pnl`
+  (CLOSED trades only): `daily_loss_frac = max(0, -pnl_frac)`. But `ftmo_rules.daily_drawdown_breached`
+  fires on LIVE equity: `bal0 - acc.equity`. So while a losing trade was OPEN, the bot's "daily room left"
+  gauge read SAFER than reality and the 5%-daily breach could fire with no warning the policy could see --
+  blinding it to the #1 cause of FTMO failure. (Independently flagged by today's honesty-critic AND an
+  external review.) **R:** observation-correctness; obs SHAPE unchanged (479), only this block's *meaning*
+  is corrected to match its documented intent; no trained model exists yet.
+- **A:** the daily DD now uses `max(0, bal0 - acc.equity)/bal0` (live equity, same base as the breach), so
+  the gauge agrees with the engine. The daily *target* side already used live equity, so the block is now
+  fully equity-consistent. Closed-trade `pnl_frac` is still shown separately.
+- **Verified:** +3 tests (`tests/test_daily_dd_gauge.py`): a -3% OPEN loss now shows ~0.6 used (was 0.0); at
+  -5% the gauge reads ≥1.0 exactly when `daily_drawdown_breached` is True; no phantom DD when flat/up.
+  Suite 183/183; audit ✅ GO 38/42.
+- **C:** the bot can finally SEE the daily wall approaching while a trade is open -> it can actually learn to
+  cut losses before the daily breach, the most important behaviour for passing CONSISTENTLY.
