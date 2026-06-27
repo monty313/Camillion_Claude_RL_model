@@ -37,13 +37,18 @@
 - [x] ✅ **DECISION:** Drive base folder = **`MyDrive/Camillion/`** (Mark chose recommended)
 - [ ] ⬜ *Carry-over:* each saved **model** gets a manifest of which features+rules it trained on (do with Phase 3 / model-save)
 
-### 1c. Auto-calibrate resources to ~70–80% CPU/GPU (no freeze, no waste) ⬜
-- [ ] ⬜ Detect CPU cores, RAM, and GPU
-- [ ] ⬜ Set thread count + a memory-safe number of workers (never over-subscribe RAM → never freeze)
-- [ ] ⬜ Pick CPU vs GPU automatically (tiny brain usually prefers CPU — benchmark, don't pay for a GPU that does nothing)
-- [ ] ⬜ Print a clear "Detected X cores / Y GB / GPU? → using …" report
-- [ ] ⬜ **Profile** the real achievable utilization and tell Mark the honest number
-- [ ] 💬 **Possible follow-up:** if the single-core market-stepping caps us below ~70–80%, do the deeper shared-memory multi-process upgrade to truly use a big paid tier
+### 1c. Auto-calibrate resources to ~70–80% CPU/GPU (no freeze, no waste)
+**Part 1 ✅ (commit pending)**
+- [x] ✅ Detect CPU cores, RAM, and GPU (`src/training/autotune.py`)
+- [x] ✅ Memory-safe worker count (collapses to 1 copy on tiny RAM → never over-subscribes/freezes) + sensible thread count
+- [x] ✅ Pick CPU vs GPU automatically (CPU for the tiny model; GPU only if `prefer_cpu=False`)
+- [x] ✅ Clear "machine: X cores / Y GB / GPU … → using …" report; wired into `train_portfolio` (n_envs + device + threads)
+- [x] ✅ Honest utilization note printed; +4 tests (172/172); verified end-to-end with cache reuse
+
+**Part 2 ⬜ — true multi-core (the actual ~70–80% on a big paid tier)** 💬 *Mark's call*
+- [ ] ⬜ Multi-worker (subprocess) training where each worker **LOADS its data + features from disk** (now safe thanks to #1b — no pickle blowup), with a DummyVecEnv fallback when RAM is tight
+- [ ] ⬜ autotune chooses processes vs single based on cores + RAM; trades RAM for cores
+- [ ] ⬜ Honest profile of the achieved utilization before/after
 
 ---
 

@@ -641,3 +641,20 @@ report covers all days, model save/load works).
   the 2nd call. +5 tests (`tests/test_feature_cache.py`); suite 168/168; audit ✅ GO 38/42.
 - **C:** re-runs skip the slow build (load from Drive) with ZERO risk of stale features, and every cache is
   self-describing for the future. (Still TODO in #1: auto-calibrate workers/threads/device to ~70–80%.)
+
+## [2026-06-27] Training perf #1c (part 1): auto-calibrate resources + honest utilisation report
+- **I:** Owner wants training to use ~70–80% of a (possibly paid) Colab tier without freezing or wasting it.
+- **R:** perf/UX; obs/FTMO/`step()` unchanged. **A:** new `src/training/autotune.py` detects CPU cores /
+  RAM / GPU and picks a MEMORY-SAFE number of parallel copies (never over-subscribe RAM → never the freeze),
+  a sensible compute-thread count (the tiny 3x256 MLP doesn't benefit from many), and the device (CPU by
+  default — fastest for this net; GPU only if `prefer_cpu=False`). `train_portfolio` calls it, uses its
+  `n_envs` when none is given, sets the PPO `device`, and applies the thread count. It prints a clear report.
+- **HONEST LIMITATION (in the report + TRAINING_TASKS #1c part 2):** with the single-process DummyVecEnv path
+  the market is stepped one copy at a time, so on a big multi-core box CPU use stays modest — true ~70–80%
+  saturation needs a MULTI-WORKER (subprocess) upgrade where each worker LOADS its data+features from disk
+  (now feasible thanks to the #1b cache, without the old pickle blowup). Scoped as the next step, owner's call.
+- **Verified:** autotune returns sane, memory-safe settings (collapses to 1 copy on tiny RAM; CPU for the
+  tiny model); end-to-end `train_portfolio` runs with autotune + device wired AND reuses the saved feature
+  cache on a 2nd run ("loaded saved features ✓"). +4 tests; suite 172/172; audit ✅ GO 38/42.
+- **C:** sensible, memory-safe resource use out of the box with a truthful utilisation picture; Phase 1
+  (build-once+share, Drive cache, autocalibrate part 1) complete.

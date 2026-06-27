@@ -149,12 +149,16 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
     from stable_baselines3.common.callbacks import EvalCallback, CallbackList
     from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_portfolio_vec_env
+    from src.training.autotune import autotune
 
+    tuned = autotune()                                  # detect cores/RAM/GPU -> memory-safe settings + report
+    if n_envs is None:
+        n_envs = tuned["n_envs"]
     print("      building the training environment (can take a minute on a big history)...", flush=True)
     venv = make_portfolio_vec_env(symbol_data, registry_factory, n_envs,
                                   feature_cache_dir=feature_cache_dir, **env_kwargs)
     venv = VecNormalize(venv, **VECNORM_KW)
-    model = PPO("MlpPolicy", venv, verbose=0, **PPO_HPARAMS)
+    model = PPO("MlpPolicy", venv, verbose=0, device=tuned["device"], **PPO_HPARAMS)
     print("      environment ready; training now (you'll see a heartbeat each update)...", flush=True)
     cbs = [_make_heartbeat(total_timesteps)]
     if eval_env is not None:
