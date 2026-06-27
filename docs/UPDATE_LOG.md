@@ -615,3 +615,29 @@ report covers all days, model save/load works).
 - **C:** the full-history build drops from ~16 redundant builds/~15 GB to 4 builds/~3.7 GB with a live
   progress bar -> the run actually reaches training on a reasonable Colab tier. (Still TODO in #1:
   save-features-to-disk for instant re-runs, and auto-calibrate workers/threads/device to ~70–80%.)
+
+## [2026-06-27] Training perf #1b: save features to disk (Google Drive) with a no-mismatch fingerprint
+- **I:** Even after build-once+share, every run re-precomputes the per-symbol features (~minutes on the
+  full history). The owner wants them SAVED (on Google Drive, which persists across Colab sessions, unlike
+  local disk) and reused -- but "specify exactly what it's used for ... no mismatches": a naive
+  (symbol+dates) key would silently load WRONG features after a code/data change = training on stale inputs.
+- **R:** perf + safety; obs(479)/FTMO/`step()` unchanged. A 4-agent dependency audit first mapped EVERY
+  input the precompute depends on so the fingerprint is complete (key finding: the existing
+  `env_fingerprint` is INSUFFICIENT -- it hashes only SORTED alpha NAMES, missing slot order AND
+  threshold/logic edits).
+- **A:** New `src/data/feature_cache.py`. The cache KEY folds in: a CONTENT hash of the input arrays
+  (close+indicators+time -> captures the data slice AND all indicator math), the resolved obs-contract
+  values (contract version, MAX_STRATEGIES, asset classes, block sizes), the indicator-columns hash, the
+  slot-ORDERED alpha roster, SOURCE hashes of the code that defines the features (strategies + signals +
+  the env precompute + asset_specs -- catches logic/threshold edits names miss), the per-symbol asset spec,
+  and the resolved open-gate / signal-accuracy values. Load ONLY on exact match, else rebuild. TradingEnv
+  gains `export_precomputed()`/`_load_precomputed()` + a `precomputed=` fast path; `build_portfolio_subs`
+  does load-or-build-and-save; `make_portfolio_vec_env`/`train_portfolio`/`run_training` thread a
+  `feature_cache_dir` (default auto -> `MyDrive/Camillion/feature_cache` on Colab, else local; `--feature-cache off`
+  to disable). Each cache folder is human-named (`SYMBOL__from_to__contract__key8/`) with a plain-English
+  `manifest.json` ("exactly what this is").
+- **Verified:** save→load round-trips to byte-identical obs; changed data / different symbol = MISS (never
+  stale); cache keys stay in sync with the env's exported arrays; build_portfolio_subs reuses the cache on
+  the 2nd call. +5 tests (`tests/test_feature_cache.py`); suite 168/168; audit ✅ GO 38/42.
+- **C:** re-runs skip the slow build (load from Drive) with ZERO risk of stale features, and every cache is
+  self-describing for the future. (Still TODO in #1: auto-calibrate workers/threads/device to ~70–80%.)

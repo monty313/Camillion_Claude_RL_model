@@ -68,7 +68,7 @@ def align_symbol_data(symbol_data: dict) -> dict:
 
 
 def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmup: int = 200,
-                         progress: bool = True) -> dict:
+                         progress: bool = True, feature_cache_dir: str | None = None) -> dict:
     """Build ONE TradingEnv per symbol -- the expensive precompute (alphas/streaks/cross-asset over the
     whole history) -- so the result can be SHARED across every vectorised PortfolioEnv worker.
 
@@ -76,17 +76,41 @@ def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmu
     or mutates sub state), so sharing one copy across all workers is safe AND avoids rebuilding them once
     per worker -- which was 4 workers x 4 symbols = 16 redundant builds over 1.8M bars (the multi-hour
     "stuck building" hang). Build once here, share everywhere.
+
+    If `feature_cache_dir` is given, each symbol's features are LOADED from disk (Google Drive on Colab)
+    when the fingerprint matches exactly, else BUILT and SAVED -- so re-runs skip the slow precompute
+    with ZERO risk of loading stale features (see src/data/feature_cache.py).
     """
     cfg = cfg or load_active_config()
+    fc = None
+    if feature_cache_dir:
+        from src.data import feature_cache as fc
     subs: dict = {}
     n = len(symbol_data)
     for k, (sym, (ind, close, time_ns)) in enumerate(symbol_data.items(), 1):
+        ind = np.asarray(ind); close = np.asarray(close); time_ns = np.asarray(time_ns)
+        ps = A.calibrated_position_size(sym) if sym in A.SPECS else 100_000.0
+        reg = registry_factory()
+        cached = fc.load(feature_cache_dir, sym, ind, close, time_ns, reg) if fc else None
+        if cached is not None:
+            if progress:
+                print(f"      [{k}/{n}] {sym}: loaded saved features ✓ (skipped the rebuild)", flush=True)
+            subs[sym] = TradingEnv(ind, close, time_ns, reg, cfg=cfg, symbol=sym,
+                                   position_size=ps, warmup=warmup, precomputed=cached)
+            continue
         if progress:
             print(f"      [{k}/{n}] building features for {sym} ...", flush=True)
-        ps = A.calibrated_position_size(sym) if sym in A.SPECS else 100_000.0
-        subs[sym] = TradingEnv(np.asarray(ind), np.asarray(close), np.asarray(time_ns),
-                               registry_factory(), cfg=cfg, symbol=sym, position_size=ps,
-                               warmup=warmup, progress=progress)
+        sub = TradingEnv(ind, close, time_ns, reg, cfg=cfg, symbol=sym, position_size=ps,
+                         warmup=warmup, progress=progress)
+        if fc:
+            try:
+                path = fc.save(feature_cache_dir, sym, ind, close, time_ns, reg, sub)
+                if progress:
+                    print(f"      [{k}/{n}] {sym}: saved features -> {path}", flush=True)
+            except Exception as e:   # caching is best-effort; never block training on a save failure
+                if progress:
+                    print(f"      [{k}/{n}] {sym}: (could not save features: {e})", flush=True)
+        subs[sym] = sub
     return subs
 
 

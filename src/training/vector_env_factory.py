@@ -56,7 +56,8 @@ def make_multi_symbol_vec_env(symbol_data: dict, registry_factory, n_envs: int |
     return backend([_thunk(i, syms[i % len(syms)]) for i in range(n)])
 
 
-def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | None = None, **env_kwargs):
+def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | None = None,
+                           feature_cache_dir: str | None = None, **env_kwargs):
     """ONE bot, ONE shared pot, ALL symbols at once -- the true portfolio trainer. Every worker is a
     full PortfolioEnv over `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned), so the
     single policy learns to BALANCE risk across simultaneous positions in one account, and scales to the
@@ -82,7 +83,8 @@ def make_portfolio_vec_env(symbol_data: dict, registry_factory, n_envs: int | No
     # 4 symbols x N workers = 16 times). The shared sub-envs are read-only, so this is safe in one process.
     print(f"      building shared features for {len(symbol_data)} symbols ONCE (shared by all {n} workers)...",
           flush=True)
-    subs = build_portfolio_subs(symbol_data, registry_factory, cfg=cfg, warmup=warmup, progress=True)
+    subs = build_portfolio_subs(symbol_data, registry_factory, cfg=cfg, warmup=warmup, progress=True,
+                                feature_cache_dir=feature_cache_dir)
 
     def _thunk(seed):
         def _f():

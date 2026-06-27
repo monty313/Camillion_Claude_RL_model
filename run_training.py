@@ -70,6 +70,10 @@ def main(argv=None):
     ap.add_argument("--from", dest="date_from", default=None,
                     help="only use data on/after this date, e.g. 2024-01-01 (use for a FAST first run)")
     ap.add_argument("--to", dest="date_to", default=None, help="only use data up to this date, e.g. 2024-06-30")
+    ap.add_argument("--feature-cache", dest="feature_cache", default=None,
+                    help="where to SAVE the prepared features so re-runs skip the slow build (default: auto -> "
+                         "Google Drive MyDrive/Camillion/feature_cache on Colab, else a local folder). "
+                         "Use 'off' to disable.")
     a = ap.parse_args(argv)
     symbols = [s.strip() for s in a.symbols.split(",") if s.strip()]
 
@@ -110,9 +114,15 @@ def main(argv=None):
 
     sd = align_symbol_data({s: load_cache(a.cache, s) for s in found})
     bars = len(next(iter(sd.values()))[1])
+    # Where to SAVE the prepared features (so re-runs skip the slow build). Default: auto (Google Drive
+    # on Colab, else local). 'off' disables. The cache is fingerprinted so it never loads stale features.
+    from src.data.feature_cache import default_cache_dir
+    feat_cache = None if (a.feature_cache or "").lower() == "off" else (a.feature_cache or default_cache_dir())
     print(f"      {len(found)} symbols, {bars:,} shared bars — training for {a.steps:,} steps "
           f"(grab a coffee; this is the slow part)...")
-    train_portfolio(sd, _reg, total_timesteps=a.steps, save_path=a.out)
+    if feat_cache:
+        print(f"      prepared features will be saved/reused at: {feat_cache}")
+    train_portfolio(sd, _reg, total_timesteps=a.steps, save_path=a.out, feature_cache_dir=feat_cache)
     print(f"      trained + saved -> {a.out} (+ its _vecnorm.pkl)")
 
     # 4) the day-by-day results (the part you care about)

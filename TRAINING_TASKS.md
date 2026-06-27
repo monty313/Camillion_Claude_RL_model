@@ -25,17 +25,17 @@
 - [x] ✅ Per-symbol build progress bar so it's never a silent hang
 - [x] ✅ Verified: builds once not 16×, workers share one copy yet stay diverse; tests green
 
-### 1b. Save features to Google Drive — with NO mismatches 🔄
-- [🔄] Dependency audit: find EVERY input the features depend on (so the fingerprint is complete) — *running now*
-- [ ] ⬜ Build the **fingerprint** (symbols · date range · bar count · **obs contract version** · **strategy/indicator version** · **content hash of the data** · build date)
-- [ ] ⬜ Save the prepared features to **Google Drive** (persists across Colab sessions; local disk gets wiped)
-- [ ] ⬜ Write a plain-English **`manifest.json`** in each cache folder ("exactly what this is + which policy/rules it pairs with")
-- [ ] ⬜ **Mismatch guard:** on load, recompute the fingerprint from current code+data; load only if it matches **exactly**, else **rebuild** (never load stale)
-- [ ] ⬜ **Organized Drive layout** (`feature_cache/`, `models/<policy>/`) — see `TRAINING_REQUIREMENTS.md`
-- [ ] ⬜ Each saved **model** gets a manifest recording which features+rules it was trained on (model never paired with wrong features)
-- [ ] ⬜ Drive path is a **setting** (default chosen below) you can change
-- [ ] ⬜ Tests for: fingerprint changes on any real change · stale cache is rejected · save→load round-trips
-- [ ] 💬 **DECISION (Mark):** Drive base folder → new **`MyDrive/Camillion/`** *(recommended)* or next to data under **`MyDrive/Camillion_data/`**?
+### 1b. Save features to Google Drive — with NO mismatches ✅ (commit pending)
+- [x] ✅ Dependency audit (4 agents) mapped every input the features depend on
+- [x] ✅ Complete **fingerprint** (data content-hash · contract version · indicator-columns hash · slot-ORDERED alpha roster · **source-hashes of strategy/signal/precompute/asset-spec code** · per-symbol spec · resolved thresholds)
+- [x] ✅ Save prepared features to **Google Drive** (`feature_cache.default_cache_dir()` auto-detects Drive; persists across sessions)
+- [x] ✅ Plain-English **`manifest.json`** ("exactly what this is") in each cache folder
+- [x] ✅ **Mismatch guard:** load ONLY on exact fingerprint match, else rebuild (never stale) — tested
+- [x] ✅ **Organized layout:** `feature_cache/SYMBOL__from_to__contract__key8/`
+- [x] ✅ Drive path is a setting: `run_training --feature-cache <dir|off>` (default auto)
+- [x] ✅ Tests: round-trip · stale/different-symbol rejected · keys in sync · build_portfolio_subs reuse (+5 tests, 168/168)
+- [x] ✅ **DECISION:** Drive base folder = **`MyDrive/Camillion/`** (Mark chose recommended)
+- [ ] ⬜ *Carry-over:* each saved **model** gets a manifest of which features+rules it trained on (do with Phase 3 / model-save)
 
 ### 1c. Auto-calibrate resources to ~70–80% CPU/GPU (no freeze, no waste) ⬜
 - [ ] ⬜ Detect CPU cores, RAM, and GPU

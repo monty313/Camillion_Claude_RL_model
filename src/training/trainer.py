@@ -138,7 +138,7 @@ def train_multi_symbol(symbol_data, registry_factory, *, total_timesteps=1_000_0
 
 def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
                     n_envs=None, save_path="models/camillion_portfolio_ppo", eval_env=None,
-                    eval_freq: int | None = None, **env_kwargs):
+                    eval_freq: int | None = None, feature_cache_dir: str | None = None, **env_kwargs):
     """Train ONE policy that trades the WHOLE book from ONE shared pot -- the portfolio bot.
 
     `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned across symbols). Every worker
@@ -151,7 +151,8 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
     from src.training.vector_env_factory import make_portfolio_vec_env
 
     print("      building the training environment (can take a minute on a big history)...", flush=True)
-    venv = make_portfolio_vec_env(symbol_data, registry_factory, n_envs, **env_kwargs)
+    venv = make_portfolio_vec_env(symbol_data, registry_factory, n_envs,
+                                  feature_cache_dir=feature_cache_dir, **env_kwargs)
     venv = VecNormalize(venv, **VECNORM_KW)
     model = PPO("MlpPolicy", venv, verbose=0, **PPO_HPARAMS)
     print("      environment ready; training now (you'll see a heartbeat each update)...", flush=True)

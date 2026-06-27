@@ -52,7 +52,7 @@ class TradingEnv:
                  symbol: str | None = None, value_per_point: float | None = None,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None,
-                 progress: bool = False):
+                 progress: bool = False, precomputed: dict | None = None):
         self.ind = np.asarray(indicators, dtype=np.float32)
         self.close = np.asarray(close, dtype=np.float64).ravel()
         self.time_ns = np.asarray(time_ns).astype("int64").ravel()
@@ -90,7 +90,10 @@ class TradingEnv:
         self._minute_of_day = (_ts.hour * 60 + _ts.minute).to_numpy().astype(np.int32)  # UTC, for NY session
         self._is_index = (A.asset_class(symbol) == "index")           # ORB + NY bonus apply to indices
         self._progress = bool(progress)   # print a build progress bar during the (one-time) precompute
-        self._precompute(alpha_registry)
+        if precomputed is not None:
+            self._load_precomputed(precomputed)    # fast path: reuse cached features (skip the slow loop)
+        else:
+            self._precompute(alpha_registry)
 
     # ---- precompute (once): alphas, net signal, leak-free accuracy, time ----
     def _precompute(self, registry):
@@ -193,6 +196,25 @@ class TradingEnv:
         self.cross_asset_matrix = np.column_stack([
             np.tile(onehot, (T, 1)), move_in_atr, atr_pct_price, atr_regime, asian, overlap,
         ]).astype(np.float32)
+
+    # ---- feature cache: export / load the precomputed arrays (see src/data/feature_cache.py) ----
+    # The single source of truth for WHICH arrays _precompute(+submethods) produce. Keep in sync with
+    # feature_cache.PRECOMPUTED_ARRAY_KEYS (a test asserts they match).
+    _PRECOMPUTED_ATTRS = ("alpha_matrix", "occupancy", "net_signal", "sig_acc", "time_feats",
+                          "open_gate_blocked", "streak_matrix", "ref_move", "cross_asset_matrix",
+                          "_today_sofar", "_prev_day", "_prev2_day", "_week_avg")
+
+    def export_precomputed(self) -> dict:
+        """Return {name: ndarray} for the cache (the expensive precompute output, read-only)."""
+        return {a: getattr(self, a) for a in self._PRECOMPUTED_ATTRS}
+
+    def _load_precomputed(self, d: dict) -> None:
+        """Restore the precomputed arrays from a cache dict instead of recomputing them."""
+        missing = [a for a in self._PRECOMPUTED_ATTRS if a not in d]
+        if missing:
+            raise KeyError(f"feature cache missing arrays {missing}; rebuild instead of loading")
+        for a in self._PRECOMPUTED_ATTRS:
+            setattr(self, a, d[a])
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):

@@ -36,3 +36,4 @@ secrets.*
 audit_results/audit_report.json
 audit_results/audit_report.md
 audit_results/audit_report.html
+feature_cache/
