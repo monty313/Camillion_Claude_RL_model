@@ -74,10 +74,10 @@
 
 ---
 
-## 📊 PHASE 4 — Fix the day-by-day report ⬜
-- [ ] ⬜ Fix the trailing-drawdown math to **peak-then-drop** (chronological), not (max − min) over the day
-- [ ] ⬜ Make the report's breach column **agree with the actual engine** (no more "5.14% BREACH" that didn't breach)
-- [ ] ⬜ Test the corrected drawdown on a known up-then-down sequence
+## 📊 PHASE 4 — Fix the day-by-day report ✅ (commit pending)
+- [x] ✅ Trailing-drawdown is now **peak-then-drop** (chronological from the running peak), not (max − min)
+- [x] ✅ The `<WALL?` column now **agrees with the engine** (running peak persists across days, like the engine's episode peak)
+- [x] ✅ Tested on a known up-then-down sequence (`running_drawdown_pct`); +2 tests; suite 175/175; audit GO
 
 ---
 

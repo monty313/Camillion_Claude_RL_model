@@ -38,9 +38,10 @@ def _greedy_action(env, policy) -> int:
 def daily_report(env, policy=None, max_days: int | None = None):
     """Run env (with `policy`, else HOLD) and return (rows, summary).
 
-    Each row = one trading day: P&L % of INITIAL, whether it hit the +daily-target%, the
-    peak-to-trough TRAILING DD used (wall = trailing_drawdown_pct), the daily-loss used, any
-    breach, and cumulative %. Read-only: it never sends a real order.
+    Each row = one trading day: P&L % of INITIAL, whether it hit the +daily-target%, the MAX TRAILING
+    drawdown reached that day (chronological drawdown from the running peak -- the SAME way the FTMO
+    engine measures it, so the report AGREES with real breaches), the daily-loss used, any breach, and
+    cumulative %. Read-only: it never sends a real order.
     """
     env.reset()
     cfg = env.cfg
@@ -48,20 +49,21 @@ def daily_report(env, policy=None, max_days: int | None = None):
     target = float(cfg.daily_target_pct)                                  # +2.5% of initial
     trail = float(getattr(cfg, "trailing_drawdown_pct", 4.0))             # 4% trailing wall
     rows: list[dict] = []
-    day_start_eq = peak = trough = float(env.acc.equity)
+    day_start_eq = float(env.acc.equity)
+    run_peak = float(env.acc.equity)        # EPISODE running peak (persists across days) -> matches the engine
+    day_max_trail = 0.0                       # worst trailing drawdown % (from the running peak) seen THIS day
+    day_max_loss = 0.0                        # worst daily-loss % (from this day's start) seen THIS day
     breached_day = False
 
     def _record(end_eq, date):
         day_pnl_pct = (end_eq - day_start_eq) / init * 100.0
-        trailing_used = (peak - trough) / init * 100.0                    # peak->trough that day
-        daily_loss_used = max(0.0, day_start_eq - trough) / init * 100.0
         rows.append({
             "day": len(rows) + 1, "date": _datestr(date),
             "day_pnl_pct": round(day_pnl_pct, 2),
             "passed_target": bool(day_pnl_pct >= target),                 # made +2.5% of initial?
-            "trailing_dd_pct": round(trailing_used, 2),
-            "within_trailing": bool(trailing_used < trail),               # stayed inside the 4% wall?
-            "daily_loss_pct": round(daily_loss_used, 2),
+            "trailing_dd_pct": round(day_max_trail, 2),                   # chronological DD from the running peak
+            "within_trailing": bool(day_max_trail < trail),              # stayed inside the 4% wall?
+            "daily_loss_pct": round(day_max_loss, 2),
             "breached": bool(breached_day),
             "cum_pnl_pct": round((end_eq - init) / init * 100.0, 2),
         })
@@ -75,7 +77,14 @@ def daily_report(env, policy=None, max_days: int | None = None):
         guard += 1
         prev_date = env._dates[env.ptr]
         eq_before = float(env.acc.equity)
-        peak, trough = max(peak, eq_before), min(trough, eq_before)
+        # TRAILING drawdown the engine's way: from the RUNNING peak, chronologically (NOT max-minus-min,
+        # which pairs a later peak with an earlier trough and overstates -> the old "5.14% BREACH" that
+        # the engine never acted on). Trailing peak persists across days; daily-loss resets each day.
+        run_peak = max(run_peak, eq_before)
+        if run_peak > 0:
+            day_max_trail = max(day_max_trail, (run_peak - eq_before) / run_peak * 100.0)
+        if day_start_eq > 0:
+            day_max_loss = max(day_max_loss, (day_start_eq - eq_before) / day_start_eq * 100.0)
         env.step(_greedy_action(env, policy))
         if env.acc.episode_breached:
             breached_day = True
@@ -86,11 +95,27 @@ def daily_report(env, policy=None, max_days: int | None = None):
             _record(eq_before if crossed else float(env.acc.equity), prev_date)
             if terminated or at_end or (max_days and len(rows) >= max_days):
                 break
-            day_start_eq = peak = trough = float(env.acc.equity)         # start a fresh day
+            day_start_eq = float(env.acc.equity)                         # start a fresh day (loss resets)
+            day_max_trail = 0.0
+            day_max_loss = 0.0
             breached_day = False
         if guard > env.T * steps_per_bar + 16:                            # safety net (scaled by sub-steps)
             break
     return rows, _summarize(rows, cfg)
+
+
+def running_drawdown_pct(equities) -> float:
+    """Max trailing drawdown % from the RUNNING peak over a chronological equity path. This is the correct
+    'trailing drawdown' (drawdown from the highest equity SO FAR) -- NOT (max - min), which pairs a later
+    peak with an earlier trough and overstates the drawdown."""
+    peak = None
+    mdd = 0.0
+    for e in equities:
+        e = float(e)
+        peak = e if peak is None else max(peak, e)
+        if peak > 0:
+            mdd = max(mdd, (peak - e) / peak * 100.0)
+    return mdd
 
 
 def _summarize(rows, cfg) -> dict:

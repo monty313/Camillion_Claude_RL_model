@@ -696,3 +696,17 @@ report covers all days, model save/load works).
   suppression; suite 173/173; audit ✅ GO 38/42.
 - **C:** the screen now shows exactly what the owner asked for — day-by-day pass metrics + balance as they
   are produced — and the finished bot explores early but ends fully dynamic.
+
+## [2026-06-27] Training Phase 4: fix the day-report trailing-drawdown math (chronological, engine-agreeing)
+- **I:** A real run showed Day 1 `TRAIL_DD 5.14% → BREACH` in the `<WALL?` column while the actual engine
+  said `breach: no` and kept trading -- a contradiction. Cause: the report computed trailing drawdown as
+  `(max − min)` over the day, which pairs a LATER peak with an EARLIER trough and OVERSTATES it; real
+  trailing drawdown is the drawdown from the RUNNING peak (chronological), which is how the engine breaches.
+- **R:** report correctness; obs/FTMO/`step()` unchanged. **A:** `daily_report` now tracks a RUNNING peak
+  (persists across days, like the engine's episode peak) and records each day's MAX drawdown-from-running-peak
+  (`day_max_trail`) and max daily-loss-from-day-start (`day_max_loss`). New pure helper `running_drawdown_pct()`
+  encodes + tests the chronological rule. So the `<WALL?` column now agrees with the real `breached` column.
+- **Verified:** `running_drawdown_pct([100,95,110,104]) == 5.45%` (not ~15% under the old bug); simple cases
+  (4% drop, only-rising=0) pass; +2 tests; suite 175/175; audit ✅ GO 38/42.
+- **C:** the day-by-day table no longer flags phantom breaches — a `<WALL? BREACH` now means the engine
+  actually breached.
