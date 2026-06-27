@@ -82,6 +82,7 @@ def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmu
     with ZERO risk of loading stale features (see src/data/feature_cache.py).
     """
     cfg = cfg or load_active_config()
+    bal = float(getattr(cfg, "starting_balance", 100_000.0))   # position sizes SCALE with the account size
     fc = None
     if feature_cache_dir:
         from src.data import feature_cache as fc
@@ -89,7 +90,9 @@ def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmu
     n = len(symbol_data)
     for k, (sym, (ind, close, time_ns)) in enumerate(symbol_data.items(), 1):
         ind = np.asarray(ind); close = np.asarray(close); time_ns = np.asarray(time_ns)
-        ps = A.calibrated_position_size(sym) if sym in A.SPECS else 100_000.0
+        # calibrate lots to ~2.5%/day FOR THIS ACCOUNT SIZE (so behavior is identical at $10k or $200k);
+        # unknown symbols fall back to "1 lot = the account" which also scales with the balance.
+        ps = A.calibrated_position_size(sym, account=bal) if sym in A.SPECS else bal
         reg = registry_factory()
         cached = fc.load(feature_cache_dir, sym, ind, close, time_ns, reg) if fc else None
         if cached is not None:
@@ -123,11 +126,14 @@ class PortfolioEnv:
     def __init__(self, symbol_data: dict | None = None, registry_factory=None, *, cfg=None, warmup: int = 200,
                  breach_penalty: float = 1.0, reward_scale: float = 1.0, pass_bonus: float | None = None,
                  window: int | None = None, random_window: bool = False, seed: int | None = None,
-                 subs: dict | None = None):
+                 subs: dict | None = None, continue_after_pass: bool = False):
         self.cfg = cfg or load_active_config()
         self.breach_penalty = float(breach_penalty)
         self.reward_scale = float(reward_scale)
         self.pass_bonus = float(self.breach_penalty if pass_bonus is None else pass_bonus)
+        # TRAINING keeps going past +10% (continue_after_pass=True) to learn CONSISTENCY (string 4 daily
+        # passes in a row, over and over). EVAL / a real challenge ends at +10% (default False).
+        self.continue_after_pass = bool(continue_after_pass)
         self.profit_target_frac = float(getattr(self.cfg, "profit_target_total_pct", 10.0)) / 100.0
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
@@ -183,6 +189,8 @@ class PortfolioEnv:
         self._cur_date = self._dates[self.t]
         self._days_elapsed = 0
         self._reset_phase2()                                   # per-day two-phase state on the shared pot
+        self._daily_pass_streak = 0                            # consecutive days that banked +2.5% (consistency)
+        self._day_passed = False                               # did TODAY bank +2.5% (net of fees)?
         self._mark()
         return self._obs(), {"t": self.t}
 
@@ -204,6 +212,16 @@ class PortfolioEnv:
                 self.position[s] = 0
         self.acc.equity = self.acc.balance
         self.acc.mark_equity(self.acc.equity)
+
+    def _pending_exit_cost(self) -> float:
+        """Total transaction cost to close ALL open positions right now -- so the +2.5% bank triggers on
+        TRUE post-fee equity (what you'd actually keep), not the gross open-profit figure."""
+        c = 0.0
+        for s in self.symbols:
+            if self.position[s] != 0:
+                sub = self.subs[s]
+                c += sub.cost_frac * sub.close[self.t] * sub.position_size
+        return c
 
     @property
     def ptr(self) -> int:                                      # so daily_report / introspect work unchanged
@@ -298,8 +316,17 @@ class PortfolioEnv:
         daily_target_hit = False
         if bar_advanced:
             if self._dates[self.t] != self._cur_date:          # midnight -> per-day FTMO reset
+                # consistency reward: did the day that just ENDED bank +2.5%? 4 such days IN A ROW = a BIG
+                # bonus (and we KEEP training for more streaks). A failed day breaks the streak.
+                if self._day_passed:
+                    self._daily_pass_streak += 1
+                    if self._daily_pass_streak % 4 == 0:
+                        reward += self.pass_bonus              # +10% / 4-in-a-row achieved -> big bonus
+                else:
+                    self._daily_pass_streak = 0
                 self.acc.reset_day()
                 self._reset_phase2()                           # new day -> clear the day-lock / phase-2
+                self._day_passed = False
                 self._cur_date = self._dates[self.t]
                 self._days_elapsed += 1
             rep = BD.detect(self.acc, self.cfg)                # breach on the SHARED pot
@@ -310,19 +337,26 @@ class PortfolioEnv:
                 reward -= self.breach_penalty
             elif self.acc.equity >= self.cfg.starting_balance * (1.0 + self.profit_target_frac):
                 self.acc.episode_passed = True                 # +10% on the pot -> PASS
-                terminated = True
-                reward += self.pass_bonus
-            # DAILY ENGINE (two-phase) on the SHARED pot: hit +2.5% of initial -> close ALL & bank it,
-            # then STOP for the day (default) or, if phase2_continue, keep trading under a 1% trailing
-            # wall from the banked peak. A PROTECTIVE overlay, never an episode breach. Skipped if breached.
+                if not self.continue_after_pass:               # eval / real challenge ENDS at +10%
+                    terminated = True
+                    reward += self.pass_bonus
+                # training (continue_after_pass): keep going for CONSISTENCY; the 4-in-a-row bonus rewards it
+            # DAILY ENGINE (two-phase) on the SHARED pot: bank +2.5% of initial NET OF FEES -> close ALL,
+            # then STOP for the day (phase2_continue=False) or keep trading under a 1% trailing wall from
+            # the banked peak. A PROTECTIVE overlay, never an episode breach. Skipped if breached.
             if not terminated and self.cfg.two_phase_enabled:
-                if rep.should_auto_flat and not self._phase2_active and not self._day_locked:
-                    self._flatten_all()                        # +2.5% reached -> bank the whole book
+                day0 = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
+                target_amt = self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance
+                net_equity = self.acc.equity - self._pending_exit_cost()   # what you'd actually KEEP after closing
+                hit_net = (net_equity - day0) >= target_amt
+                if hit_net and not self._phase2_active and not self._day_locked:
+                    self._flatten_all()                        # +2.5% (net) reached -> bank the whole book
+                    self._day_passed = True                    # counts toward the 4-in-a-row streak
                     if getattr(self.cfg, "phase2_continue", False):
                         self._phase2_active = True
                         self._phase2_peak = self.acc.equity    # fresh 1% trail starts here
                     else:
-                        self._day_locked = True                # default: done for the day
+                        self._day_locked = True                # stop for the day
                 elif self._phase2_active:
                     self._phase2_peak = max(self._phase2_peak, self.acc.equity)
                     give_back = self._phase2_peak - self.acc.equity
@@ -336,5 +370,5 @@ class PortfolioEnv:
         info = {"symbol": sym, "t": t, "equity": self.acc.equity,
                 "open_positions": self.acc.open_positions, "positions": dict(self.position),
                 "day_locked": self._day_locked, "phase2_active": self._phase2_active,
-                "daily_target_hit": daily_target_hit}
+                "daily_target_hit": daily_target_hit, "daily_pass_streak": self._daily_pass_streak}
         return self._obs(), reward, terminated, truncated, info

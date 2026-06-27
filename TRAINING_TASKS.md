@@ -63,13 +63,13 @@
 
 ---
 
-## ⚙️ PHASE 3 — Behavior to match the rules ⬜
-- [ ] ⬜ **Fee-net banking:** bank the +2.5% only when *true* equity (after all fees) hits it; close ALL trades
-- [ ] ⬜ **Continue after banking** under the 1% trailing leash (turn `phase2_continue` ON by default)
-- [ ] ⬜ **+10% / 4 daily-passes-in-a-row = BIG BONUS** reward — and **keep training past it** (don't end the episode)
-- [ ] ⬜ **Account size is an input**; position sizes **scale to the starting balance** (works at any FTMO size)
-- [ ] ⬜ **4% trailing wall is a tunable dial** we can taper smaller over time
-- [ ] ⬜ Tests for each of the above
+## ⚙️ PHASE 3 — Behavior to match the rules ✅ (commit pending)
+- [x] ✅ **Fee-net banking:** bank only when *true* post-fee equity hits +2.5% (banked day is genuinely ≥ +2.5%)
+- [x] ✅ **Continue after banking** under the 1% leash — `FTMO_PHASE2_CONTINUE` default now **True**
+- [x] ✅ **+10% / 4-in-a-row = BIG BONUS** + **keep training** past it (`continue_after_pass`; eval still ends at +10%)
+- [x] ✅ **Account size is an input** (`run_training --balance`); position sizes **scale** to it
+- [x] ✅ **Trailing wall is a dial** (`run_training --trailing-dd`)
+- [x] ✅ +5 tests (`test_portfolio_behavior.py`); suite 180/180; audit GO
 - [ ] 🔮 *Future:* after banking, optional "keep going with the trailing stop cut in half" to protect profit
 
 ---

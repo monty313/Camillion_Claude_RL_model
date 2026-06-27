@@ -82,8 +82,19 @@ def main(argv=None):
                     help="where to SAVE the prepared features so re-runs skip the slow build (default: auto -> "
                          "Google Drive MyDrive/Camillion/feature_cache on Colab, else a local folder). "
                          "Use 'off' to disable.")
+    ap.add_argument("--balance", type=float, default=None,
+                    help="account starting balance (e.g. 100000, 50000) -- position sizes scale to it so the "
+                         "logic is identical at any FTMO size. Default: the configured 100,000.")
+    ap.add_argument("--trailing-dd", dest="trailing_dd", type=float, default=None,
+                    help="the trailing drawdown wall %% (default 4.0). Lower it over time to tighten risk.")
     a = ap.parse_args(argv)
     symbols = [s.strip() for s in a.symbols.split(",") if s.strip()]
+    # account size + risk dial: set BEFORE building the env/cfg (which read these from config.variables)
+    import config.variables as _V
+    if a.balance:
+        _V.STARTING_BALANCE = float(a.balance)
+    if a.trailing_dd:
+        _V.FTMO_TRAILING_DRAWDOWN_PCT = float(a.trailing_dd)
 
     line = "=" * 72
     print(f"{line}\n  CAMILLION — training ONE bot to trade your whole portfolio\n{line}")
@@ -131,7 +142,8 @@ def main(argv=None):
     if feat_cache:
         print(f"      prepared features will be saved/reused at: {feat_cache}")
     train_portfolio(sd, _reg, total_timesteps=a.steps, save_path=a.out, feature_cache_dir=feat_cache,
-                    data_cache_dir=a.cache, symbols=found)   # data_cache_dir+symbols enable multi-core workers
+                    data_cache_dir=a.cache, symbols=found,    # data_cache_dir+symbols enable multi-core workers
+                    continue_after_pass=True)                 # TRAIN past +10% for consistency (4-in-a-row bonus)
     print(f"      trained + saved -> {a.out} (+ its _vecnorm.pkl)")
 
     # 4) the day-by-day results (the part you care about)

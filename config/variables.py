@@ -43,7 +43,7 @@ FTMO_TRAILING_DRAWDOWN_PCT: float = 4.0     # PHASE-1 trailing wall (self-impose
 FTMO_TRAILING_ENABLED: bool = True          # ON: phase-1 risk wall is a 4% trailing drawdown
 FTMO_TWO_PHASE_ENABLED: bool = True         # ON: hit +2.5%/day -> close ALL & bank it (daily engine -> +10% over ~4 days)
 FTMO_PHASE2_TRAILING_PCT: float = 1.0       # PHASE-2 trailing wall after banking (tight, protects the day's gain)
-FTMO_PHASE2_CONTINUE: bool = False          # after banking +2.5%: False=stop for the day; True=keep trading under the 1% trail
+FTMO_PHASE2_CONTINUE: bool = True           # after banking +2.5%: keep trading under a tight 1% trail (operator 2026-06-27); False=stop
 FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episode +10%)
 
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator

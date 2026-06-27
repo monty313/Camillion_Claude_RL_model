@@ -710,3 +710,27 @@ report covers all days, model save/load works).
   (4% drop, only-rising=0) pass; +2 tests; suite 175/175; audit ✅ GO 38/42.
 - **C:** the day-by-day table no longer flags phantom breaches — a `<WALL? BREACH` now means the engine
   actually breached.
+
+## [2026-06-27] Training Phase 3: behavior to match the rules (DELIBERATE FTMO changes, owner-approved)
+- **I/R:** Mark confirmed the trained portfolio bot's rules (see `TRAINING_REQUIREMENTS.md`). These change
+  FTMO behaviour ON PURPOSE (CLAUDE.md rule #2 — stated explicitly here). Obs(479) + `step()` hot-loop rules
+  unchanged.
+- **A (PortfolioEnv + config + run_training):**
+  1. **Bank +2.5% NET OF FEES** — the two-phase bank now triggers on `equity - pending_exit_cost` (what you
+     actually KEEP after closing), so a banked day is genuinely ≥ +2.5% of initial.
+  2. **Keep trading after banking** — `FTMO_PHASE2_CONTINUE` default flipped to **True**: bank +2.5% → close
+     ALL → continue under the 1% trailing leash (was: stop). Updated the 4 stop/lock tests to force
+     `phase2_continue=False` explicitly.
+  3. **+10% / 4-in-a-row = BIG BONUS, keep training** — a per-day `_day_passed` flag + `_daily_pass_streak`;
+     4 consecutive banked days adds a big `pass_bonus` reward AND training does NOT stop (new
+     `continue_after_pass` flag, set True by `run_training`). EVAL / a real challenge still ends at +10%
+     (`continue_after_pass=False`, the default, preserves the report/walk-forward behaviour).
+  4. **Account size scales** — `run_training --balance` sets the starting balance; `build_portfolio_subs`
+     calibrates each symbol's position size for THAT account (`calibrated_position_size(account=balance)`), so
+     behaviour is identical at $10k or $200k.
+  5. **Trailing wall is a dial** — `run_training --trailing-dd` sets the 4% wall (taper it over time).
+- **Verified:** +5 tests (`tests/test_portfolio_behavior.py`): default phase2-continue ON · banked ≥ +2.5%
+  net of fees · continue-after-pass doesn't terminate at +10% (while eval does) · a 4-day pass streak earns
+  the big bonus · halving the account ~halves the position size. Suite 180/180; audit ✅ GO 38/42.
+- **C:** the trained bot now behaves the way Mark trades it — bank the day net of fees, keep pushing under a
+  tight leash, reward consistent 4-in-a-row passing, scale to any FTMO account, with a tunable risk wall.

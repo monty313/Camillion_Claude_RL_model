@@ -31,7 +31,7 @@ def _pf_env(prices, cfg=None, start="2026-03-02 09:00", **kw):
 def test_portfolio_banks_at_2pct5_then_stops_by_default():
     """+0.04 on 1 lot ~ +$4,000 = +4% of $100k (clears the tiny round-trip cost) -> the pot banks the day
     and locks: it closes the whole book and blocks new opens for the rest of the day."""
-    env = _pf_env([100.0, 100.04, 100.04, 100.04])
+    env = _pf_env([100.0, 100.04, 100.04, 100.04], cfg=FTMOConfig(phase2_continue=False))
     env.reset()
     _, _, term, trunc, info = env.step(C.ACTION_BUY)     # opens; next bar marks +>2.5% -> auto-bank ALL + lock
     assert env.position["TESTPAIR"] == 0, "must close the WHOLE book at +2.5%"
@@ -59,7 +59,7 @@ def test_portfolio_phase2_continue_then_protective_stop():
 def test_portfolio_day_lock_clears_next_day():
     """Bank + lock on day 1; crossing midnight clears the lock so the pot can trade again the next day."""
     env = _pf_env([100.0, 100.04, 100.04, 100.04, 100.04, 100.04, 100.04, 100.04],
-                  start="2026-03-02 23:57")
+                  start="2026-03-02 23:57", cfg=FTMOConfig(phase2_continue=False))
     env.reset()
     env.step(C.ACTION_BUY)                               # banks + locks day 1
     assert env._day_locked is True
