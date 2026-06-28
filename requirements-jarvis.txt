@@ -1,0 +1,8 @@
+# Optional dependencies to SERVE the JARVIS cockpit bridge (jarvis_bridge.py).
+# The contract + council logic in src/jarvis/* need NONE of these and are fully
+# tested without them (python tools/run_tests.py). Install only to run the HUD.
+fastapi>=0.110
+uvicorn>=0.29
+# optional: real LLM reasoning in the council (OMEGA/JUSTICE/JARVIS). Without it,
+# the council uses its grounded, deterministic, always-progressive fallback.
+anthropic>=0.40

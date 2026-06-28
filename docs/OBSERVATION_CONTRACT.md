@@ -1,12 +1,13 @@
-# OBSERVATION CONTRACT — v1.5.0  (479 float32)
+# OBSERVATION CONTRACT — v1.6.0  (499 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
 > version bump.** Adding *strategies* does NOT change it (that is the whole point).
 >
 > **Version history:** v1.1.0 (367) → v1.2.0 (451: indicators 200→220 + 64-wide `alpha_streak`)
-> → v1.3.0 (461: 10-float `sizing`) → v1.4.0 (471: 10-float `cross_asset`) → **v1.5.0 (479):
-> appended the 8-float `recent_context` block.** Appended blocks leave indices 0..(prev-1) unchanged.
+> → v1.3.0 (461: 10-float `sizing`) → v1.4.0 (471: 10-float `cross_asset`) → v1.5.0 (479: 8-float
+> `recent_context`) → **v1.6.0 (499): appended the 20-float raw `ohlc` block (O/H/L/C × 5 TFs).**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.5.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -26,8 +27,16 @@
 | 12 | `sizing` | 10 | **v1.3.0**, all fractions of INITIAL balance: 6-rung what-if lot ladder (0.01/0.1/0.5/1/2/4 → account-% a typical move is worth), `daily_target_remaining`, `dd_room`, `active_lots_norm`, `active_move_value`. OBSERVATION ONLY — sizing is not an action yet. |
 | 13 | `cross_asset` | 10 | **v1.4.0**: asset-class one-hot (`pair/index/metal/energy/crypto`, classifier covers the full FTMO broker) + ATR-normalized movement (`move_in_atr`, `atr_pct_price`, `atr_regime` — **scale-free**, comparable across all instruments) + sessions (`asian`, `london_ny_overlap`). Lets one policy generalize across the universe. |
 | 14 | `recent_context` | 8 | **v1.5.0**: recent daily movement RELATIVE to the symbol's average — `week_avg_range_vs_typical`, `prev_day/prev2_day/today_range_vs_week` — + TIME-to-pass pace: `days_elapsed_norm`, `episode_return_so_far`, `pace_vs_2_5pct_plan` (0.5 = on plan), `challenge_target_remaining`. |
+| 15 | `ohlc` | 20 | **v1.6.0**: RAW Open/High/Low/Close of the last CLOSED bar on each of the 5 TFs (`{tf}__open/high/low/close`, TF-major). The policy finally sees High/Low/Open, not just close. NOT normalized (like block 1). Built at cache time from the resampled bars (the env carries only `close`) and threaded in via `src/data/aux_features.py`; leak-free (last-closed-bar). |
 
-**Total = 479.**
+**Total = 499.**
+
+> **OHLC is built where the OHLC exists.** The env only carries `close`, so the 20-float raw OHLC
+> block (and the ADX-DI alpha side-channel) are precomputed at cache time into a `{symbol}_aux.npy`
+> array (`build_aligned_aux`), trimmed alongside the indicators by `align_symbol_data`, and handed to
+> the env as `aux=`. The aux array is **NOT** itself in the observation — only its OHLC half is (block
+> 15); its DI half feeds the two ADX-DI alphas (slots 16/17). The aux content is part of the feature-cache
+> fingerprint, so a no-OHLC cache is never loaded as an OHLC one.
 
 ## Per-timeframe indicator block (40), repeated for 1m, 5m, 30m, 4h, 1d
 - **SMA (6):** p1/s0, p2/s1, p3/s2, p4/s3, p50/s0, p200/s0.

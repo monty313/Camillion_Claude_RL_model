@@ -36,7 +36,7 @@ def test_daily_target_is_pct_of_initial_measured_on_equity():
 
 def test_banks_at_2pct5_then_stops_by_default():
     """+0.025 on 1 lot = +$2,500 = +2.5% of $100k. Default -> close all + stop for the day."""
-    env = _env([100.0, 100.025, 100.025, 100.025, 100.025])
+    env = _env([100.0, 100.025, 100.025, 100.025, 100.025], cfg=FTMOConfig(phase2_continue=False))
     env.reset()
     _, _, term, trunc, info = env.step(C.ACTION_BUY)   # opens; marks +2.5% -> auto-bank + lock
     assert env.position == 0, "must close ALL at +2.5%"
@@ -79,7 +79,7 @@ def test_phase1_4pct_trailing_is_a_breach():
 def test_phase2_lock_clears_next_day():
     """Bank + lock on day 1; crossing midnight clears the lock so it can trade again."""
     env = _env([100.0, 100.025, 100.025, 100.025, 100.025, 100.025, 100.025, 100.025],
-               start="2026-03-02 23:57")
+               start="2026-03-02 23:57", cfg=FTMOConfig(phase2_continue=False))
     env.reset()
     env.step(C.ACTION_BUY)                            # banks + locks day 1
     assert env._day_locked is True

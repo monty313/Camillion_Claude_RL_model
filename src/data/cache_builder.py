@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from config import constants as C
 from src.indicators import base
+from src.data import aux_features as AX
 
 _TF_RULE = {"1m": "1min", "5m": "5min", "30m": "30min", "4h": "4h", "1d": "1D"}
 _TF_MIN = {"1m": 1, "5m": 5, "30m": 30, "4h": 240, "1d": 1440}
@@ -64,51 +65,112 @@ def build_aligned_indicators(df1m: pd.DataFrame) -> np.ndarray:
     return mat
 
 
+def build_aligned_aux(df1m: pd.DataFrame) -> np.ndarray:
+    """Return (T, AUX_NCOLS=32) float32 aligned to the 1m index: PART A raw OHLC (20, all 5 TFs) +
+    PART B ADX +DI/-DI (12, periods 14&45 on 5m/30m/4h). Same leak-free last-closed-bar rule as the
+    indicators -- the env never carries high/low, so these are built ONCE here where OHLC exists. Columns
+    == aux_features.OHLC_COLUMNS then DI_COLUMNS order. OHLC feeds the v1.6.0 obs block; DI feeds the two
+    ADX-DI alphas (NOT the observation)."""
+    open_ns = df1m.index.values.astype("datetime64[ns]").astype(np.int64)
+    close1m_ns = open_ns + _NS_PER_MIN
+    # PART A: raw OHLC of the last CLOSED bar per timeframe (all 5 TFs), fields O,H,L,C
+    ohlc_blocks = []
+    for tf in C.TIMEFRAMES:
+        d = resample_ohlcv(df1m, tf)
+        vals = np.column_stack([d["open"].values, d["high"].values, d["low"].values, d["close"].values]).astype(np.float64)
+        tf_open_ns = d.index.values.astype("datetime64[ns]").astype(np.int64)
+        ohlc_blocks.append(_align_to_1m(vals, tf_open_ns, _TF_MIN[tf], close1m_ns))
+    # PART B: +DI/-DI (periods 14 & 45) on the alpha timeframes only
+    di_blocks = []
+    for tf in AX.ADX_DI_TIMEFRAMES:
+        d = resample_ohlcv(df1m, tf)
+        m = AX.compute_tf_di(d["high"].values, d["low"].values, d["close"].values)
+        tf_open_ns = d.index.values.astype("datetime64[ns]").astype(np.int64)
+        di_blocks.append(_align_to_1m(m, tf_open_ns, _TF_MIN[tf], close1m_ns))
+    mat = np.hstack(ohlc_blocks + di_blocks).astype(np.float32)
+    assert mat.shape[1] == AX.AUX_NCOLS == len(AX.OHLC_COLUMNS) + len(AX.DI_COLUMNS), mat.shape
+    return mat
+
+
 def build_cache(df1m: pd.DataFrame, out_dir: str, symbol: str = "EURUSD") -> dict:
-    """Precompute + persist float32 cache (indicators, close, timestamps)."""
+    """Precompute + persist float32 cache (indicators, close, timestamps, aux=OHLC+DI)."""
     os.makedirs(out_dir, exist_ok=True)
     mat = build_aligned_indicators(df1m)
+    aux = build_aligned_aux(df1m)                       # v1.6.0: raw OHLC obs block + ADX-DI side-channel
     np.save(os.path.join(out_dir, f"{symbol}_indicators.npy"), mat)
+    np.save(os.path.join(out_dir, f"{symbol}_aux.npy"), aux)
     np.save(os.path.join(out_dir, f"{symbol}_close.npy"), df1m["close"].values.astype(np.float32))
     np.save(os.path.join(out_dir, f"{symbol}_time_ns.npy"),
             df1m.index.values.astype("datetime64[ns]").astype(np.int64))
-    return {"symbol": symbol, "bars": int(len(df1m)), "indicator_cols": int(mat.shape[1])}
+    return {"symbol": symbol, "bars": int(len(df1m)), "indicator_cols": int(mat.shape[1]),
+            "aux_cols": int(aux.shape[1])}
 
 
 def load_cache(out_dir: str, symbol: str = "EURUSD"):
-    """memmap-load the cache for zero-copy hot-loop reads -> (indicators, close, time_ns)."""
+    """memmap-load the cache for zero-copy hot-loop reads -> (indicators, close, time_ns).
+    The aux array (OHLC+DI) is loaded separately via load_aux() so this 3-tuple stays backward
+    compatible with every existing caller (JAX notebook, tests, daily_report)."""
     j = lambda n: os.path.join(out_dir, f"{symbol}_{n}.npy")
     return (np.load(j("indicators"), mmap_mode="r"),
             np.load(j("close"), mmap_mode="r"),
             np.load(j("time_ns"), mmap_mode="r"))
 
 
+def load_aux(out_dir: str, symbol: str = "EURUSD"):
+    """memmap-load the aux array (T, 32 = OHLC 20 + DI 12) for `symbol`, or None if it was never built
+    (an OLD cache predating v1.6.0). None -> the OHLC obs block is zeros and the ADX-DI alphas stay
+    inactive, so old caches still load and run (degraded, never a crash)."""
+    p = os.path.join(out_dir, f"{symbol}_aux.npy")
+    if not os.path.isfile(p):
+        return None
+    return np.load(p, mmap_mode="r")
+
+
 def load_ohlcv_csv(path):
-    """Load a 1-minute OHLCV CSV with flexible column names -> DataFrame indexed by
-    datetime (sorted, de-duplicated). Column values are taken positionally so they
-    align to the parsed timestamps, not to the CSV's original integer index.
+    """Load a 1-minute OHLCV file with flexible column names AND delimiter -> DataFrame indexed by
+    datetime (sorted, de-duplicated). Handles comma / TAB / semicolon files, angle-bracket headers,
+    and MetaTrader-style SPLIT date+time columns (e.g. MT5 export: `<DATE>\\t<TIME>\\t<OPEN>...` with
+    dotted dates `2021.01.13`). Values are positional so they align to the parsed timestamps.
     Feed the result to build_aligned_indicators(df)."""
     import numpy as _np, pandas as _pd
-    df = _pd.read_csv(path)
-    low = {c.lower().strip(): c for c in df.columns}
-    def pick(opts):
+    # 1) sniff the delimiter from the header line (fast C engine; MT5 history exports are TAB-separated)
+    with open(path, "r", encoding="utf-8-sig") as f:
+        header = f.readline()
+    counts = {d: header.count(d) for d in ("\t", ";", "|", ",")}
+    sep = max(counts, key=counts.get)
+    if counts[sep] == 0:
+        sep = ","
+    df = _pd.read_csv(path, sep=sep, encoding="utf-8-sig")
+    # 2) normalize headers: lowercase, strip whitespace AND angle brackets  (<DATE> -> date)
+    low = {c.lower().strip().strip("<>").strip(): c for c in df.columns}
+    def pick(*opts):
         for o in opts:
             if o in low:
                 return low[o]
         return None
-    tcol = pick(("datetime", "date_time", "timestamp", "time", "date", "<date>", "gmt time", "gmt_time"))
-    if tcol is not None:
-        idx = _pd.to_datetime(df[tcol], errors="coerce")
-    elif "date" in low and "time" in low:
-        idx = _pd.to_datetime(df[low["date"]].astype(str) + " " + df[low["time"]].astype(str), errors="coerce")
+    # 3) build the timestamp — combine SEPARATE date+time first (MT5), else a single datetime column
+    dt_col, date_col, time_col = pick("datetime", "date_time", "timestamp", "gmt time", "gmt_time"), pick("date"), pick("time")
+    if dt_col is not None:
+        raw = df[dt_col].astype(str)
+    elif date_col is not None and time_col is not None:
+        raw = df[date_col].astype(str).str.strip() + " " + df[time_col].astype(str).str.strip()
+    elif date_col is not None:
+        raw = df[date_col].astype(str)
+    elif time_col is not None:
+        raw = df[time_col].astype(str)
     else:
         raise ValueError(f"{path}: no datetime column found (cols={list(df.columns)})")
-    def col(opts):
-        nm = pick(opts)
+    idx = _pd.to_datetime(raw, errors="coerce")
+    for fmt in ("%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d"):   # MT5 dotted dates if default parse failed
+        if idx.isna().mean() > 0.5:
+            idx = _pd.to_datetime(raw, format=fmt, errors="coerce")
+    def col(*opts):
+        nm = pick(*opts)
         return _pd.to_numeric(df[nm], errors="coerce").to_numpy() if nm else None
-    o = col(("open", "o", "<open>")); h = col(("high", "h", "<high>")); l = col(("low", "l", "<low>"))
-    c = col(("close", "c", "<close>", "adj close", "price"))
-    v = col(("volume", "vol", "v", "<vol>", "tickvol", "tick_volume"))
+    o = col("open", "o"); h = col("high", "h"); l = col("low", "l")
+    c = col("close", "c", "adj close", "price")
+    # prefer TICK volume (real <VOL> is usually 0 on forex MT5 exports)
+    v = col("tickvol", "tick_volume", "tickvolume", "volume", "vol", "v")
     if c is None:
         raise ValueError(f"{path}: no close column found (cols={list(df.columns)})")
     out = _pd.DataFrame({"open": o if o is not None else c, "high": h if h is not None else c,

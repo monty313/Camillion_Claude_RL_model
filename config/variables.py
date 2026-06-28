@@ -43,8 +43,48 @@ FTMO_TRAILING_DRAWDOWN_PCT: float = 4.0     # PHASE-1 trailing wall (self-impose
 FTMO_TRAILING_ENABLED: bool = True          # ON: phase-1 risk wall is a 4% trailing drawdown
 FTMO_TWO_PHASE_ENABLED: bool = True         # ON: hit +2.5%/day -> close ALL & bank it (daily engine -> +10% over ~4 days)
 FTMO_PHASE2_TRAILING_PCT: float = 1.0       # PHASE-2 trailing wall after banking (tight, protects the day's gain)
-FTMO_PHASE2_CONTINUE: bool = False          # after banking +2.5%: False=stop for the day; True=keep trading under the 1% trail
+FTMO_PHASE2_CONTINUE: bool = True           # after banking +2.5%: keep trading under a tight 1% trail (operator 2026-06-27); False=stop
 FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episode +10%)
+
+# --- ALPHA-SHAPING (ON by default — operator 2026-06-27). DELIBERATE, DOCUMENTED departure from the old
+#     "reward = equity only / never alpha" design rule (which still holds for the single-symbol TradingEnv).
+#     EVERY bonus is CAPPED at the trade's own PnL (it can amplify a real win, never fabricate reward) and
+#     only pays when the DAY is net up; the penalty is applied at entry. Set False to restore alpha-free reward. ---
+FTMO_ALPHA_REWARD_ENABLED: bool = True       # master switch for the three alpha terms below
+FTMO_ALPHA_AGREE_BONUS: float = 0.001       # USE the alphas: profitable close that AGREED with >=50% of firing alphas
+FTMO_ALPHA_AGAINST_PENALTY: float = 0.001   # penalty for OPENING a trade against >=50% of firing alphas
+FTMO_ALPHA_BEAT_BONUS: float = 0.002        # BEAT the alphas: 2x the others (so beating isn't cancelled by the against-penalty); profit + day-up + capped at PnL
+
+# --- PER-DAY consistency signal: a "won day" = the day ENDS at >= +2.5% of INITIAL (measured at midnight,
+#     AFTER any give-back), NOT merely banking it intraday. Reward a won day, penalise a failed day. This
+#     also makes giving back a banked +2.5% (phase-2 leash) a real cost. Tune the magnitudes. ---
+FTMO_DAY_PASS_REWARD: float = 0.025         # reward when the day ENDS >= +2.5% of initial (a won day)
+FTMO_DAY_FAIL_PENALTY: float = 0.025        # penalty when the day ENDS below +2.5% (a failed day)
+
+# --- SEEK-THE-TARGET vs HIDE rebalance (operator 2026-06-28). The breach penalty (1.0) so dominates the
+#     tiny per-day rewards that the easiest local optimum is to BARELY TRADE -> a bot that "hides" (never
+#     breaches, but never makes +10% either). Two terms break that attractor, in PortfolioEnv only (the
+#     single-symbol TradingEnv stays reward=equity-only by design):
+#       1. TARGET-SEEK (dense): reward NEW progress toward the +2.5%/day target (high-water-mark, so it can't
+#          be farmed by churning). This makes "move toward the day's target" the gradient, so the bot
+#          actively seeks profit instead of sitting flat. Total <= seek_weight per won day.
+#       2. IDLE-DAY penalty: a day that ends with ZERO trades is penalised -> "hiding" is no longer free, so
+#          the bot must EXPLORE toward the target rather than collapse to do-nothing. Small (won't force bad
+#          trades; the breach penalty still dominates true recklessness).
+#     These are the knobs to tune from the live DASHBOARD DIAGNOSIS (hiding -> raise these; over-trading ->
+#     lower seek / raise breach). Set both to 0.0 to restore the pre-rebalance reward. ---
+FTMO_TARGET_SEEK_WEIGHT: float = 0.10       # dense reward for new progress toward +2.5%/day (<= this per won day)
+FTMO_IDLE_DAY_PENALTY: float = 0.02         # penalty for a day with ZERO trades (anti-"hiding")
+
+# --- DRAWDOWN-PROXIMITY penalty + a SMALLER breach cliff (operator 2026-06-28). The old design only
+#     punished a breach at the -1.0 CLIFF, so "do nothing / survive" was the dominant attractor. Now:
+#     (a) a GRADUAL penalty grows as equity nears the trailing wall (so approaching the wall costs before
+#     you hit it, and the bot plans away from it), and (b) the breach cliff drops 1.0 -> 0.2 so steady
+#     +2.5% progress beats merely surviving. The streak reset (a breach restarts the 40-won-days count) is
+#     now the real breach deterrent, not a giant per-step penalty. Tune from the dashboard DIAGNOSIS. ---
+FTMO_DD_PROXIMITY_COEF: float = 0.02        # per-step penalty = coef * (dd_used_fraction_of_wall)^2 (0 = off)
+FTMO_BREACH_PENALTY: float = 0.2            # the breach cliff (was 1.0); the 40-streak reset is the real deterrent
+FTMO_PASS_BONUS: float = 1.0               # +10% pass reward + the 4-won-days-in-a-row bonus (kept big)
 
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
 # decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York

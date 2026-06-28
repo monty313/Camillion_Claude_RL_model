@@ -27,6 +27,7 @@ from config.ftmo_config import load_active_config
 from config import variables as V
 from config import asset_specs as A
 from src.indicators.base import ALL_INDICATOR_COLUMNS
+from src.data import aux_features as AX
 from src.strategies.context import MarketContext
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
@@ -51,11 +52,25 @@ class TradingEnv:
                  cost_frac: float | None = None, pass_bonus: float | None = None,
                  symbol: str | None = None, value_per_point: float | None = None,
                  window: int | None = None, warmup: int = 200,
-                 random_window: bool = False, seed: int | None = None):
+                 random_window: bool = False, seed: int | None = None,
+                 progress: bool = False, precomputed: dict | None = None,
+                 aux=None):
         self.ind = np.asarray(indicators, dtype=np.float32)
         self.close = np.asarray(close, dtype=np.float64).ravel()
         self.time_ns = np.asarray(time_ns).astype("int64").ravel()
         self.T = self.close.shape[0]
+        # v1.6.0 aux array (T, 32) = raw OHLC obs block (20) + ADX-DI side-channel (12). Optional:
+        # None (old caches / synthetic tests) -> OHLC obs block is zeros and the two ADX-DI alphas stay
+        # inactive (NaN -> abstain). OHLC is read in _obs; the DI half feeds the ctx in _precompute only.
+        self.aux = None if aux is None else np.asarray(aux, dtype=np.float32)
+        if self.aux is not None and self.aux.shape[0] != self.T:
+            raise ValueError(f"aux length {self.aux.shape[0]} != T {self.T} (must be time-aligned with close)")
+        if self.aux is not None:
+            self.ohlc_matrix = np.ascontiguousarray(self.aux[:, AX.OHLC_SLICE], dtype=np.float32)
+            self._ctx_cols = list(ALL_INDICATOR_COLUMNS) + list(AX.DI_COLUMNS)
+        else:
+            self.ohlc_matrix = np.zeros((self.T, C.OBS_BLOCK_OHLC), dtype=np.float32)
+            self._ctx_cols = ALL_INDICATOR_COLUMNS
         self.cfg = cfg or load_active_config()
         self.position_size = float(position_size)
         self.breach_penalty = float(breach_penalty)
@@ -88,19 +103,29 @@ class TradingEnv:
         self._dates = _ts.normalize().values                          # day boundaries
         self._minute_of_day = (_ts.hour * 60 + _ts.minute).to_numpy().astype(np.int32)  # UTC, for NY session
         self._is_index = (A.asset_class(symbol) == "index")           # ORB + NY bonus apply to indices
-        self._precompute(alpha_registry)
+        self._progress = bool(progress)   # print a build progress bar during the (one-time) precompute
+        if precomputed is not None:
+            self._load_precomputed(precomputed)    # fast path: reuse cached features (skip the slow loop)
+        else:
+            self._precompute(alpha_registry)
 
     # ---- precompute (once): alphas, net signal, leak-free accuracy, time ----
     def _precompute(self, registry):
         T = self.T
         self.alpha_matrix = np.zeros((T, C.MAX_STRATEGIES), dtype=np.float32)
+        _rep = max(1, T // 10) if getattr(self, "_progress", False) else 0   # ~10 progress ticks/symbol
+        di = None if self.aux is None else self.aux[:, AX.DI_SLICE]   # ADX-DI side-channel for the ctx
         for i in range(T):
+            row = self.ind[i].tolist() if di is None else (self.ind[i].tolist() + di[i].tolist())
             ctx = MarketContext(close=float(self.close[i]),
-                                indicators=dict(zip(ALL_INDICATOR_COLUMNS,
-                                                    self.ind[i].tolist())),
+                                indicators=dict(zip(self._ctx_cols, row)),
                                 bar_index=i, symbol=self.symbol or "",
                                 minute_of_day=int(self._minute_of_day[i]))
             self.alpha_matrix[i] = registry.collect_alphas(ctx)
+            if _rep and i and i % _rep == 0:
+                print(f"          [{self.symbol or '?'}] {100 * i // T:3d}%  ({i:,}/{T:,} bars)", flush=True)
+        if _rep:
+            print(f"          [{self.symbol or '?'}] 100%  ({T:,}/{T:,} bars) done", flush=True)
         self.occupancy = registry.occupancy_mask()
         self.net_signal = np.array([net_balance(self.alpha_matrix[i]) for i in range(T)],
                                    dtype=np.float32)
@@ -186,6 +211,25 @@ class TradingEnv:
         self.cross_asset_matrix = np.column_stack([
             np.tile(onehot, (T, 1)), move_in_atr, atr_pct_price, atr_regime, asian, overlap,
         ]).astype(np.float32)
+
+    # ---- feature cache: export / load the precomputed arrays (see src/data/feature_cache.py) ----
+    # The single source of truth for WHICH arrays _precompute(+submethods) produce. Keep in sync with
+    # feature_cache.PRECOMPUTED_ARRAY_KEYS (a test asserts they match).
+    _PRECOMPUTED_ATTRS = ("alpha_matrix", "occupancy", "net_signal", "sig_acc", "time_feats",
+                          "open_gate_blocked", "streak_matrix", "ref_move", "cross_asset_matrix",
+                          "_today_sofar", "_prev_day", "_prev2_day", "_week_avg")
+
+    def export_precomputed(self) -> dict:
+        """Return {name: ndarray} for the cache (the expensive precompute output, read-only)."""
+        return {a: getattr(self, a) for a in self._PRECOMPUTED_ATTRS}
+
+    def _load_precomputed(self, d: dict) -> None:
+        """Restore the precomputed arrays from a cache dict instead of recomputing them."""
+        missing = [a for a in self._PRECOMPUTED_ATTRS if a not in d]
+        if missing:
+            raise KeyError(f"feature cache missing arrays {missing}; rebuild instead of loading")
+        for a in self._PRECOMPUTED_ATTRS:
+            setattr(self, a, d[a])
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -377,6 +421,7 @@ class TradingEnv:
                 prev2=float(self._prev2_day[i]), today_sofar=float(self._today_sofar[i]),
                 typical_range=self._typical_range, days_elapsed=self._days_elapsed),
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
+            "ohlc": self.ohlc_matrix[i],   # v1.6.0: raw O/H/L/C per timeframe (zeros if no aux)
         })
 
     def _portfolio_block(self):

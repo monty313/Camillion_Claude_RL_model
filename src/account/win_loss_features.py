@@ -41,7 +41,12 @@ def daily_features(acc: AccountState, cfg=None) -> np.ndarray:
     target_progress = (daily_gain_frac / target_frac) if target_frac > 0 else 0.0
     dd_limit = _pct(cfg, "daily_drawdown_pct",
                     getattr(cfg, "max_daily_drawdown_pct", 5.0))
-    daily_loss_frac = max(0.0, -pnl_frac)
+    # The daily-DD gauge MUST use LIVE equity (open losses included) so it MATCHES the actual breach in
+    # ftmo_rules.daily_drawdown_breached (bal0 - equity). Using closed-only PnL (-pnl_frac) made this read
+    # SAFER than reality while a losing trade was open -> the bot could not see the daily wall coming (the
+    # #1 cause of FTMO failure). Same base (day_start_balance) as the breach, so the fractions agree.
+    daily_live_loss = max(0.0, bal0 - acc.equity)
+    daily_loss_frac = (daily_live_loss / bal0) if bal0 else 0.0
     dd_used = (daily_loss_frac / dd_limit) if dd_limit > 0 else 0.0
     risk_remaining = 1.0 - dd_used
     trades_pct = acc.daily_trades / max(1, V.MAX_DAILY_TRADES)

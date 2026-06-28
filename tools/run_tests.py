@@ -3,10 +3,25 @@
 # ONLY the stdlib (pytest can't be installed in some sandboxes/Colab-free).
 # HOW import each tests/test_*.py and call every test_* function.
 # Colab/users with pytest can instead just run:  pytest -q
-import glob, importlib.util, os, sys, traceback
+import glob, importlib.util, inspect, os, sys, traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+
+
+def _needs_args(fn) -> bool:
+    """This runner calls fn() with NO arguments, so a pytest-parametrized / arg-requiring test_*
+    (e.g. test_audit(tid,name,fn,sev) in test_full_audit.py when pytest is installed) is not
+    runnable here — skip it rather than bare-call it into a spurious TypeError 'failure'."""
+    if getattr(fn, "pytestmark", None):                 # @pytest.mark.parametrize / fixtures
+        return True
+    try:
+        for p in inspect.signature(fn).parameters.values():
+            if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+                return True
+    except (ValueError, TypeError):
+        pass
+    return False
 
 def main() -> int:
     files = sorted(glob.glob(os.path.join(ROOT, "tests", "test_*.py")))
@@ -29,6 +44,9 @@ def main() -> int:
                 continue
             fn = getattr(mod, fn_name)
             if not callable(fn):
+                continue
+            if _needs_args(fn):                         # pytest-only (parametrized) — not runnable bare
+                print(f"  SKIP  {name}.{fn_name} (pytest-only / needs args)")
                 continue
             total += 1
             try:

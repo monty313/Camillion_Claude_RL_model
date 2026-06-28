@@ -21,6 +21,9 @@ dependencies = [
 #   apt-get install -y ta-lib  (or the prebuilt wheel) then  pip install TA-Lib
 indicators = ["TA-Lib>=0.4.28", "pyarrow>=14.0"]
 train = ["gymnasium>=0.29", "stable-baselines3>=2.3", "torch>=2.2"]
+# JAX/TPU trainer (jax_tpu/). GPU: jax[cuda12]; TPU: jax[tpu]. See jax_tpu/PLAN.md.
+jax-gpu = ["jax[cuda12]>=0.4.30", "flax>=0.8", "optax>=0.2", "onnxscript>=0.1", "onnxruntime>=1.17"]
+jax-tpu = ["jax[tpu]>=0.4.30", "flax>=0.8", "optax>=0.2", "onnxscript>=0.1", "onnxruntime>=1.17"]
 # Phase-2 (UI + dashboards)
 ui = ["streamlit>=1.33", "plotly>=5.20"]
 # Live data
@@ -32,4 +35,6 @@ packages = ["config", "src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests"]
+# jax_tpu/ holds the JAX/TPU trainer's parity tests; they self-skip when jax is absent
+# (so `pytest -q` stays green on a CPU-only box) — see jax_tpu/tests/conftest.py.
+testpaths = ["tests", "jax_tpu/tests"]
