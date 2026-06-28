@@ -364,6 +364,33 @@ class PortfolioEnv:
             self.t = min(t + 1, self.T - 1)
             bar_advanced = True
         self._mark()
+        # =================================================================================================
+        # REWARD MODEL — the COMPLETE reward logic for the portfolio bot (keep this comment in sync with the
+        # code; full write-up in docs/UPDATE_LOG.md). Everything is a fraction of the INITIAL balance.
+        #
+        #   (1) BASE (every step):  (equity_now - equity_before)/starting_balance * reward_scale
+        #       The shared pot's per-step equity change. Transaction costs are EMBEDDED (entry/exit costs
+        #       reduce equity), so this already rewards real, fee-net money. This is ~99% of the signal.
+        #
+        #   (2) ALPHA-SHAPING (this step; `alpha_shaping`, computed above; ON by default, cfg.alpha_reward_enabled).
+        #       DELIBERATE departure from "reward = equity only" (still true for single-symbol TradingEnv).
+        #       Every bonus is CAPPED at the trade's own PnL and only paid on a profitable close with the DAY net up:
+        #         - AGAINST  (at OPEN):  open vs >=50% of FIRING alphas        -> - alpha_against (0.001)
+        #         - USE      (at CLOSE): agreed w/ >=50% & closed in profit     -> + alpha_agree   (0.001)
+        #         - BEAT     (at CLOSE): out-earned following the consensus      -> + alpha_beat    (0.002 = 2x, so a
+        #                                                                            divergent WIN isn't cancelled by AGAINST)
+        #
+        #   (3) ON BAR-ADVANCE (every len(symbols) steps, below):
+        #         - CONSISTENCY: 4 banked +2.5% days IN A ROW            -> + pass_bonus (1.0)   [rarely fires until
+        #                        the streak resets each episode; needs longer windows — Batch A, staged]
+        #         - BREACH: 4% trailing / 5% daily / 10% total (LIVE pot) -> - breach_penalty (1.0) + episode ENDS
+        #         - +10% PASS: eval -> ENDS + pass_bonus; training(continue_after_pass) -> keep going (streak rewards it)
+        #
+        #   RAILS (behaviour, NOT reward): two-phase banks +2.5% NET-of-fees -> 1% leash (phase2_continue) or day-lock.
+        #
+        #   NOT IN THE REWARD YET (staged in TRAINING_TUNING_TODO.md): a DD-proximity penalty -> today drawdown is
+        #   "free" until the breach cliff; and gamma=0.997 (~1.4h horizon) means walls are only avoided REACTIVELY.
+        # =================================================================================================
         reward = float((self.acc.equity - eq_before) / self.cfg.starting_balance) * self.reward_scale
         reward += alpha_shaping            # alpha-shaping (0 unless enabled AND an alpha consensus event fired)
 
