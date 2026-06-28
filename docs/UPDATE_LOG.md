@@ -3,6 +3,217 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-28] Crash-safe checkpointing: save on interrupt + every checkpoint (resume never loses much)
+- **I (Issue):** Operator: make sure that if training is INTERRUPTED it saves the progress, and that progress
+  is saved when a checkpoint is reached. A long unbounded run to 40-won-days must survive a Colab disconnect
+  or a Ctrl-C without losing meaningful work.
+- **R (Rule):** Operator 2026-06-28. Progress = the policy params + obs-norm + the run ledger; saving must be
+  frequent + on interrupt; `resume=True` continues from the latest.
+- **A (Application):** `jax_tpu/jax_trainer.train` now saves progress (a) at EVERY eval (existing — full
+  checkpoint + `jax_progress.jsonl` ledger + rolling `best_policy/`), (b) **every `CHECKPOINT_EVERY=25`
+  updates** (a lightweight params/norm checkpoint between evals, so a hard kill loses at most ~25 updates),
+  and (c) **on INTERRUPT** — a `try/except KeyboardInterrupt` saves on Ctrl-C, and a best-effort `SIGTERM`
+  handler (Colab disconnect) sets a flag that the loop catches to save + exit gracefully (the previous
+  handler is restored in `finally`). The interrupt save also writes a named `interrupted/` policy. `resume=True`
+  reads `latest_step.txt` and continues. TESTED: an interrupt mid-run wrote the checkpoint + `interrupted/` +
+  `latest_step.txt`, periodic checkpoints appeared between evals, and a resumed run continued from the saved
+  update. Full repo suite green.
+- **C (Conclusion):** A disconnect or Ctrl-C now costs at most a handful of updates, not the whole run — the
+  unbounded march to 40 winning days in a row is fully crash-safe and resumable from Drive.
+
+## [2026-06-28] Fail = START OVER (not trade dead) + proof the bot learns and the report tracks it
+- **I (Issue):** Operator concern (suspected from the CPU bot): is the bot actually LEARNING and do the
+  reports accurately SHOW it? And: "if it fails one day the bot stops trading for that day, then restarts
+  the following day" — but a single env stepped past a breach was **trading a DEAD/breached account**
+  (equity below the wall, `episode_breached` stuck True, never recovering), which makes a report look frozen.
+- **R (Rule):** Operator 2026-06-28. A failure must = START OVER and keep going (fresh attempt), and the
+  live report must move as the policy learns. Env step-parity unchanged (these are rollout/eval/report changes).
+- **A (Application):** Probed the env: observations NEVER stop (one per step), but a continuously-stepped
+  single env trades dead after a breach. Fixes: (1) **training rollout** now restarts a FRESH account at the
+  current bar on a breach (continue the same timeline — the bot never trains dead) and draws a new random
+  window only on a window-end; (2) the **won-day-streak eval** now models "stop trading for the day, restart
+  the following day" — on a breach it goes FLAT (forced CLOSE) until the next midnight, then resets fresh
+  (which also stops a partial breach-day being mis-counted as a winning day); (3) **CPU `daily_report`** gets
+  a new `PortfolioEnv.restart_account()` and calls it on a breach so each day after a fail is a clean attempt
+  (no dead-walk). PROOF OF LEARNING: a portfolio training run on a learnable uptrend was logged eval-by-eval —
+  `mean_reward -0.0012 -> +0.0003`, `P(pass) 0% -> 100%`, `won-day-streak 0 -> 4`, `BUY-action 11% -> 63%`,
+  `beats_alphas False -> True` — every metric moved and was captured live (incl. the noisy dips, so the
+  operator can SEE struggle vs progress). 14 daily_report/portfolio/parity tests green; full suite green.
+- **C (Conclusion):** A failed day now triggers a clean restart instead of a dead account, in training, the
+  eval, and the report — so the bot keeps learning after a fail and the dashboard honestly tracks it
+  (reward, P(pass), winning-day streak, BUY-mix, beat-the-alphas), demonstrated to actually move as it learns.
+
+## [2026-06-28] JAX/TPU: stop at 40 WINNING DAYS in a row + reward/horizon tune + beat/all-symbol diagnostics
+- **I (Issue):** Operator clarified the goal: keep training **until the bot strings 40 WINNING DAYS in a
+  row on held-out data** — a winning day ends >= +2.5%, and a BREACH (or a losing day) **resets the streak
+  (start over)**, training never stops short of 40. Plus a 6-point upgrade: survive breaches in the
+  walk-forward, measure more than one slice, add a drawdown-proximity penalty, drop the breach cliff,
+  lengthen the planning horizon, and instrument the action mix; and confirm it trades ALL symbols, not one.
+- **R (Rule):** Operator 2026-06-28. Parity stays sacred: every reward change is mirrored in BOTH the CPU
+  PortfolioEnv and the JAX env and re-verified bar-for-bar; FTMO numbers (2.5%/4%/5%/10%/+10%) unchanged.
+- **A (Application):** (STOP) `jax_eval.evaluate_won_day_streak` runs continuous held-out walk(s) that
+  AUTO-RESET the account on a breach (start over) and keep walking, tracking the longest run of winning days
+  (`daily_pass_streak`); the trainer now STOPS at `TARGET_WON_DAY_STREAK=40` (challenge pass-rate kept as a
+  HEALTH metric), and training is now **UNBOUNDED** (`total_updates=None`) so only 40-in-a-row stops it
+  (entropy anneal decoupled via `ANNEAL_UPDATES`). (REWARD, both envs) a **drawdown-proximity** penalty
+  (`dd_proximity_coef=0.02`, dense `coef*(dd/wall)^2` so the bot plans AWAY from the wall) + a smaller
+  **breach cliff** (`breach_penalty 1.0 -> 0.2`; the streak reset is the real deterrent now); `pass_bonus`
+  kept at 1.0. (HORIZON) `gamma 0.997 -> 0.9995` (~a full trading day) so it plans toward the midnight
+  target. (DIAGNOSTICS) the dashboard now shows the **winning-days-in-a-row** bar, the existing
+  HIDING/OVER-TRADING/LEARNING diagnosis, **VS ALPHAS** (bot vs a follow-the-alpha-consensus baseline on the
+  same windows — is it BEATING them?), the **ACTION MIX** (HOLD/BUY/SELL/CLOSE — kills the HOLD-collapse
+  question), and **per-symbol EXPOSURE** with a "⚠ CONCENTRATED" flag (confirms it trades ALL symbols, not
+  one). (CPU) `daily_report` now keeps walking past a breach AND past a +10% pass (only end-of-data/max_days
+  stops it) so the day-by-day report shows every day + the longest won-day run. CPU↔JAX portfolio parity
+  re-verified to max|reward|≈3e-9; 28 CPU portfolio tests + jax_tpu parity + deep checks green.
+- **C (Conclusion):** The bot now trains, unbounded, toward the operator's real bar — **40 winning days in a
+  row** — with a reward that pulls toward the daily target while planning away from the wall, a longer
+  horizon, and a live dashboard that shows whether it's winning, hiding, over-trading, beating the alphas,
+  and trading the whole book. That is the most direct path to — and the clearest read on — a CONSISTENT pass.
+
+## [2026-06-28] docs: `docs/ALPHAS.md` — the complete alpha (strategy) catalogue
+- **I (Issue):** The 16 production alphas (+3 example strategies) were only documented
+  inside each source file's header; there was no single reference explaining what every
+  alpha is and the exact rule it fires on. Hard for the operator (non-programmer) to see
+  the whole signal library at a glance.
+- **R (Rule):** Operator 2026-06-28: "create a .md file that has all of the alphas in it
+  and give a detailed description of how they work." Must stay faithful to the code
+  (CLAUDE.md: code is source of truth; keep the alpha-vs-action-HOLD and per-slot
+  contract intact in the explanation).
+- **A (Application):** New **`docs/ALPHAS.md`**, built by reading every file in
+  `src/strategies/` (cross-checked against `config/constants.py` and `src/indicators/`).
+  It documents: the `BaseStrategy` +1/-1/0 contract and the alpha≠action-HOLD≠empty-slot
+  distinction; the 64-fixed-slot registry and why it never resizes; the canonical slot
+  map (0–15); how alpha outputs reach the policy (`collect_alphas` + `occupancy_mask` +
+  the 4 summary %); the full indicator vocabulary (5 TFs × 44 columns, column naming,
+  `bbN_devX_middle == SMA(N)`, the SMA fan, `sma4_sh4_high/low`); and a per-alpha
+  writeup for all 6 families (Gravity, Regime Pulse, CCI Surge, SMA Stack, SMA Reversion
+  Rally, ORB) with exact BUY/SELL/INACTIVE conditions + thresholds, the 3 examples, and
+  a "how to add a new alpha" section. Docs-only; no code changed.
+- **C (Conclusion):** The operator can now see and reason about the entire signal library
+  in one place — which alphas exist, what each looks at, and exactly when it fires — so
+  tuning, adding, or auditing alphas (toward the ~1000-alpha plan) is faster and less
+  error-prone, without touching the locked observation contract.
+
+## [2026-06-28] JAX/TPU trainer (`jax_tpu/`): on-device PPO, step-parity to the CPU env, train-to-40-in-a-row
+- **I (Issue):** CPU training can't reach the SCALE (thousands of parallel lifetimes) or the
+  CONSISTENCY bar we want. Operator 2026-06-28: build a TPU version of the training that (a) uses
+  ~70–80% of the Colab TPU, (b) reads the market data already in Colab/Drive, and (c) keeps training
+  until the bot passes **40 challenges in a row**, saving progress + every policy's details to Drive.
+- **R (Rule):** Operator 2026-06-28 + `docs/JAX_GPU_TPU_TRAINER_BLUEPRINT.md` invariants: it is ONE
+  bot written a second way — the TPU env MUST match the CPU env bar-for-bar (same 479 obs `v1.5.0`,
+  same reward, same FTMO numbers, same `env_fingerprint`), proven by a step-parity test. CLAUDE.md
+  rules hold (obs shape sacred, FTMO numbers fixed, no TA-Lib/pandas in the hot loop).
+- **A (Application):** New self-contained folder **`jax_tpu/`** (everything JAX in one place):
+  `jax_ftmo.py` (branchless breach + two-phase banking), `jax_obs_blocks.py` (the 40 dynamic obs
+  floats as a 1:1 jnp port of `win_loss_features`), `jax_static_features.py` (builds the shared
+  `(T,479)` STATIC obs tensor + per-bar scalars straight from a precomputed CPU `TradingEnv` — so 439
+  of 479 obs floats are byte-identical and the hot loop indexes a shared table, the "build once +
+  share" scaling plan), `jax_env.py` (an `EnvState` pytree + branchless `step_env` reproducing
+  `trading_env.step` incl. day rollover + NY-index bonus + breach/pass + two-phase banking),
+  `jax_ppo.py` (Flax 3×256 tanh + GAE + clipped PPO + a `VecNormalize`-style obs normalizer, all
+  hyperparams mirroring `trainer.py`), `jax_trainer.py` (pmap rollout+update at scale, domain-randomized
+  risk, **stop at 40 consecutive held-out challenge passes**, checkpoints + a `jax_progress.jsonl`
+  ledger + `best_policy/` to Drive every eval, resumable), `jax_eval.py` (held-out walk-forward
+  pass-rate = P(pass) + the consecutive-pass streak), `jax_checkpoint.py` (Drive persistence),
+  `jax_indicators.py` (OPTIONAL on-device indicators in jnp, parity-tested vs `src/indicators/*`),
+  `export_to_pytorch.py` (JAX→PyTorch 3×256→**ONNX** for MT5, bit-verified), the **step-parity GATE
+  test** (`tests/test_jax_parity.py` + `run_parity.py`), and the Colab **`notebooks/Camillion_JAX_TPU_
+  Train.ipynb`** (mirrors `run_training.py`'s data path + a TPU-utilization probe for the 70–80%
+  target). `pyproject.toml` gains `jax-gpu`/`jax-tpu` extras and adds `jax_tpu/tests` to `testpaths`
+  (self-skips when jax is absent). CPU `src/` is UNCHANGED (it's the reference). Verified locally with
+  `jax[cpu]`: step-parity CPU↔JAX max|obs|≈1.2e-7 / max|reward|≈1e-20; indicator parity green; full
+  pipeline (pmap PPO → held-out eval → Drive checkpoint+resume → ONNX) runs; 9/9 JAX tests + 22/22
+  sampled CPU tests green.
+- **C (Conclusion):** The same FTMO bot can now train at TPU scale — thousands of lifetimes at once —
+  and only stops once it passes **40 challenges in a row on unseen data**, with every policy + its
+  details saved to Drive. Matching the CPU env bar-for-bar means those TPU policies are ranked head-to-
+  head with CPU policies by pass-rate, so the TPU buys consistency, not a different bot.
+
+## [2026-06-28] JAX/TPU phase 2: shared-pot PortfolioEnv parity + LIVE FTMO-consistency progress
+- **I (Issue):** Two operator follow-ups on the TPU trainer: (1) "I need to SEE progress relative to
+  passing the FTMO challenge consistently AS training is going" — not just at the end; and (2) finish
+  the whole project — the real product is the PORTFOLIO bot (one shared pot, the whole book), not the
+  single-symbol foundation.
+- **R (Rule):** Operator 2026-06-28. Parity is still the prime directive: the portfolio JAX env MUST
+  match the CPU `src/env/portfolio_env.py` bar-for-bar (same 479 obs, same alpha-shaping/day-scoring/
+  two-phase reward, same fingerprint). Live progress must be FTMO-consistency-focused (P(pass) + the
+  40-in-a-row streak), not just loss curves.
+- **A (Application):** (1) `jax_tpu/jax_progress.py` — a per-eval readout (`P(pass) @ 2.5%/4%` with
+  trend arrows, held-out return, breach rate, and a `N/40 in a row` consistency bar) + a Colab
+  `LiveDashboard` that redraws P(pass)/streak/breach curves every eval; wired into `jax_trainer.train`
+  (a light heartbeat between evals, the rich readout + an `on_eval` callback at each eval). (2)
+  `jax_tpu/jax_portfolio_env.py` — the shared-pot, symbol-cycling env as branchless jnp: per-symbol
+  decisions cycling symbol-by-symbol over one pot, the alpha-shaping reward (USE/AGAINST/BEAT the
+  firing-alpha consensus, PnL-capped), midnight day-scoring (won/failed day + the 4-in-a-row bonus),
+  pot-level breach/+10% pass, and two-phase banking that flattens the WHOLE book (flatten unrolled over
+  the static symbol count for exact tally/peak ordering parity). `jax_static_features.build_portfolio_static`
+  stacks per-symbol static data + raw alpha tables; `jax_obs_blocks.portfolio_features_agg` is the
+  pot-aggregate portfolio block. The trainer + eval were made env-agnostic (one `(init_state, reset_obs,
+  step)` interface) so `train_portfolio()` reuses the whole pmap/40-in-a-row/Drive-checkpoint machinery.
+  New gate `tests/test_jax_portfolio_parity.py` steps the CPU and JAX portfolio envs in lockstep across
+  the symbol cycle and asserts obs+reward match — verified incl. FORCED two-phase banking, won days +
+  4-in-a-row, and breach (max|obs|≈2e-7, max|reward|≈1e-10). Notebook gains a live-dashboard training
+  cell + a "core goal" portfolio-training cell. 13/13 JAX tests green; CPU `src/` still UNCHANGED.
+- **C (Conclusion):** The operator now WATCHES the bot get more consistent in real time (P(pass) and the
+  40-in-a-row streak climbing), and the TPU trains the ACTUAL product — one bot balancing the whole FTMO
+  book from one pot — proven identical to the CPU portfolio bot, so its policies rank head-to-head by
+  pass-rate on the march to a consistent portfolio pass.
+
+## [2026-06-28] Reward rebalance (seek the target, don't hide) + the live dashboard as a DIAGNOSIS
+- **I (Issue):** Honest read of the design: the breach penalty (1.0) so dominates the tiny per-day rewards
+  (0.025) that the easiest local optimum is to BARELY TRADE — a bot that "hides" (never breaches, but never
+  makes +10% either). And the live readout was a scoreboard, not a diagnosis of WHICH failure mode is happening.
+- **R (Rule):** Operator 2026-06-28: "reward it for SEEKING the target, not just avoiding breach — or you'll
+  get a bot that hides," and "read the dashboard as a DIAGNOSIS (breach↑ = over-trading; breach≈0 + return≈0
+  = hiding; P(pass) rising with controlled breach = learning)." Parity is still sacred: any reward change is
+  mirrored in BOTH the CPU PortfolioEnv and the JAX env and re-verified bar-for-bar.
+- **A (Application):** Two new reward terms in PortfolioEnv ONLY (single-symbol TradingEnv stays equity-only
+  by design), config-gated + ON by default (`config/variables.py` + `FTMOConfig`): (1) **TARGET-SEEK** — a
+  DENSE reward for NEW progress toward the +2.5%/day target (high-water-mark so it can't be farmed by
+  churning), `target_seek_weight=0.10`, so "move toward the day's target" becomes the gradient and the bot
+  actively SEEKS profit; (2) **ANTI-HIDE** — a penalty for a day the bot was FLAT the whole day (exposure-based,
+  NOT close-count, so opening + holding across midnight is correctly NOT "hiding"), `idle_day_penalty=0.02`,
+  so sitting out is no longer free. Implemented identically in `src/env/portfolio_env.py` and
+  `jax_tpu/jax_portfolio_env.py` (new state: `day_progress_hwm`, `day_had_exposure`); CPU↔JAX portfolio parity
+  re-verified to max|reward|≈2e-19. New `tests/test_portfolio_seek_idle.py` (seek rewards partial progress even
+  on a failed day; idle penalises a flat day; a traded day avoids it); all 28 CPU portfolio tests green.
+  DASHBOARD-AS-DIAGNOSIS: `jax_progress.diagnose()` classifies each eval as OVER-TRADING / HIDING / LEARNING /
+  STRONG / DEVELOPING with actionable advice (which knob to turn), fed by a new `eval_mean_trades` activity
+  metric (`jax_eval`), shown as a "DIAGNOSIS:" line in the readout + the LiveDashboard title.
+- **C (Conclusion):** The reward now pulls the bot toward MAKING the target instead of merely surviving — the
+  most likely "learns something useless (hides)" failure mode is directly countered — and the operator can read,
+  live, whether it's hiding (raise seek/idle), over-trading (cut size / raise breach cost), or actually learning
+  (P(pass) rising with controlled breach), and which knob to turn. This is the lever most likely to move the bot
+  toward a consistent FTMO pass.
+
+## [2026-06-28] JAX/TPU deep verification: stress-test driver + adversarial review found & fixed 3 bugs
+- **I (Issue):** Before trusting the TPU trainer, do a DEEP test that everything works as intended (the
+  float32/TPU path, real multi-device pmap, training stability, the 40-in-a-row eval gate, export).
+- **R (Rule):** Operator 2026-06-28 ("deep test to make sure everything works"). Verify, don't assume.
+- **A (Application):** Added `jax_tpu/tests/deep_test.py` — 14 checks, each in a clean subprocess with the
+  right flags: float32 (TPU-path) parity single+portfolio, exact x64 parity over 6 seeds + 3 symbol
+  combos, constant-action edge cases, vmap==scalar, determinism, finiteness (no NaN), **real 8-device
+  pmap** (params + obs-norm synced across cores), training-LEARNS on a learnable task, resume continuity,
+  eval/streak logic, ONNX-on-real-rollout, and fingerprint/obs-contract. Ran an adversarial CPU-vs-JAX
+  bug-hunt (6 reviewers). Triaged: most "findings" were non-issues (per-minibatch advantage norm MATCHES
+  SB3; mask-ones is correct under auto-reset; portfolio LOWs self-concluded "consistent"). THREE were real
+  and fixed: (1) **eval could count a window as PASSED even if it breached after touching +10%** — would
+  inflate the 40-in-a-row gate; fixed so a window passes only if it reached +10% AND never breached, and
+  eval treats the challenge as ending at +10% (`jax_eval.py`). (2) **the obs-normalizer was not synced
+  across TPU cores** (grads were pmean'd, norm wasn't) → on a real v2-8 each core would normalize
+  differently and destabilize learning; fixed by pmean-ing the norm's batch stats (`jax_ppo.norm_update`
+  axis_name), with a var>=0 clamp to avoid a sqrt-NaN on constant obs features. (3) **the single-symbol
+  env didn't implement `open_gate`** (default off, but a silent divergence if enabled); implemented it
+  (gate mask in the static tensor + `EnvParams.open_gate`) + a parity test. Plus hardening: an export
+  shape-assertion and eval window-bounds clamping. Re-verified: 14/14 jax_tpu parity tests + 14/14 deep
+  checks green. CPU `src/` still UNCHANGED.
+- **C (Conclusion):** The deep test (and an adversarial review) turned up three real issues — including one
+  that would have made the 40-passes-in-a-row consistency gate read falsely safe, and one that would have
+  destabilized training on the actual 8-core TPU — all fixed and regression-tested. The TPU trainer is now
+  verified to behave as intended end-to-end, so the march to a consistent portfolio pass rests on a
+  trustworthy foundation.
+
 ## [2026-06-26] Portfolio cockpit: market heatmap + policy registry JARVIS organizes by consistency
 - **I (Issue):** The bot is a PORTFOLIO trader (one pot, the whole FTMO universe at once), the
   cockpit needs a market heatmap as its own tab, we must be able to easily add a policy, and JARVIS
@@ -800,3 +1011,39 @@ report covers all days, model save/load works).
   a flat day → −penalty; the 4-in-a-row test still passes on the end-of-day logic. Suite 191/191; audit ✅ GO.
 - **C:** the consistency signal now means what the operator intends — the bot is rewarded for FINISHING days at
   ≥ +2.5% and penalised for not, with give-backs correctly counted as fails.
+
+## [2026-06-28] JARVIS cockpit reskinned to the dense "Stark Industries" HUD + added to repo root
+- **I:** Operator: "update jarvis to look like this" (the classic Stark/JARVIS arc-reactor HUD reference) and
+  "you can even use playhtml to make it more interactive." The `JARVIS Cockpit.dc.html` cockpit lived only in
+  the DC editor; `docs/JARVIS_LIVE_WIRING.md` asks for it (+ `support.js`) at the repo root.
+- **R:** UI artifact only — does NOT touch obs(479)/FTMO numbers/`env.step()`. The whole `Component` logic
+  (state, methods, `renderVals` keys, the `/state` data contract the bridge wires to) is byte-for-byte
+  behaviour-identical; only the presentation layer (CSS + decorative template markup + glyphs) changed.
+- **A:** Wrote `JARVIS Cockpit.dc.html` + the matching `support.js` (DC runtime) to the repo root. Restyle:
+  (1) shared "instrument-rose" ambient layer on all 3 views — dense radial tick-rings (conic-gradient) + a
+  rotating radar sweep + concentric reticles, sitting behind every panel; (2) the central JARVIS core and the
+  cockpit arc-reactor each gained Stark tick-rose rings; (3) faint edge telemetry rails (segment meters +
+  oscilloscope strips) + a "CAMILLION INDUSTRIES · ARC-CLASS QUANT REACTOR" watermark; (4) tighter cyan/gold
+  palette + denser blueprint grid; (5) all mojibake glyphs replaced with a clean monochrome geometric icon set
+  (no colour-emoji — truer to the Stark look and renders everywhere); (6) command top-bar tightened so all 8
+  controls fit. playhtml: two draggable, position-persisting "pin" tabs docked in the screen margins, added as
+  body-level siblings of `<x-dc>` so the React reconciler never fights them (offline-safe — they degrade to
+  static if unpkg is unreachable).
+- **Verified:** embedded `Component` JS passes `node --check`; every `{{binding}}` resolves to a `renderVals`
+  key (no "never resolved" warnings); zero mojibake; headless-Chromium render of all three views
+  (command / cockpit / evolve) — no `pageerror`, all panels present, glyphs render, controls reachable.
+- **C:** JARVIS now reads as the dense Stark arc-reactor HUD the operator asked for, the bot's live-wiring
+  contract is untouched, and the cockpit + runtime are in the repo root ready for `uvicorn jarvis_bridge:app`.
+
+### [2026-06-28] follow-up: fixed SETUP "GOT IT" not closing + full interaction proof
+- **Bug found + fixed:** the SETUP modal's backdrop and its **GOT IT** button BOTH called `toggleInstr`; a
+  click on GOT IT bubbled to the backdrop → `toggleInstr` ran twice (open→close→open) → the modal stayed
+  open and its z-82 backdrop then swallowed every other click. Fix: a dedicated idempotent
+  `closeInstr=()=>setState({instrOpen:false})` on the backdrop **and** GOT IT (double-call still nets closed);
+  the top-bar SETUP button keeps `toggleInstr` to open. (Pre-existing bug, inherited from the source.)
+- **Verified working (Playwright click-through, 29/29, 0 pageerrors):** all 3 nav paths + back; RUN DIAGNOSTIC
+  IRAC cycle; module-card inspect; HELP / CLEAR / BRIEFING / DEBRIEF / SPEAK feed actions; mic + voice toggles;
+  SETUP modal (open + GOT IT + backdrop close); ElevenLabs modal (open + cancel); daily-loss & max-DD sliders
+  update their labels; MODE FTMO↔FREE toggle (resets to 5.0% on →FTMO); TRAILING + CCI gates; chat send
+  (echo + canned reply); DREAM/REPLAY; EXPORT BRIEF downloads an .html; playhtml pins drag. (Note: assert via
+  DOM `textContent`, not Playwright `inner_text`, which under-reports text inside the feed's scroll container.)

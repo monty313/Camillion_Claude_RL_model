@@ -131,13 +131,17 @@ class PortfolioEnv:
     n_actions = C.N_ACTIONS
 
     def __init__(self, symbol_data: dict | None = None, registry_factory=None, *, cfg=None, warmup: int = 200,
-                 breach_penalty: float = 1.0, reward_scale: float = 1.0, pass_bonus: float | None = None,
+                 breach_penalty: float | None = None, reward_scale: float = 1.0, pass_bonus: float | None = None,
                  window: int | None = None, random_window: bool = False, seed: int | None = None,
                  subs: dict | None = None, continue_after_pass: bool = False):
         self.cfg = cfg or load_active_config()
-        self.breach_penalty = float(breach_penalty)
+        # breach cliff + pass bonus now default from the config (breach 0.2, pass 1.0); explicit args override.
+        self.breach_penalty = float(breach_penalty if breach_penalty is not None
+                                    else getattr(self.cfg, "breach_penalty", 1.0))
         self.reward_scale = float(reward_scale)
-        self.pass_bonus = float(self.breach_penalty if pass_bonus is None else pass_bonus)
+        self.pass_bonus = float(pass_bonus if pass_bonus is not None
+                                else getattr(self.cfg, "pass_bonus", self.breach_penalty))
+        self._dd_coef = float(getattr(self.cfg, "dd_proximity_coef", 0.0))   # drawdown-proximity penalty
         # TRAINING keeps going past +10% (continue_after_pass=True) to learn CONSISTENCY (string 4 daily
         # passes in a row, over and over). EVAL / a real challenge ends at +10% (default False).
         self.continue_after_pass = bool(continue_after_pass)
@@ -151,6 +155,11 @@ class PortfolioEnv:
         # per-DAY consistency: a "won day" ENDS >= +2.5% of initial (scored at midnight, after any give-back)
         self._day_pass_reward = float(getattr(self.cfg, "day_pass_reward", 0.0))
         self._day_fail_penalty = float(getattr(self.cfg, "day_fail_penalty", 0.0))
+        # SEEK-THE-TARGET vs HIDE rebalance (operator 2026-06-28): a dense reward for NEW progress toward
+        # the +2.5%/day target (high-water-mark) so the bot actively SEEKS profit, + a penalty for a day
+        # with ZERO trades so "hiding" isn't free. Both 0.0 = pre-rebalance reward. (See config/variables.py.)
+        self._seek_w = float(getattr(self.cfg, "target_seek_weight", 0.0))
+        self._idle_pen = float(getattr(self.cfg, "idle_day_penalty", 0.0))
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -205,6 +214,8 @@ class PortfolioEnv:
         self._cur_date = self._dates[self.t]
         self._days_elapsed = 0
         self._reset_phase2()                                   # per-day two-phase state on the shared pot
+        self._day_progress_hwm = 0.0                           # high-water mark of progress toward +2.5% today (seek reward)
+        self._day_had_exposure = False                         # did the bot hold ANY position today? (anti-hide)
         self._daily_pass_streak = 0                            # consecutive WON days (ended >= +2.5%) -> consistency
         self._entry_agreed = {}                                # per-open: did the entry agree with >=50% firing alphas?
         self._entry_alpha_dir = {}                             # per-open: the alpha consensus direction at entry
@@ -228,6 +239,23 @@ class PortfolioEnv:
         if d < 0:
             return sells / nf, buys / nf, net_dir
         return 0.0, 0.0, net_dir
+
+    def restart_account(self) -> None:
+        """START OVER: reset the pot + positions to a FRESH challenge attempt, KEEPING the current bar/cursor.
+        Used after a breach so the bot doesn't trade a DEAD account -- it restarts and keeps going (operator
+        2026-06-28: 'if it fails one day, restart the following day'). The day-by-day report calls this on a
+        breach so each attempt is a clean slate; training's rollout does the equivalent on-device."""
+        self.acc = AccountState(starting_balance=self.cfg.starting_balance)
+        self.th = TradeHistory()
+        self.position = {s: 0 for s in self.symbols}
+        self.entry = {s: float(self.subs[s].close[self.t]) for s in self.symbols}
+        self._reset_phase2()
+        self._day_progress_hwm = 0.0
+        self._day_had_exposure = False
+        self._daily_pass_streak = 0
+        self._entry_agreed = {}
+        self._entry_alpha_dir = {}
+        self._mark()
 
     def _reset_phase2(self) -> None:
         """Reset the per-DAY two-phase state on the SHARED pot (reset + each midnight)."""
@@ -366,6 +394,8 @@ class PortfolioEnv:
             self.t = min(t + 1, self.T - 1)
             bar_advanced = True
         self._mark()
+        if any(self.position[s] != 0 for s in self.symbols):   # anti-hide: was the bot exposed today?
+            self._day_had_exposure = True
         # =================================================================================================
         # REWARD MODEL — the COMPLETE reward logic for the portfolio bot (keep this comment in sync with the
         # code; full write-up in docs/UPDATE_LOG.md). Everything is a fraction of the INITIAL balance.
@@ -382,21 +412,47 @@ class PortfolioEnv:
         #         - BEAT     (at CLOSE): out-earned following the consensus      -> + alpha_beat    (0.002 = 2x, so a
         #                                                                            divergent WIN isn't cancelled by AGAINST)
         #
+        #   (2b) SEEK-THE-TARGET (this step; ON by default, cfg.target_seek_weight): a DENSE reward for NEW
+        #        progress toward today's +2.5% target (high-water-mark, can't be farmed by churning). Makes
+        #        the gradient point AT the target so the bot SEEKS profit instead of "hiding" to dodge the
+        #        breach cliff. Total <= seek_weight (0.10) per won day.
+        #
+        #   (2c) DRAWDOWN-PROXIMITY (this step; ON by default, cfg.dd_proximity_coef): a DENSE quadratic penalty
+        #        -coef*(dd/wall)^2 as equity falls from its peak toward the 4% trailing wall -> nearing the wall
+        #        is no longer "free" until the cliff; the gradient says "ease off as you approach" (coef 0.02).
+        #
         #   (3) ON BAR-ADVANCE (every len(symbols) steps, below):
         #         - PER-DAY at midnight: a "WON day" = the day ENDS >= +2.5% of initial (AFTER any give-back).
         #                        won  -> + day_pass_reward (0.025)   failed -> - day_fail_penalty (0.025)
+        #         - ANTI-HIDE: a day FLAT the whole day -> - idle_day_penalty (0.02)  (hiding is no longer free)
         #         - CONSISTENCY: 4 WON days IN A ROW                     -> + pass_bonus (1.0)   [rarely fires until
         #                        the window is long enough to contain 4 days — Batch A, staged]
-        #         - BREACH: 4% trailing / 5% daily / 10% total (LIVE pot) -> - breach_penalty (1.0) + episode ENDS
+        #         - BREACH: 4% trailing / 5% daily / 10% total (LIVE pot) -> - breach_penalty (0.2) + episode ENDS
         #         - +10% PASS: eval -> ENDS + pass_bonus; training(continue_after_pass) -> keep going (streak rewards it)
         #
         #   RAILS (behaviour, NOT reward): two-phase banks +2.5% NET-of-fees -> 1% leash (phase2_continue) or day-lock.
         #
-        #   NOT IN THE REWARD YET (staged in TRAINING_TUNING_TODO.md): a DD-proximity penalty -> today drawdown is
-        #   "free" until the breach cliff; and gamma=0.997 (~1.4h horizon) means walls are only avoided REACTIVELY.
+        #   HORIZON: gamma=0.9995 (~a full trading day) so the bot plans toward the midnight +2.5% target and the
+        #   wall PROACTIVELY (was 0.997 ~1.4h -> walls were only avoided reactively). DD-proximity is now LIVE (2c).
         # =================================================================================================
         reward = float((self.acc.equity - eq_before) / self.cfg.starting_balance) * self.reward_scale
         reward += alpha_shaping            # alpha-shaping (0 unless enabled AND an alpha consensus event fired)
+        # SEEK-THE-TARGET (dense): reward NEW progress toward today's +2.5% target (high-water-mark so it
+        # can't be farmed by churning). Makes "move toward the day's target" the gradient -> the bot SEEKS
+        # profit instead of hiding. Capped at the target (progress in [0,1]); total <= seek_w per won day.
+        if self._seek_w > 0.0:
+            d0s = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
+            target_amt = self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance
+            day_progress = 0.0 if target_amt <= 0 else min(1.0, max(0.0, (self.acc.equity - d0s) / target_amt))
+            reward += self._seek_w * max(0.0, day_progress - self._day_progress_hwm)
+            self._day_progress_hwm = max(self._day_progress_hwm, day_progress)
+        # DRAWDOWN-PROXIMITY (dense): a GRADUAL penalty that grows as equity nears the trailing wall, so the
+        # bot plans AWAY from the wall instead of only feeling it at the breach cliff. penalty = coef*(dd/wall)^2.
+        if self._dd_coef > 0.0:
+            peak = self.acc.episode_peak_equity or self.acc.starting_balance
+            wall = self.cfg.trailing_drawdown_pct / 100.0
+            dd_frac = max(0.0, (peak - self.acc.equity) / peak) if peak else 0.0
+            reward -= self._dd_coef * (min(dd_frac / wall, 1.0) if wall > 0 else 0.0) ** 2
 
         terminated = False
         truncated = False
@@ -417,8 +473,16 @@ class PortfolioEnv:
                 else:
                     reward -= self._day_fail_penalty           # consistency: penalise a FAILED day
                     self._daily_pass_streak = 0
+                # ANTI-HIDE: a day the bot was FLAT the WHOLE day (never held a position) is penalised, so
+                # "hiding" (staying out to dodge the breach penalty) is no longer free -> it must ENGAGE the
+                # market. (Exposure, not close-count: opening + holding across midnight is NOT hiding.)
+                if self._idle_pen > 0.0 and not self._day_had_exposure:
+                    reward -= self._idle_pen
                 self.acc.reset_day()
                 self._reset_phase2()                           # new day -> clear the day-lock / phase-2
+                self._day_progress_hwm = 0.0                   # new day -> reset the seek high-water mark
+                # re-seed exposure for the NEW day from the carried position (holding across midnight = exposed)
+                self._day_had_exposure = any(self.position[s] != 0 for s in self.symbols)
                 self._cur_date = self._dates[self.t]
                 self._days_elapsed += 1
             rep = BD.detect(self.acc, self.cfg)                # breach on the SHARED pot

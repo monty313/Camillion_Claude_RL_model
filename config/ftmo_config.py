@@ -46,6 +46,17 @@ class FTMOConfig:
     # per-day consistency: a "won day" ENDS >= +2.5% of initial (measured at midnight, after any give-back)
     day_pass_reward: float = 0.025         # reward a won day
     day_fail_penalty: float = 0.025        # penalty for a failed day (ended below +2.5%)
+    # seek-the-target vs hide rebalance (operator 2026-06-28, PortfolioEnv only). target_seek_weight:
+    # dense reward for NEW progress toward +2.5%/day (high-water-mark, <= this per won day); idle_day_penalty:
+    # penalty for a day with ZERO trades. Both 0.0 = pre-rebalance reward. See config/variables.py.
+    target_seek_weight: float = 0.10
+    idle_day_penalty: float = 0.02
+    # drawdown-proximity penalty + smaller breach cliff (operator 2026-06-28; PortfolioEnv). dd_proximity_coef:
+    # per-step penalty = coef*(dd/wall)^2 as equity nears the trailing wall; breach_penalty: the breach cliff
+    # (dropped 1.0->0.2 — the 40-won-day-streak reset is the real deterrent); pass_bonus: +10% + 4-in-a-row bonus.
+    dd_proximity_coef: float = 0.02
+    breach_penalty: float = 0.2
+    pass_bonus: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -79,6 +90,11 @@ def load_ftmo_config() -> FTMOConfig:
         alpha_beat_bonus=getattr(V, "FTMO_ALPHA_BEAT_BONUS", 0.002),
         day_pass_reward=getattr(V, "FTMO_DAY_PASS_REWARD", 0.025),
         day_fail_penalty=getattr(V, "FTMO_DAY_FAIL_PENALTY", 0.025),
+        target_seek_weight=getattr(V, "FTMO_TARGET_SEEK_WEIGHT", 0.10),
+        idle_day_penalty=getattr(V, "FTMO_IDLE_DAY_PENALTY", 0.02),
+        dd_proximity_coef=getattr(V, "FTMO_DD_PROXIMITY_COEF", 0.02),
+        breach_penalty=getattr(V, "FTMO_BREACH_PENALTY", 0.2),
+        pass_bonus=getattr(V, "FTMO_PASS_BONUS", 1.0),
     )
 
 

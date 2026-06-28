@@ -72,6 +72,9 @@ def add_policy(path: str | None = None, **fields) -> dict:
     pid = str(fields.get("id") or fields.get("name") or f"policy-{len(entries) + 1}")
     entry = {k: fields.get(k) for k in _FIELDS}
     entry["id"] = pid
+    if fields.get("model_path"):                  # the trained model's file path -- kept SEPARATE from the
+        entry["path"] = fields["model_path"]      # `path=` arg, which is the registry FILE location, not the model
+
     entry["status"] = fields.get("status") if fields.get("status") in _STATUSES else "candidate"
     if not entry.get("created"):
         try:

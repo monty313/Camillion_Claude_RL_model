@@ -32,7 +32,9 @@ from __future__ import annotations
 # pays a cost (immediate negative reward) while HOLD is exactly 0, so doing nothing is a stable trap.
 # A small bonus (~0.005-0.02; 0.01 here) keeps it trying real trades long enough to learn. Watch the
 # heartbeat's action-mix early in training -- if it's ~HOLD 100%, raise this; if it never settles, lower it.
-PPO_HPARAMS = dict(gamma=0.997, gae_lambda=0.97, n_steps=2048, batch_size=256,
+# gamma=0.9995 -> effective horizon ~1/(1-gamma)=2000 steps ~ a FULL trading day (was 0.997 ~1.4h, which
+# discounted the midnight +2.5% target and the 4% wall to near-zero, so they were only avoided REACTIVELY).
+PPO_HPARAMS = dict(gamma=0.9995, gae_lambda=0.97, n_steps=2048, batch_size=256,
                    ent_coef=0.01, learning_rate=3e-4,
                    policy_kwargs=dict(net_arch=[256, 256, 256]))
 
@@ -88,11 +90,14 @@ def _make_entropy_anneal(start, total_timesteps):
     return _EA()
 
 
-def _make_day_report_callback(report_env, total_timesteps, *, evals=3, max_days=6):
-    """Every ~(1/evals) of training, run the day-by-day FTMO report on a FIXED test stretch with the CURRENT
-    policy and print each day's pass metrics + ACCOUNT BALANCE -- so you watch the SAME test improve as it
-    learns. Best-effort: fully wrapped so it can never break training."""
+def _make_day_report_callback(report_env, report_envs, total_timesteps, *, evals=3, max_days=6):
+    """Every ~(1/evals) of training, run the day-by-day FTMO report with the CURRENT policy so you watch it
+    improve as it learns. Prints (1) a detailed table on the fixed stretch (now WALKS THROUGH a breach instead
+    of stopping at day 2), (2) the chosen-action mix (HOLD-collapse check), and (3) a ROLLING pass-rate averaged
+    over several RANDOM windows (fixed seeds) -- the single fixed stretch replays identically and can't reveal
+    progress on its own. `report_envs` = list of (env, seed). Best-effort: wrapped so it can never break training."""
     from stable_baselines3.common.callbacks import BaseCallback
+    import numpy as _np
 
     class _DR(BaseCallback):
         def _on_training_start(self) -> None:
@@ -100,7 +105,7 @@ def _make_day_report_callback(report_env, total_timesteps, *, evals=3, max_days=
             self._next = self._every
 
         def _print(self) -> None:
-            from src.training.daily_report import daily_report
+            from src.training.daily_report import daily_report, format_action_mix
             init = float(report_env.cfg.starting_balance)
             pol = sb3_policy_fn(self.model, self.model.get_vec_normalize_env())
             rows, summary = daily_report(report_env, policy=pol, max_days=max_days)
@@ -115,6 +120,22 @@ def _make_day_report_callback(report_env, total_timesteps, *, evals=3, max_days=
                       f"{'YES' if r['breached'] else 'no'}", flush=True)
             print(f"        -> {summary['days_passed_target']}/{summary['days']} days hit +2.5% · "
                   f"{summary['breaches']} breaches · final {summary['final_cum_pct']:+.2f}%", flush=True)
+            mix = format_action_mix(summary.get("action_mix"))
+            if mix:
+                print(f"        action-mix: {mix}", flush=True)
+            # ROLLING multi-window pass-rate: re-seed each env to its FIXED seed so the SAME windows are scored
+            # every checkpoint (comparable) -> this number MOVES as the policy learns.
+            if report_envs:
+                tot_pass = tot_days = tot_breach = 0
+                finals = []
+                for renv, seed in report_envs:
+                    renv.rng = _np.random.default_rng(seed)
+                    _, s = daily_report(renv, policy=pol, max_days=max_days)
+                    tot_pass += s["days_passed_target"]; tot_days += s["days"]
+                    tot_breach += s["breaches"]; finals.append(s["final_cum_pct"])
+                mean_final = sum(finals) / max(1, len(finals))
+                print(f"        ── across {len(report_envs)} random windows: {tot_pass}/{tot_days} days hit "
+                      f"+2.5% · {tot_breach} breaches · mean final {mean_final:+.2f}% ──", flush=True)
 
         def _on_rollout_end(self) -> None:
             if self.num_timesteps < self._next:
@@ -183,16 +204,53 @@ def train_multi_symbol(symbol_data, registry_factory, *, total_timesteps=1_000_0
     return model
 
 
+def _make_checkpoint_callback(save_path, total_timesteps, *, every=None):
+    """PERIODICALLY save (OVERWRITE) the model + its VecNormalize stats to save_path, so stopping the run or a
+    Colab disconnect never loses progress -- the next run resumes from here. Saves every `every` steps (default
+    ~5% of the run, min 50k). Always the SAME path -> one rolling checkpoint, not a pile of files."""
+    from stable_baselines3.common.callbacks import BaseCallback
+
+    class _CK(BaseCallback):
+        def _on_training_start(self) -> None:
+            self._every = int(every or max(50_000, total_timesteps // 20))
+            self._next = self._every
+
+        def _save(self) -> None:
+            self.model.save(save_path)                              # overwrites save_path(.zip)
+            vn = self.model.get_vec_normalize_env()
+            if vn is not None:
+                vn.save(_vecnorm_path(save_path))                  # overwrites the stats too
+
+        def _on_rollout_end(self) -> None:
+            if self.num_timesteps >= self._next:
+                self._next += self._every
+                try:
+                    self._save()
+                    print(f"      [checkpoint] progress saved -> {save_path} (after {self.num_timesteps:,} steps)",
+                          flush=True)
+                except Exception as e:
+                    print(f"      [checkpoint] save skipped: {e}", flush=True)
+
+        def _on_step(self) -> bool:
+            return True
+
+    return _CK()
+
+
 def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
                     n_envs=None, save_path="models/camillion_portfolio_ppo", eval_env=None,
                     eval_freq: int | None = None, feature_cache_dir: str | None = None,
-                    data_cache_dir: str | None = None, symbols=None, **env_kwargs):
+                    data_cache_dir: str | None = None, symbols=None, resume: bool = True,
+                    checkpoint_every: int | None = None, **env_kwargs):
     """Train ONE policy that trades the WHOLE book from ONE shared pot -- the portfolio bot.
 
     `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned across symbols). Every worker
     is a full PortfolioEnv: the policy decides one symbol at a time while seeing the shared pot's
     exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (479),
-    actions, VecNormalize and the MlpPolicy are identical to single-symbol training."""
+    actions, VecNormalize and the MlpPolicy are identical to single-symbol training.
+
+    resume=True (default): if a matching past model already exists at save_path, CONTINUE its training
+    (warm-start); a non-matching/absent model falls back to a fresh bot. Pass resume=False to force scratch."""
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import EvalCallback, CallbackList
     from stable_baselines3.common.vec_env import VecNormalize
@@ -203,14 +261,34 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
     if n_envs is None:
         n_envs = tuned["n_envs"]
     print("      building the training environment (can take a minute on a big history)...", flush=True)
-    venv = make_portfolio_vec_env(symbol_data, registry_factory, n_envs,
-                                  feature_cache_dir=feature_cache_dir, data_cache_dir=data_cache_dir,
-                                  symbols=symbols, use_subproc=tuned["use_subproc"], **env_kwargs)
-    venv = VecNormalize(venv, **VECNORM_KW)
-    model = PPO("MlpPolicy", venv, verbose=0, device=tuned["device"], **PPO_HPARAMS)
+    raw = make_portfolio_vec_env(symbol_data, registry_factory, n_envs,
+                                 feature_cache_dir=feature_cache_dir, data_cache_dir=data_cache_dir,
+                                 symbols=symbols, use_subproc=tuned["use_subproc"], **env_kwargs)
+    # RESUME (warm-start): if a past model + its saved stats already exist at save_path AND their obs/action
+    # spaces MATCH this run, LOAD and CONTINUE training. SB3's PPO.load raises on any mismatch (e.g. a changed
+    # 479-obs contract), so a non-matching/old/absent model cleanly falls back to a FRESH bot. resume=False forces fresh.
+    import os
+    model = None
+    _zip = save_path if save_path.endswith(".zip") else save_path + ".zip"
+    _vp = _vecnorm_path(save_path)
+    if resume and os.path.exists(_zip) and os.path.exists(_vp):
+        try:
+            venv = VecNormalize.load(_vp, raw)                  # restore the saved mean/std ...
+            venv.training = True; venv.norm_reward = False      # ... and KEEP updating them while we train more
+            model = PPO.load(_zip, env=venv, device=tuned["device"])   # explicit .zip (ignore any sibling file)
+            print(f"      [resume] MATCH -> loaded past model '{_zip}' (+ stats); CONTINUING its training", flush=True)
+        except Exception as e:
+            print(f"      [resume] a past model exists but does NOT match this setup ({e}); training a FRESH bot", flush=True)
+            model = None
+    elif resume:
+        print("      [resume] no past model at save_path; training a FRESH bot", flush=True)
+    if model is None:                                            # fresh: no match, nothing saved, or resume=False
+        venv = VecNormalize(raw, **VECNORM_KW)
+        model = PPO("MlpPolicy", venv, verbose=0, device=tuned["device"], **PPO_HPARAMS)
     print("      environment ready; training now...", flush=True)
     cbs = [_make_heartbeat(total_timesteps),
-           _make_entropy_anneal(PPO_HPARAMS["ent_coef"], total_timesteps)]
+           _make_entropy_anneal(PPO_HPARAMS["ent_coef"], total_timesteps),
+           _make_checkpoint_callback(save_path, total_timesteps, every=checkpoint_every)]  # periodic auto-save
     # LIVE day-by-day progress check on a fixed test stretch (loads features from the cache -> fast).
     # Best-effort: if the cache is off or anything fails, training still runs (just without the live table).
     if feature_cache_dir:
@@ -220,14 +298,26 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
             rsubs = build_portfolio_subs(symbol_data, registry_factory, cfg=_cfg, warmup=_warm,
                                          progress=False, feature_cache_dir=feature_cache_dir)
             report_env = PortfolioEnv(subs=rsubs, cfg=_cfg, warmup=_warm)
-            cbs.append(_make_day_report_callback(report_env, total_timesteps))
+            # ROLLING multi-window eval: a few RANDOM stretches (fixed seeds, share the same precomputed subs)
+            # so the averaged pass-rate MOVES as the policy learns -- the single fixed stretch above replays
+            # identically every checkpoint and can't reveal progress on its own.
+            _win = 10_000   # ~7 trading days of M1 -> max_days=6 binds; clamped to <=half the span by the env
+            report_envs = [(PortfolioEnv(subs=rsubs, cfg=_cfg, warmup=_warm,
+                                         window=_win, random_window=True, seed=s), s)
+                           for s in (11, 23, 37, 53, 71)]
+            cbs.append(_make_day_report_callback(report_env, report_envs, total_timesteps))
         except Exception as e:
             print(f"      (live day-by-day check disabled: {e})", flush=True)
     if eval_env is not None:
         freq = int(eval_freq or PPO_HPARAMS["n_steps"])
         cbs.append(EvalCallback(eval_env, eval_freq=max(1, freq), n_eval_episodes=3,
                                 deterministic=True, best_model_save_path=None, log_path=None))
-    model.learn(total_timesteps=total_timesteps, callback=CallbackList(cbs))
+    # Interrupt-safe: a manual STOP (Ctrl-C / Colab "Interrupt execution") still saves what we have so far,
+    # then the final save below overwrites with the latest -> stopping never loses progress; just re-run to resume.
+    try:
+        model.learn(total_timesteps=total_timesteps, callback=CallbackList(cbs))
+    except KeyboardInterrupt:
+        print("\n      [stopped] interrupt caught — saving progress before exit...", flush=True)
     model.save(save_path)
     venv.save(_vecnorm_path(save_path))
     return model

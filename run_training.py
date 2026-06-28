@@ -87,6 +87,12 @@ def main(argv=None):
                          "logic is identical at any FTMO size. Default: the configured 100,000.")
     ap.add_argument("--trailing-dd", dest="trailing_dd", type=float, default=None,
                     help="the trailing drawdown wall %% (default 4.0). Lower it over time to tighten risk.")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore any saved bot at --out and train from SCRATCH. Default: if a MATCHING past "
+                         "bot already exists at --out, CONTINUE training it (warm-start) for --steps more steps.")
+    ap.add_argument("--save-every", dest="save_every", type=int, default=None,
+                    help="auto-save (overwrite) progress to --out every N steps so a stop/disconnect loses nothing "
+                         "(default: ~5%% of --steps, min 50,000). Stopping with Ctrl-C also saves.")
     a = ap.parse_args(argv)
     symbols = [s.strip() for s in a.symbols.split(",") if s.strip()]
     # account size + risk dial: set BEFORE building the env/cfg (which read these from config.variables)
@@ -143,6 +149,8 @@ def main(argv=None):
         print(f"      prepared features will be saved/reused at: {feat_cache}")
     train_portfolio(sd, _reg, total_timesteps=a.steps, save_path=a.out, feature_cache_dir=feat_cache,
                     data_cache_dir=a.cache, symbols=found,    # data_cache_dir+symbols enable multi-core workers
+                    resume=not a.fresh,                       # CONTINUE a matching past bot unless --fresh
+                    checkpoint_every=a.save_every,            # periodic auto-save (overwrite --out)
                     continue_after_pass=True)                 # TRAIN past +10% for consistency (4-in-a-row bonus)
     print(f"      trained + saved -> {a.out} (+ its _vecnorm.pkl)")
 
@@ -157,9 +165,9 @@ def main(argv=None):
         from src.jarvis import policy_registry as PR
         from src.training.env_fingerprint import env_fingerprint
         pr = summary["days_passed_target"] / max(1, summary["days"])
-        PR.add_policy(id=os.path.basename(a.out), path=a.out, fingerprint=env_fingerprint(),
+        PR.add_policy(id=os.path.basename(a.out), model_path=a.out, fingerprint=env_fingerprint(),
                       universe=",".join(found), walk_forward_pass_rate=round(pr, 3),
-                      notes="trained by run_training.py")
+                      notes="trained by run_training.py")   # model_path (NOT path=, which is the registry file)
         print("      filed. In the cockpit, ask JARVIS: \"which policy should I run?\"")
     except Exception as e:
         print(f"      (couldn't file it automatically: {e})")

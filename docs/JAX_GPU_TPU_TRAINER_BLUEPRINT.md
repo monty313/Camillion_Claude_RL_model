@@ -1,5 +1,16 @@
 # JAX GPU/TPU TRAINER BLUEPRINT — the full-rewrite plan (build only when CPU is the wall)
 
+> **UPDATE 2026-06-28 — partially BUILT in `jax_tpu/`.** A first implementation now lives in the repo's
+> `jax_tpu/` folder (operator-requested ahead of the CPU wall, for TPU scale + train-to-40-in-a-row).
+> It follows this blueprint's invariants: a **step-parity gate** proves the JAX env matches the CPU env
+> bar-for-bar (max|obs|≈1e-7, max|reward|≈1e-20), indicators are parity-tested in jnp, and it trains on
+> a TPU with a custom Flax PPO until **40 consecutive held-out challenge passes**, checkpointing to
+> Drive. Key design choice vs this doc: indicators/alphas are **precomputed once on the host and shared**
+> as a static `(T,479)` tensor (the "build once + share" plan), so the hot loop indexes it and only the
+> 40 account-dependent obs floats are recomputed in jnp — see `jax_tpu/PLAN.md`. The single-symbol env
+> is done; the shared-pot **PortfolioEnv** parity is the next phase in that folder. The text below is the
+> original full-rewrite plan and remains the contract.
+
 > **Status: BLUEPRINT, not built.** This is the plan for a *future* from-scratch rewrite
 > that runs the WHOLE training loop on-device (GPU or TPU) in JAX/Flax. The CPU env
 > (`src/env/trading_env.py`) stays the **reference / source of truth**. Do not start this
