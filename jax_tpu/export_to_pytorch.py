@@ -3,7 +3,7 @@
 # WHY  A JAX-trained policy must deploy the SAME way as a CPU one (MT5 via ONNX). The
 #      3x256 architecture is identical, so we copy the Flax weights into a PyTorch MLP
 #      (with the obs-normalizer baked in) and export ONNX. The exported net takes a RAW
-#      479 observation and returns the 4 action logits -> argmax = action, exactly like
+#      499 observation and returns the 4 action logits -> argmax = action, exactly like
 #      the trained policy. Verified bit-close against the JAX policy before export.
 # WHERE jax_tpu/export_to_pytorch.py
 # HOW   Flax Dense kernel (in,out) -> torch Linear weight (out,in) = kernel.T; bias copied.

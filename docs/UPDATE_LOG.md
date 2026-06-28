@@ -3,6 +3,34 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-28] Two ADX-DI alphas (slots 16/17) + RAW OHLC observation block (contract v1.6.0, CPU + TPU)
+- **I (Issue):** Operator wants (1) two new alphas on the ADX/DMI directional system — ADX periods **14 & 45**,
+  alpha A on **5m & 30m**, alpha B on **30m & 4h**; rule: *all −DI above +DI = SELL, all −DI below +DI = BUY* —
+  and (2) **raw OHLC added to the observation**, on **both** the CPU and the JAX/TPU trainers. ADX/+DI/−DI did
+  not exist in the repo, and both needs require raw **high/low** the env never carried (it holds only `close`).
+- **R (Rule):** Operator 2026-06-28. Adding alphas must not destabilise the obs (fills slots); adding OHLC to the
+  obs is a **deliberate contract bump** (CLAUDE.md rule #1 — confirmed with the operator before bumping).
+- **A (Application):**
+  - `src/indicators/adx.py` — Wilder **+DI / −DI / ADX** (TA-Lib fast-path + pandas fallback, NaN warmup).
+  - `src/data/aux_features.py` + `cache_builder.build_aligned_aux` — ONE leak-free `{symbol}_aux.npy` (T, 32):
+    **[ OHLC obs block (20 = O/H/L/C × 5 TFs) | ADX-DI side-channel (12 = ±DI@14/45 on 5m/30m/4h) ]**. Built at
+    cache time (where OHLC exists), aligned last-closed-bar (no leak), trimmed by `align_symbol_data`, threaded
+    into the env as `aux=`. The OHLC half goes INTO the obs (block 15); the DI half feeds only the two alphas.
+  - `config/constants.py` — **contract v1.5.0 → v1.6.0**: appended `ohlc` block (20) → **OBS_TOTAL_SIZE 479 → 499**.
+    Indices 0..478 are UNCHANGED (append-only); blocks 1–14 keep their positions.
+  - Strategies: `adx_di_align_5m_30m_alpha.py`, `adx_di_align_30m_4h_alpha.py` (+ register helpers) → slots **16, 17**.
+    All-four-agree (period × TF) sign rule; missing/equal → inactive. Only the sign of (−DI − +DI) is used.
+  - Env: `TradingEnv`/`PortfolioEnv` take `aux=`, emit the `ohlc` block, and inject the DI columns into the ctx;
+    no aux → OHLC block is zeros and the two alphas stay inactive (old caches still load — degraded, never a crash).
+  - JAX/TPU: `jax_static_features.build_static_data` places `ohlc` (static); `jax_config.OBS_SIZE 479→499`,
+    `N_STATIC_OBS 439→459`. The TPU trainer lifts `alpha_matrix` from the CPU build, so slots 16/17 work for free.
+  - Robustness: the feature-cache fingerprint now folds in an **aux content hash** (a no-OHLC cache can never be
+    loaded as an OHLC one) + a `aux_features_code` source hash. Full CPU suite + JAX parity green; new tests added
+    (`tests/test_adx_di_alphas.py`: DI logic, slot wiring, DI-needs-aux, OHLC block correctness, aux leak-free).
+- **C (Conclusion):** The bot gains a trend-direction alpha family AND first-class raw OHLC perception (High/Low/Open
+  on every timeframe) in one leak-free, parity-clean change — more edge and more market context toward a consistent
+  FTMO pass — without ever silently moving the observation. A trained v1.5.0 policy retrains (shape changed, as flagged).
+
 ## [2026-06-28] Crash-safe checkpointing: save on interrupt + every checkpoint (resume never loses much)
 - **I (Issue):** Operator: make sure that if training is INTERRUPTED it saves the progress, and that progress
   is saved when a checkpoint is reached. A long unbounded run to 40-won-days must survive a Colab disconnect

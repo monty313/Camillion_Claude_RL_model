@@ -36,7 +36,7 @@ PIPELINE (data -> decision):
   src/strategies/    alphas = signal generators (+1 buy / -1 sell / 0 inactive). 64 fixed slots; the policy
                      learns a weight per slot. Two kinds: DIRECTIONAL (vote in the consensus) and
                      non-directional GATES (1/0, e.g. movement filters) that are excluded from the consensus.
-  src/env/           TradingEnv: the locked 479-float observation (contract v1.5.0) + actions
+  src/env/           TradingEnv: the locked 499-float observation (contract v1.6.0) + actions
                      {HOLD,BUY,SELL,CLOSE}. REWARD = equity change only (+ deliberate FTMO/NY shaping).
   src/account/risk/  AccountState + breach detection + the two-phase daily engine (hit +2.5% -> bank & stop).
   src/training/      PPO (SB3) with VecNormalize; env_fingerprint = the CPU/GPU parity + comparability anchor;
@@ -46,7 +46,7 @@ PIPELINE (data -> decision):
                      consistency (the system-logic read), council (OMEGA->JUSTICE->JARVIS reasoning), this
                      knowledge base. jarvis_bridge.py serves it read-only. The HUD is JARVIS Cockpit.dc.html.
 
-THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 479 observation shape;
+THREE RULES THAT OVERRIDE EVERYTHING (CLAUDE.md): (1) never silently change the 499 observation shape;
 (2) never change the FTMO numbers without saying so; (3) never put TA-Lib/MT5/pandas inside env.step()."""
 
 
@@ -68,9 +68,9 @@ TROUBLESHOOTING = [
             "reappears, grep the env for manual += on balance/realized_pnl.)",
      "refs": "src/env/trading_env.py (step/_flatten), src/account/trade_history.py"},
     {"id": "train-obs-shape", "area": "obs",
-     "symptom": "shape mismatch error / 'expected 479 got N' / a saved model won't load",
+     "symptom": "shape mismatch error / 'expected 499 got N' / a saved model won't load",
      "cause": "the observation contract changed (someone edited a block size or MAX_STRATEGIES)",
-     "fix": "the obs is LOCKED at 479 float32 (contract v1.5.0). Rule #1: never change it silently. If a "
+     "fix": "the obs is LOCKED at 499 float32 (contract v1.6.0). Rule #1: never change it silently. If a "
             "change is intended, bump OBSERVATION_CONTRACT_VERSION + update docs/OBSERVATION_CONTRACT.md + "
             "the shape tests, and RETRAIN (old models are incompatible). Check config/constants.py OBS_TOTAL_SIZE.",
      "refs": "config/constants.py, docs/OBSERVATION_CONTRACT.md"},
@@ -298,7 +298,7 @@ TROUBLESHOOTING = [
             "with train_portfolio on the shared-pot PortfolioEnv: one policy holds SIMULTANEOUS positions across "
             "ALL symbols in one account, decides one symbol at a time while seeing the pot's exposure, and is "
             "rewarded on the pot — so it learns to BALANCE risk. Because decisions are per-symbol with portfolio "
-            "context, the obs stays 479 and it scales to the full FTMO broker list live. See "
+            "context, the obs stays 499 and it scales to the full FTMO broker list live. See "
             "docs/TRAINING_INSTRUCTIONS.md; watch the live book on the heatmap tab.",
      "refs": "src/env/portfolio_env.py, src/training/trainer.py (train_portfolio), docs/TRAINING_INSTRUCTIONS.md"},
     {"id": "policy-organize", "area": "training",

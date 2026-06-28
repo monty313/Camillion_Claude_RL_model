@@ -3,7 +3,7 @@
 # WHEN 2026-06-26 | WHO Claude for Mark | WHERE tools/run_full_audit.py
 # WHY  ONE-command brutal full-system audit: PPO/MLP, FTMO rules, env integrity,
 #      JARVIS, stability, code quality, future risk -> audit_results/{json,md,html}
-#      + a GO / NO-GO verdict. Tests the REAL repo (479 obs v1.5.0, SB3 PPO,
+#      + a GO / NO-GO verdict. Tests the REAL repo (499 obs v1.6.0, SB3 PPO,
 #      breach_detector), marks delegated/missing items honestly (no fake passes).
 # HOW  python tools/run_full_audit.py   (exit 0 = GO, exit 1 = NO-GO)
 # DEPENDS_ON the real modules discovered in audit_results/ASSUMPTIONS.md
@@ -134,7 +134,8 @@ def t_1_5():
     # (SB3 MlpPolicy uses Tanh, not ReLU). A unit is degenerate if it never varies across the batch
     # (std~=0 -> truly dead) or is saturated for ~every input (|activation|>0.99 -> stuck rail).
     import torch.nn as nn
-    big = torch.as_tensor(np.random.default_rng(2).standard_normal((100, 479)).astype(np.float32))
+    obs_dim = int(x.shape[-1])   # the model's ACTUAL obs width (== C.OBS_TOTAL_SIZE) — never hardcode it
+    big = torch.as_tensor(np.random.default_rng(2).standard_normal((100, obs_dim)).astype(np.float32))
     acts = []
     with torch.no_grad():
         h = big
@@ -321,7 +322,7 @@ def t_3_1():
         assert np.all(np.isfinite(obs))
         assert abs(env.acc.balance - env.cfg.starting_balance) < 1e-6, "balance not reset to initial"
         assert env.position == 0, "stale position after reset"
-    return PASS, "10x reset: clean obs (479 f32, finite), balance=initial, flat position."
+    return PASS, "10x reset: clean obs (499 f32, finite), balance=initial, flat position."
 
 
 def t_3_2():

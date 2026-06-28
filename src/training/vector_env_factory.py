@@ -10,15 +10,16 @@ from src.training.gym_adapter import make_gym_env
 
 
 def make_vec_env(indicators, close, time_ns, registry_factory, n_envs: int | None = None,
-                 **env_kwargs):
-    """registry_factory() -> a fresh AlphaRegistry per worker (no shared state)."""
+                 *, aux=None, **env_kwargs):
+    """registry_factory() -> a fresh AlphaRegistry per worker (no shared state).
+    `aux` (v1.6.0 OHLC+DI) is explicit so single-symbol training keeps the OHLC obs + ADX-DI alphas."""
     from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
     n = n_envs or TS.N_ENVS
     random_window = bool(env_kwargs.pop("random_window", TS.RANDOM_WINDOW_TRAINING))
 
     def _thunk(seed):
         def _f():
-            return make_gym_env(indicators, close, time_ns, registry_factory(),
+            return make_gym_env(indicators, close, time_ns, registry_factory(), aux=aux,
                                 seed=seed, random_window=random_window,
                                 **env_kwargs)
         return _f
@@ -43,12 +44,14 @@ def make_multi_symbol_vec_env(symbol_data: dict, registry_factory, n_envs: int |
         raise ValueError("symbol_data is empty -- pass {symbol: (indicators, close, time_ns)}")
 
     def _thunk(seed, sym):
-        ind, close, tm = symbol_data[sym]
+        v = symbol_data[sym]
+        ind, close, tm = v[0], v[1], v[2]
+        aux = v[3] if len(v) > 3 else None        # v1.6.0 OHLC+DI aux (None for legacy 3-tuples)
         kw = dict(env_kwargs)
         if "position_size" not in kw and sym in A.SPECS:
             kw["position_size"] = A.calibrated_position_size(sym)   # per-asset calibrated size
         def _f():
-            return make_gym_env(ind, close, tm, registry_factory(), symbol=sym,
+            return make_gym_env(ind, close, tm, registry_factory(), symbol=sym, aux=aux,
                                 seed=seed, random_window=random_window, **kw)
         return _f
 

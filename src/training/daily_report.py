@@ -197,9 +197,10 @@ def run_daily_report(data_dir: str | None = None, symbol: str = "EURUSD",
     from src.env.trading_env import TradingEnv
     reg = AlphaRegistry(); register_all(reg)
     if data_dir:
-        from src.data.cache_builder import load_cache
+        from src.data.cache_builder import load_cache, load_aux
         ind, close, time_ns = load_cache(data_dir, symbol)
-        env = TradingEnv(np.asarray(ind), np.asarray(close), np.asarray(time_ns), reg, symbol=symbol)
+        aux = load_aux(data_dir, symbol)   # v1.6.0 OHLC obs block + ADX-DI side-channel
+        env = TradingEnv(np.asarray(ind), np.asarray(close), np.asarray(time_ns), reg, symbol=symbol, aux=aux)
     else:
         import pandas as pd
         rng = np.random.default_rng(0)
@@ -210,11 +211,11 @@ def run_daily_report(data_dir: str | None = None, symbol: str = "EURUSD",
     policy = None
     if model_path:
         try:    # best-effort: needs SB3 + the saved model + its vecnorm
-            from src.data.cache_builder import load_cache
+            from src.data.cache_builder import load_cache, load_aux
             from src.training.trainer import load_for_eval, sb3_policy_fn
             ind, close, time_ns = load_cache(data_dir, symbol)
             model, venv = load_for_eval(model_path, ind, close, time_ns,
-                                        lambda: _fresh_reg(), symbol=symbol)
+                                        lambda: _fresh_reg(), symbol=symbol, aux=load_aux(data_dir, symbol))
             policy = sb3_policy_fn(model, venv)
         except Exception as e:  # pragma: no cover
             print(f"[daily_report] no model ({e}); reporting the HOLD baseline (real per-day comes with a trained policy).")
@@ -228,17 +229,19 @@ def run_portfolio_report(data_dir: str, symbols, model_path: str | None = None, 
 
     Requires the per-symbol caches to be time-aligned (same bars)."""
     max_days = 30 if max_days is None else max_days   # report now WALKS THROUGH breaches -> cap the printout
-    from src.data.cache_builder import load_cache
+    from src.data.cache_builder import load_cache, load_aux
     from src.env.portfolio_env import PortfolioEnv, align_symbol_data
     syms = list(symbols)
-    sd = align_symbol_data({s: load_cache(data_dir, s) for s in syms})   # keep only shared bars
+    # 4-tuple per symbol so the v1.6.0 aux (OHLC obs block + ADX-DI side-channel) reaches each sub-env.
+    sd = align_symbol_data({s: (*load_cache(data_dir, s), load_aux(data_dir, s)) for s in syms})   # keep only shared bars
     env = PortfolioEnv(sd, _fresh_reg)
     policy = None
     if model_path:
         try:  # pragma: no cover - needs SB3 + a saved portfolio model
             from src.training.trainer import load_for_eval, sb3_policy_fn
             ind, close, time_ns = load_cache(data_dir, syms[0])     # obs is identical across symbols
-            model, venv = load_for_eval(model_path, ind, close, time_ns, _fresh_reg, symbol=syms[0])
+            model, venv = load_for_eval(model_path, ind, close, time_ns, _fresh_reg, symbol=syms[0],
+                                        aux=load_aux(data_dir, syms[0]))
             policy = sb3_policy_fn(model, venv)
         except Exception as e:
             print(f"[daily_report] no portfolio model ({e}); HOLD baseline.")

@@ -365,17 +365,17 @@ if _ARG:
         cfg_, env, sd, static, params = _build_single(seed=1)
         # JAX trainer stamps fp == CPU env_fingerprint
         assert env_fingerprint() == env_fingerprint(), "fingerprint unstable"
-        assert C.OBS_TOTAL_SIZE == 479 and sd.static_obs.shape[1] == 479, "obs size != 479"
+        assert C.OBS_TOTAL_SIZE == 499 and sd.static_obs.shape[1] == 499, "obs size != 499"
         # static obs block placement: a fresh CPU obs at warmup, static parts must match jax static row (dynamic zeroed)
         cpu_obs, _ = env.reset()
         srow = sd.static_obs[sd.warmup]
         from jax_tpu.jax_static_features import DYNAMIC_SLICES
-        mask = np.ones(479, bool)
+        mask = np.ones(C.OBS_TOTAL_SIZE, bool)
         for (a, b) in DYNAMIC_SLICES.values():
             mask[a:b] = False
         d = float(np.max(np.abs(srow[mask] - cpu_obs[mask])))
         assert d < 1e-4, f"static obs block placement mismatch {d}"
-        return f"fingerprint stable ({env_fingerprint()}), obs=479, static blocks match CPU (diff={d:.2e})"
+        return f"fingerprint stable ({env_fingerprint()}), obs={C.OBS_TOTAL_SIZE}, static blocks match CPU (diff={d:.2e})"
 
     fn = {k: v for k, v in locals().items() if callable(v) and k == _ARG}.get(_ARG)
     try:

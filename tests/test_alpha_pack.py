@@ -1,4 +1,4 @@
-# The 14-alpha pack: per-family logic truth-tables + full-pack wiring (15 alphas, 479 obs).
+# The alpha pack: per-family logic truth-tables + full-pack wiring (18 alphas, 499 obs).
 import numpy as np, pandas as pd
 from src.strategies.context import MarketContext
 from src.strategies.registry import AlphaRegistry
@@ -44,12 +44,12 @@ def test_alpha_pack_wiring_and_479():
     cl = 100 + np.cumsum(np.random.default_rng(3).standard_normal(n) * 0.04 + 0.01)
     df = pd.DataFrame({"open": cl, "high": cl + .05, "low": cl - .05, "close": cl, "volume": 1.}, index=idx)
     ind = build_aligned_indicators(df); assert ind.shape[1] == 220
-    reg = AlphaRegistry(); register_all(reg); assert reg.assigned_count == 16
+    reg = AlphaRegistry(); register_all(reg); assert reg.assigned_count == 18
     env = TradingEnv(ind, df["close"].values.astype("float32"),
                      idx.values.astype("datetime64[ns]").astype("int64"), reg, warmup=300)
     o, _ = env.reset()
-    assert o.shape == (479,) and np.all(np.isfinite(o))
-    assert o[OC.BLOCK_SLICES["alpha_mask"]][:16].sum() == 16           # all 16 slots occupied
+    assert o.shape == (499,) and np.all(np.isfinite(o))
+    assert o[OC.BLOCK_SLICES["alpha_mask"]][:18].sum() == 18           # all 18 slots occupied (incl. 2 ADX-DI)
     assert np.all(np.isfinite(o[OC.BLOCK_SLICES["alpha_streak"]]))     # streak block present
-    fires = (env.alpha_matrix[300:, :16] != 0).sum(axis=0)
+    fires = (env.alpha_matrix[300:, :18] != 0).sum(axis=0)
     assert fires.sum() > 0                                             # the pack produces signals

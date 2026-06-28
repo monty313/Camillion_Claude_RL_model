@@ -1,7 +1,7 @@
 # =====================================================================
 # WHEN 2026-06-28 | WHO Claude for Monty
 # WHY  THE PORTFOLIO GATE. The shared-pot JAX env (jax_portfolio_env.py) is only valid if
-#      it matches the CPU PortfolioEnv (src/env/portfolio_env.py) bar-for-bar: same 479 obs,
+#      it matches the CPU PortfolioEnv (src/env/portfolio_env.py) bar-for-bar: same 499 obs,
 #      same reward (incl. alpha-shaping + midnight day-scoring + two-phase banking) across
 #      the symbol cycle. This steps both on identical actions and asserts they match.
 # WHERE jax_tpu/tests/test_jax_portfolio_parity.py

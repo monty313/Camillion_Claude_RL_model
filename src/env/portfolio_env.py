@@ -5,7 +5,7 @@
 #      the shared pot already is (the account + portfolio observation blocks), so it
 #      learns to BALANCE risk across simultaneous positions. Because decisions are
 #      per-symbol, this scales from 4 symbols to the full FTMO broker list (130+)
-#      WITHOUT changing the locked 479 observation.
+#      WITHOUT changing the locked 499 observation.
 # WHERE src/env/portfolio_env.py
 # HOW  Reuse one TradingEnv per symbol for its PRECOMPUTED per-symbol blocks (alphas,
 #      streaks, cross-asset, etc.); maintain ONE AccountState (the pot) + per-symbol
@@ -17,13 +17,13 @@
 # CHANGE_NOTES(IRAC): I: single-symbol envs can't learn portfolio RISK ALLOCATION across
 #   one pot. R: operator 2026-06-26 -- one bot on all four symbols, generalizing to the
 #   full live broker list. A: a shared-pot PortfolioEnv with per-symbol decisions + a
-#   portfolio-aggregated obs; obs stays 479, actions stay {HOLD,BUY,SELL,CLOSE}, so the
+#   portfolio-aggregated obs; obs stays 499, actions stay {HOLD,BUY,SELL,CLOSE}, so the
 #   existing MlpPolicy/trainer/fingerprint all apply. C: one policy learns to balance the
 #   book toward a consistent portfolio pass, and scales to the whole FTMO universe live.
 #   [2026-06-26b] I: the portfolio path (1) replayed ONE identical trajectory across all vec
 #   workers (reset ignored seed, no window) = no exploration diversity, and (2) had NO two-phase
 #   +2.5% bank-and-stop (it lived only in single-symbol TradingEnv) so the trained bot ignored a
-#   documented FTMO rule. R: keep obs(479)/FTMO numbers; add diversity + pot-level two-phase.
+#   documented FTMO rule. R: keep obs(499)/FTMO numbers; add diversity + pot-level two-phase.
 #   A: random_window/seed per worker (DIFFERENT stretches) + pot-level two-phase (bank ALL at
 #   +2.5%, stop or 1% trail) mirroring TradingEnv; episode/window end is now truncated (breach/pass
 #   stay terminated). C: parallel envs actually diversify, and the portfolio bot banks +2.5% & stops.
@@ -35,7 +35,7 @@
 #   bonus is CAPPED at the trade's own PnL and only pays when the day is net up; toggle via cfg.alpha_reward_enabled.
 #   C: reward is no longer alpha-independent in PortfolioEnv by default (documented, reversible).
 # =====================================================================
-"""PortfolioEnv: one policy trades ALL symbols from ONE shared pot (obs stays 479)."""
+"""PortfolioEnv: one policy trades ALL symbols from ONE shared pot (obs stays 499)."""
 from __future__ import annotations
 import numpy as np
 from config import constants as C
@@ -53,11 +53,18 @@ from src.env.trading_env import TradingEnv
 _TARGET = {C.ACTION_HOLD: None, C.ACTION_BUY: 1, C.ACTION_SELL: -1, C.ACTION_CLOSE: 0}
 
 
+def unpack_symbol(v):
+    """A symbol entry is (ind, close, time_ns) OR (ind, close, time_ns, aux). Return all four,
+    aux=None for the legacy 3-tuple (synthetic tests / old caches). aux (T,32) = OHLC obs block + DI."""
+    return v[0], v[1], v[2], (v[3] if len(v) > 3 else None)
+
+
 def align_symbol_data(symbol_data: dict) -> dict:
     """Inner-join symbols on their timestamps so PortfolioEnv gets equal-length, aligned arrays.
 
     Real caches differ in length (FX trades ~24/5, an index has its own hours). This keeps only the
-    bars all symbols share, so positions move on the same clock. Returns {symbol: (ind, close, time_ns)}.
+    bars all symbols share, so positions move on the same clock. Returns {symbol: (ind, close, time_ns)}
+    -- or (ind, close, time_ns, aux) when an aux array (OHLC+DI) is present, trimmed the SAME way.
     """
     keys = list(symbol_data)
     times = {k: np.asarray(symbol_data[k][2]).astype(np.int64).ravel() for k in keys}
@@ -67,10 +74,13 @@ def align_symbol_data(symbol_data: dict) -> dict:
     common_arr = np.array(common, dtype=np.int64)
     out = {}
     for k in keys:
-        ind, close, _ = symbol_data[k]
+        ind, close, _t, aux = unpack_symbol(symbol_data[k])
         pos = {int(ts): i for i, ts in enumerate(times[k].tolist())}
         idx = np.array([pos[int(ts)] for ts in common], dtype=np.int64)
-        out[k] = (np.asarray(ind)[idx], np.asarray(close)[idx], common_arr)
+        trimmed = (np.asarray(ind)[idx], np.asarray(close)[idx], common_arr)
+        if aux is not None:
+            trimmed = trimmed + (np.asarray(aux)[idx],)   # trim aux on the SAME shared bars
+        out[k] = trimmed
     return out
 
 
@@ -95,23 +105,24 @@ def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmu
         from src.data import feature_cache as fc
     subs: dict = {}
     n = len(symbol_data)
-    for k, (sym, (ind, close, time_ns)) in enumerate(symbol_data.items(), 1):
+    for k, (sym, v) in enumerate(symbol_data.items(), 1):
+        ind, close, time_ns, aux = unpack_symbol(v)
         ind = np.asarray(ind); close = np.asarray(close); time_ns = np.asarray(time_ns)
         # calibrate lots to ~2.5%/day FOR THIS ACCOUNT SIZE (so behavior is identical at $10k or $200k);
         # unknown symbols fall back to "1 lot = the account" which also scales with the balance.
         ps = A.calibrated_position_size(sym, account=bal) if sym in A.SPECS else bal
         reg = registry_factory()
-        cached = fc.load(feature_cache_dir, sym, ind, close, time_ns, reg) if fc else None
+        cached = fc.load(feature_cache_dir, sym, ind, close, time_ns, reg, aux=aux) if fc else None
         if cached is not None:
             if progress:
                 print(f"      [{k}/{n}] {sym}: loaded saved features ✓ (skipped the rebuild)", flush=True)
             subs[sym] = TradingEnv(ind, close, time_ns, reg, cfg=cfg, symbol=sym,
-                                   position_size=ps, warmup=warmup, precomputed=cached)
+                                   position_size=ps, warmup=warmup, precomputed=cached, aux=aux)
             continue
         if progress:
             print(f"      [{k}/{n}] building features for {sym} ...", flush=True)
         sub = TradingEnv(ind, close, time_ns, reg, cfg=cfg, symbol=sym, position_size=ps,
-                         warmup=warmup, progress=progress)
+                         warmup=warmup, progress=progress, aux=aux)
         if fc:
             try:
                 path = fc.save(feature_cache_dir, sym, ind, close, time_ns, reg, sub)
@@ -125,7 +136,7 @@ def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmu
 
 
 class PortfolioEnv:
-    """One shared pot, many symbols, per-symbol decisions. Gym-style single obs(479)/action(4)."""
+    """One shared pot, many symbols, per-symbol decisions. Gym-style single obs(499)/action(4)."""
 
     observation_shape = C.OBS_SHAPE
     n_actions = C.N_ACTIONS
@@ -313,7 +324,7 @@ class PortfolioEnv:
         big = max(self.symbols, key=lambda s: abs(pos[s]))
         self.acc.largest_position_dir = int(np.sign(pos[big]))
 
-    # ---- observation (479; per-symbol blocks + SHARED account/portfolio blocks) ----
+    # ---- observation (499; per-symbol blocks + SHARED account/portfolio blocks) ----
     def _obs(self):
         sym, sub = self._cur()
         i = self.t
@@ -337,6 +348,7 @@ class PortfolioEnv:
                 prev2=float(sub._prev2_day[i]), today_sofar=float(sub._today_sofar[i]),
                 typical_range=sub._typical_range, days_elapsed=self._days_elapsed),
             "alpha_streak": np.minimum(sub.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
+            "ohlc": sub.ohlc_matrix[i],   # v1.6.0: per-symbol raw O/H/L/C per timeframe
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----

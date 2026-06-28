@@ -227,7 +227,7 @@ def test_provider_headless_snapshot_is_valid():
     assert st["model_attached"] is False
     assert st["policy"]["confidence"] == 0.0          # no model -> honest
     assert st["account"]["peak_equity"] >= st["account"]["equity"] - 1e-6
-    assert st["net_signal_basis"] == 16               # 16 directional alphas on this branch
+    assert st["net_signal_basis"] == 18               # 18 directional alphas on this branch (16 + 2 ADX-DI)
 
 
 def test_provider_from_cache_runs_on_real_built_cache():
@@ -244,7 +244,7 @@ def test_provider_from_cache_runs_on_real_built_cache():
     for _ in range(5):
         prov.step()
     st = build_state(prov.snapshot())
-    assert st["position"]["symbol"] == "EURUSD" and len(st["alphas"]) == 16
+    assert st["position"]["symbol"] == "EURUSD" and len(st["alphas"]) == 18
     assert st["account"]["equity"] > 0 and st["model_attached"] is False
 
 

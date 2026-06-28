@@ -4,7 +4,7 @@
 #      thousands of copies step in lockstep on a TPU. It is a 1:1 reimplementation
 #      of src/env/trading_env.py (the CPU reference): same action effects, same
 #      P&L/cost model, same equity-change reward, same day rollover, same NY-index
-#      bonus, same breach + two-phase banking. The 439 STATIC obs floats are indexed
+#      bonus, same breach + two-phase banking. The 459 STATIC obs floats are indexed
 #      from the shared precomputed tensor; only the 40 DYNAMIC floats are recomputed.
 # WHERE jax_tpu/jax_env.py
 # HOW   EnvState = a NamedTuple pytree (one set of scalars per env -> vmap replicates
@@ -29,7 +29,7 @@ from jax_tpu import jax_ftmo, jax_obs_blocks
 from jax_tpu.jax_static_features import BLOCK_RANGES, DYNAMIC_BLOCKS
 
 _HOLD, _BUY, _SELL, _CLOSE = 0, 1, 2, 3
-# dynamic-block (start,end) indices in the 479 vector (static Python ints)
+# dynamic-block (start,end) indices in the 499 vector (static Python ints)
 _SL = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 
 
@@ -61,7 +61,7 @@ class EnvParams(NamedTuple):
 
 class DeviceStatic(NamedTuple):
     """Shared, read-only device arrays the env indexes by bar. Same for ALL envs (vmap in_axes=None)."""
-    static_obs: jnp.ndarray     # (T, 479)
+    static_obs: jnp.ndarray     # (T, 499)
     close: jnp.ndarray          # (T,)
     is_new_day: jnp.ndarray     # (T,)
     open_gate_blocked: jnp.ndarray  # (T,)

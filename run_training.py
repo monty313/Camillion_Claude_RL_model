@@ -129,7 +129,7 @@ def main(argv=None):
         sys.exit("\n  The training engine isn't installed yet. Run this ONE line, then run me again:\n"
                  "      pip install stable-baselines3 torch\n")
     from src.training.trainer import train_portfolio
-    from src.data.cache_builder import load_cache
+    from src.data.cache_builder import load_cache, load_aux
     from src.env.portfolio_env import align_symbol_data
     from src.strategies.registry import AlphaRegistry
     from src.strategies.alpha_pack import register_all
@@ -137,7 +137,8 @@ def main(argv=None):
     def _reg():
         r = AlphaRegistry(); register_all(r); return r
 
-    sd = align_symbol_data({s: load_cache(a.cache, s) for s in found})
+    # 4-tuple per symbol so the v1.6.0 aux (OHLC obs block + ADX-DI side-channel) flows through training.
+    sd = align_symbol_data({s: (*load_cache(a.cache, s), load_aux(a.cache, s)) for s in found})
     bars = len(next(iter(sd.values()))[1])
     # Where to SAVE the prepared features (so re-runs skip the slow build). Default: auto (Google Drive
     # on Colab, else local). 'off' disables. The cache is fingerprinted so it never loads stale features.

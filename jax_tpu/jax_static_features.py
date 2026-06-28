@@ -1,12 +1,12 @@
 # =====================================================================
 # WHEN 2026-06-28 | WHO Claude for Monty
 # WHY  Build, ONCE on the host, the things the JAX env indexes instead of
-#      recomputing: (1) the (T, 479) STATIC observation tensor with the 9 per-bar
+#      recomputing: (1) the (T, 499) STATIC observation tensor with the 9 per-bar
 #      blocks placed at their exact contract indices (dynamic slots zeroed), and
 #      (2) the per-bar + per-symbol scalar arrays the branchless step needs
 #      (close, is_new_day, minute_of_day, ref_move, recent-context ranges, ...).
 #      The static blocks are taken straight from a PRECOMPUTED CPU TradingEnv, so
-#      439/479 obs floats are BYTE-IDENTICAL to the CPU env -> near-zero parity risk.
+#      459/499 obs floats are BYTE-IDENTICAL to the CPU env -> near-zero parity risk.
 #      This tensor is SHARED read-only across all parallel envs (the "build once +
 #      share" plan in config/constants.py / project memory).
 # WHERE jax_tpu/jax_static_features.py
@@ -17,10 +17,10 @@
 # CHANGE_NOTES(IRAC): I: rewriting indicators/alphas in jnp is huge + risky; they're
 #   already precomputed on the host. R: CLAUDE.md #3 (no TA-Lib/pandas in step) +
 #   the shared-table scaling plan. A: lift the 9 static blocks from the CPU env into a
-#   (T,479) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
+#   (T,499) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
 #   static obs + a tiny per-env state -> thousands of envs fit on a TPU.
 # =====================================================================
-"""Host builder for the shared (T,479) static obs tensor + per-bar/per-symbol scalars."""
+"""Host builder for the shared (T,499) static obs tensor + per-bar/per-symbol scalars."""
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
@@ -28,7 +28,7 @@ from config import constants as C
 from src.signals.signal_summary import summarize  # for cross-check only
 
 
-# --- contract block ranges (start index of each block in the 479 vector) ---
+# --- contract block ranges (start index of each block in the 499 vector) ---
 def _block_ranges() -> dict[str, tuple[int, int]]:
     ranges, start = {}, 0
     for name, size in C.OBS_BLOCK_ORDER:
@@ -48,7 +48,7 @@ DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 class StaticData:
     """Everything the JAX env needs that is FIXED per (symbol, bar). Arrays are numpy
     here; jax_env converts to device arrays once and shares them read-only."""
-    static_obs: np.ndarray      # (T, 479) float32 — static blocks placed, dynamic = 0
+    static_obs: np.ndarray      # (T, 499) float32 — static blocks placed, dynamic = 0
     close: np.ndarray           # (T,) float64 — price for P&L + mark
     is_new_day: np.ndarray      # (T,) float32 — 1.0 if bar t starts a new day vs t-1
     open_gate_blocked: np.ndarray  # (T,) float32 — 1.0 where a new directional open is gated (5m CCI neutral)
@@ -123,6 +123,7 @@ def build_static_data(env) -> StaticData:
     place("time", env.time_feats)
     place("alpha_streak", np.minimum(env.streak_matrix, C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP))
     place("cross_asset", env.cross_asset_matrix)
+    place("ohlc", env.ohlc_matrix)   # v1.6.0: raw O/H/L/C per timeframe (static; zeros if env has no aux)
     # dynamic blocks (account_daily/episode, portfolio, sizing, recent_context) stay 0 here.
 
     # sanitize EXACTLY like the CPU builder (np.nan_to_num on the whole vector)
@@ -165,7 +166,7 @@ class PortfolioStaticData:
     pot. alpha_matrix + occupancy are kept raw so the portfolio's alpha-shaping reward can recompute
     the firing-alpha consensus on-device."""
     symbols: tuple
-    static_obs: np.ndarray      # (N, T, 479)
+    static_obs: np.ndarray      # (N, T, 499)
     close: np.ndarray           # (N, T) float64
     is_new_day: np.ndarray      # (T,)   float32 (shared clock — symbols are time-aligned)
     ref_move: np.ndarray        # (N, T)

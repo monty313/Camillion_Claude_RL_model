@@ -88,6 +88,9 @@ def _code_hashes() -> dict:
         "precompute_code": _source_hash(["src/env/trading_env.py", "src/observation/builder.py"]),
         # symbol -> asset-class / one-hot / typical-ATR resolution
         "asset_specs_code": _source_hash(["config/asset_specs.py"]),
+        # v1.6.0 aux feed: OHLC obs block + ADX-DI side-channel that the alphas depend on. Hashing this
+        # code busts the cache if the DI/OHLC math changes (the alpha_matrix bakes the DI alpha outputs in).
+        "aux_features_code": _source_hash(["src/data/aux_features.py", "src/indicators/adx.py"]),
     }
 
 
@@ -102,7 +105,16 @@ def _alpha_roster(registry) -> list:
     return out
 
 
-def fingerprint(symbol, ind, close, time_ns, registry, *, open_gate_threshold=None) -> tuple[str, dict]:
+def _aux_hash(aux) -> str:
+    """Content hash of the v1.6.0 aux array (OHLC+DI), or 'none'. The alpha_matrix bakes the ADX-DI
+    alpha outputs in, and aux needs raw high/low that the indicator data_hash does NOT capture -- so a
+    cache built WITH aux must never be loaded as one built WITHOUT it (and vice versa). 'no mismatches'."""
+    if aux is None:
+        return "none"
+    return _sha(np.ascontiguousarray(aux, dtype=np.float32).tobytes())
+
+
+def fingerprint(symbol, ind, close, time_ns, registry, *, open_gate_threshold=None, aux=None) -> tuple[str, dict]:
     """Return (key, manifest). `key` is the exact-match cache key; `manifest` is the human-readable
     record of EXACTLY what the cache is for + every fingerprint component."""
     thr = float(V.OPEN_GATE_CCI_THRESHOLD if open_gate_threshold is None else open_gate_threshold)
@@ -114,6 +126,7 @@ def fingerprint(symbol, ind, close, time_ns, registry, *, open_gate_threshold=No
         "max_strategies": int(C.MAX_STRATEGIES),
         "asset_classes": list(C.ASSET_CLASSES),
         "obs_block_cross_asset": int(C.OBS_BLOCK_CROSS_ASSET),
+        "obs_block_ohlc": int(C.OBS_BLOCK_OHLC),   # v1.6.0 raw OHLC block
         "obs_block_time": int(C.OBS_BLOCK_TIME),
         "n_indicators": int(C.N_INDICATORS_TOTAL),
         "indicator_columns_hash": _sha(json.dumps(list(ALL_INDICATOR_COLUMNS)).encode()),
@@ -128,6 +141,7 @@ def fingerprint(symbol, ind, close, time_ns, registry, *, open_gate_threshold=No
         "code_hashes": _code_hashes(),
         "data": {
             "data_hash": _arrays_hash(close, ind, time_ns),
+            "aux_hash": _aux_hash(aux),   # v1.6.0: OHLC+DI content (or 'none') -> no aux/no-aux cross-loading
             "n_bars": int(t.shape[0]),
             "first_ts": int(t[0]) if t.size else 0,
             "last_ts": int(t[-1]) if t.size else 0,
@@ -154,12 +168,13 @@ def cache_subdir(base: str, symbol: str, time_ns, key: str) -> str:
     return os.path.join(base, name)
 
 
-def load(base, symbol, ind, close, time_ns, registry, *, open_gate_threshold=None):
+def load(base, symbol, ind, close, time_ns, registry, *, open_gate_threshold=None, aux=None):
     """Return the cached precomputed arrays dict ONLY if the fingerprint matches EXACTLY, else None
-    (so the caller rebuilds). Never returns stale/mismatched features."""
+    (so the caller rebuilds). Never returns stale/mismatched features. `aux` (OHLC+DI) is part of the
+    fingerprint so a no-aux cache is never loaded as an aux one (v1.6.0)."""
     if not base:
         return None
-    key, _ = fingerprint(symbol, ind, close, time_ns, registry, open_gate_threshold=open_gate_threshold)
+    key, _ = fingerprint(symbol, ind, close, time_ns, registry, open_gate_threshold=open_gate_threshold, aux=aux)
     d = cache_subdir(base, symbol, time_ns, key)
     npz, man = os.path.join(d, "features.npz"), os.path.join(d, "manifest.json")
     if not (os.path.isfile(npz) and os.path.isfile(man)):
@@ -174,12 +189,16 @@ def load(base, symbol, ind, close, time_ns, registry, *, open_gate_threshold=Non
         return None                                  # any corruption -> treat as miss, rebuild
 
 
-def save(base, symbol, ind, close, time_ns, registry, env, *, open_gate_threshold=None, built: str | None = None):
+def save(base, symbol, ind, close, time_ns, registry, env, *, open_gate_threshold=None, built: str | None = None,
+         aux=None):
     """Write features.npz + a plain-English manifest.json describing EXACTLY what this cache is.
-    Returns the folder path. `env` must expose export_precomputed() -> {array_name: ndarray}."""
+    Returns the folder path. `env` must expose export_precomputed() -> {array_name: ndarray}. `aux`
+    (OHLC+DI) defaults to the env's own aux so the saved key reflects what actually built alpha_matrix."""
     if not base:
         return None
-    key, manifest = fingerprint(symbol, ind, close, time_ns, registry, open_gate_threshold=open_gate_threshold)
+    if aux is None:
+        aux = getattr(env, "aux", None)
+    key, manifest = fingerprint(symbol, ind, close, time_ns, registry, open_gate_threshold=open_gate_threshold, aux=aux)
     d = cache_subdir(base, symbol, time_ns, key)
     os.makedirs(d, exist_ok=True)
     arrays = env.export_precomputed()

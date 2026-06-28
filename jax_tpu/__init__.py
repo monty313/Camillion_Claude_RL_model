@@ -13,6 +13,6 @@
 """Camillion JAX/TPU trainer — a second, on-device implementation of the CPU env.
 
 The CPU env (`src/env/trading_env.py`) is the reference. This package must match it
-bar-for-bar (479 obs, same reward, same FTMO rules, same `env_fingerprint`). See PLAN.md.
+bar-for-bar (499 obs, same reward, same FTMO rules, same `env_fingerprint`). See PLAN.md.
 """
 __all__ = []

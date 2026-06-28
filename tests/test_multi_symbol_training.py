@@ -42,7 +42,7 @@ def test_multi_symbol_vec_env_spreads_symbols_and_sizes():
                 assert te.value_per_point == A.SPECS[te.symbol].contract_size
                 assert abs(te.position_size - A.calibrated_position_size(te.symbol)) < 1e-6
             obs = venv.reset()
-            assert obs.shape == (6, C.OBS_TOTAL_SIZE)                  # one stacked 479-obs per worker
+            assert obs.shape == (6, C.OBS_TOTAL_SIZE)                  # one stacked 499-obs per worker
         finally:
             venv.close()
     finally:

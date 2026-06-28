@@ -5,7 +5,7 @@
 
 ## The three rules that override everything
 1. **NEVER silently change the observation shape.** It is locked in
-   `config/constants.py` (479 float32, contract `v1.5.0`). If a change would
+   `config/constants.py` (499 float32, contract `v1.6.0`). If a change would
    alter it, **STOP and explain first**, then bump the contract version and
    update `docs/OBSERVATION_CONTRACT.md` + the shape tests.
 2. **NEVER change FTMO numbers** (2.5% daily target, 4% trailing wall,
@@ -21,7 +21,10 @@
   occupancy mask (64) + alpha summary % (4) + last-5 signal memory (5) + signal
   accuracy (2) + account daily (7) + account episode (7) + time (6) + portfolio
   (8) + alpha streak (64) + sizing (10) + cross-asset (10) + recent context (8)
-  = **479** (contract v1.5.0). Adding strategies fills slots; shape never changes.
+  + raw OHLC (20 = O/H/L/C x 5 TFs)
+  = **499** (contract v1.6.0). Adding strategies fills slots; shape never changes.
+  (OHLC needs high/low the env lacks, so it's precomputed at cache time into a
+  `{symbol}_aux.npy` side array and threaded into the env — see `src/data/aux_features.py`.)
 - Percentages, not raw counts, so adding strategies does not confuse the bot.
 
 ## Scaling alphas toward ~1000 (do not drift from this)

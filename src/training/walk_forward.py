@@ -35,16 +35,19 @@ def make_windows(n: int, train: int, val: int, test: int, step: int) -> list[dic
 
 def run(indicators, close, time_ns, registry_factory, policy_fn, *, cfg=None,
         windows=None, train=None, val=None, test=None, step=None, warmup=50,
-        target_pct=None, max_steps=None) -> dict:
+        target_pct=None, max_steps=None, aux=None) -> dict:
     """Evaluate policy_fn across walk-forward TEST windows. Returns pass-rate + detail.
 
     PASS = reached the CHALLENGE profit target (+profit_target_total_pct, default
     +10%) on unseen data with NO FTMO breach. `target_pct` overrides the threshold
     only for experiments/tests; leave it None to use the real challenge target.
-    (Previously defaulted to 2.5% -- the DAILY target -- which measured the wrong thing.)"""
+    (Previously defaulted to 2.5% -- the DAILY target -- which measured the wrong thing.)
+    `aux` (v1.6.0 OHLC obs block + ADX-DI side-channel), if given, is sliced per window so the
+    eval env matches training (else the OHLC block is zeros and the two ADX-DI alphas stay inactive)."""
     cfg = cfg or load_active_config()
     target = float(target_pct) if target_pct is not None else float(getattr(cfg, "profit_target_total_pct", 10.0))
     ind, cl, tm = np.asarray(indicators), np.asarray(close), np.asarray(time_ns)
+    ax = np.asarray(aux) if aux is not None else None
     n = len(cl)
     if windows is None:
         train = train or int(n * 0.5); val = val or int(n * 0.15)
@@ -54,7 +57,8 @@ def run(indicators, close, time_ns, registry_factory, policy_fn, *, cfg=None,
     for w in windows:
         ts, te = w["test"]
         env = TradingEnv(ind[ts:te], cl[ts:te], tm[ts:te], registry_factory(),
-                         cfg=cfg, warmup=min(warmup, max(1, (te - ts) // 4)))
+                         cfg=cfg, warmup=min(warmup, max(1, (te - ts) // 4)),
+                         aux=(ax[ts:te] if ax is not None else None))
         out = evaluate_policy(env, policy_fn, do_introspect=False, max_steps=max_steps)
         breached = bool(env.acc.episode_breached)
         ret = env.acc.equity / cfg.starting_balance - 1.0

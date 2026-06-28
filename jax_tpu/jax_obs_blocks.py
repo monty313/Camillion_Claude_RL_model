@@ -3,7 +3,7 @@
 # WHY  The 40 DYNAMIC observation floats (account_daily 7 + account_episode 7 +
 #      portfolio 8 + sizing 10 + recent_context 8) rebuilt in jnp. These are the
 #      ONLY obs values the JAX hot loop recomputes each step (they depend on the
-#      evolving account/position state); the other 439 floats are indexed from the
+#      evolving account/position state); the other 459 floats are indexed from the
 #      shared precomputed static tensor (see jax_static_features.py). This is a 1:1
 #      branchless port of src/account/win_loss_features.py.
 # WHERE jax_tpu/jax_obs_blocks.py
@@ -16,7 +16,7 @@
 #   must match the CPU obs exactly or the policy sees a different world. R: CLAUDE.md
 #   "never change the observation" + win_loss_features as the reference. A: port each
 #   of the 5 functions to clipped jnp math, same bases/denominators. C: byte-parity on
-#   the 40 dynamic floats -> the full 479 obs matches the CPU env.
+#   the 40 dynamic floats -> the full 499 obs matches the CPU env.
 # =====================================================================
 """The 40 dynamic obs floats in jnp — 1:1 with src/account/win_loss_features.py."""
 from __future__ import annotations

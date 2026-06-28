@@ -9,17 +9,17 @@
 
 ---
 
-## 1. Current state (as of contract v1.5.0)
+## 1. Current state (as of contract v1.6.0)
 
 | Part | Value |
 |---|---|
-| Observation contract | **v1.5.0**, **479 float32** (full block table in `docs/OBSERVATION_CONTRACT.md`) |
-| Observation blocks | indicators(220) · alpha_values(64) · alpha_mask(64) · alpha_summary(4) · signal_memory(5) · signal_accuracy(2) · account_daily(7) · account_episode(7) · time(6) · portfolio(8) · alpha_streak(64) · sizing(10) · cross_asset(10) · recent_context(8) |
+| Observation contract | **v1.6.0**, **499 float32** (full block table in `docs/OBSERVATION_CONTRACT.md`) |
+| Observation blocks | indicators(220) · alpha_values(64) · alpha_mask(64) · alpha_summary(4) · signal_memory(5) · signal_accuracy(2) · account_daily(7) · account_episode(7) · time(6) · portfolio(8) · alpha_streak(64) · sizing(10) · cross_asset(10) · recent_context(8) · **ohlc(20)** |
 | Action space | 4 — HOLD / BUY / SELL / CLOSE |
 | Reward | equity-change/step **+ deliberate shaping**: −breach_penalty, +pass_bonus(+10%), +NY index bonus *(when merged)* |
 | FTMO rules | +2.5%/day of **initial**; phase-1 **4% trailing**; two-phase bank → optional **1% trailing**; **+10%** challenge pass; daily 5% / total 10% hard lines |
 | Per-asset sizing | `config/asset_specs.py` — each symbol sized so ~one daily range ≈ +2.5%, full adverse day < 4% |
-| Alpha roster | gravity + the pack *(15 on `main`; 16 once the ORB PR merges)* |
+| Alpha roster | **18** filled slots (0–17): gravity, regime-pulse, cci-surge, sma-stack, sma-reversion, ORB, + 2 ADX-DI alignment |
 | Transaction cost | per-side fraction of notional (`TRANSACTION_COST_FRAC_PER_SIDE`) |
 
 > Print the exact live values any time with `env_spec()` / `env_fingerprint()` — never trust memory.

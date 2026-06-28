@@ -5,7 +5,7 @@
 #      decisions cycling symbol-by-symbol, a shared equity/DD pot, the alpha-shaping
 #      reward (USE+BEAT the alphas, PnL-capped), midnight day-scoring (won/failed day +
 #      4-in-a-row), pot-level breach/+10% pass, and two-phase banking that flattens the
-#      WHOLE book. Same 479 obs, same fingerprint -> ranked head-to-head with CPU policies.
+#      WHOLE book. Same 499 obs, same fingerprint -> ranked head-to-head with CPU policies.
 # WHERE jax_tpu/jax_portfolio_env.py
 # HOW   PortfolioState pytree (shared-pot scalars + per-symbol position/entry/alpha-entry
 #       arrays + symbol cursor j). step decides symbol j at bar t; when j wraps, the bar
@@ -60,7 +60,7 @@ class PortfolioParams(NamedTuple):
 
 
 class PortfolioDeviceStatic(NamedTuple):
-    static_obs: jnp.ndarray     # (N, T, 479)
+    static_obs: jnp.ndarray     # (N, T, 499)
     close: jnp.ndarray          # (N, T)
     is_new_day: jnp.ndarray     # (T,)
     ref_move: jnp.ndarray       # (N, T)

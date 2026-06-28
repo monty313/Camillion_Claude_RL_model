@@ -127,9 +127,9 @@ N_ACTIONS: int = len(ACTIONS)
 SIGNAL_MEMORY_LAGS: int = 5
 
 # =====================================================================
-# OBSERVATION CONTRACT (v1.3.0) -- block sizes in concatenation order.
-# Total = 461 float32 (v1.3.0 appended a 10-float SIZING block). Adding
-# strategies fills alpha slots and does NOT change this number. Changing any
+# OBSERVATION CONTRACT (v1.6.0) -- block sizes in concatenation order.
+# Total = 499 float32 (v1.6.0 appended a 20-float RAW OHLC block at the END).
+# Adding strategies fills alpha slots and does NOT change this number. Changing any
 # size here = new contract version (see docs/OBSERVATION_CONTRACT.md).
 # =====================================================================
 OBS_BLOCK_INDICATORS: int = N_INDICATORS_TOTAL   # 220 raw market inputs (v1.2.0)
@@ -161,6 +161,13 @@ OBS_BLOCK_CROSS_ASSET: int = len(ASSET_CLASSES) + 5  # classes + (move/ATR, ATR/
 # expressed RELATIVE to the symbol's own average so it is comparable across the universe, plus a
 # TIME-aware "am I on pace to pass" read (days elapsed, return so far, pace vs +2.5%/day, remaining). ---
 OBS_BLOCK_RECENT_CONTEXT: int = 8
+# --- v1.6.0: RAW OHLC block. Open/High/Low/Close of the last CLOSED bar on each of the 5 timeframes
+# (TIMEFRAMES order; fields O,H,L,C). The policy finally SEES High/Low/Open, not just close. RAW
+# (never normalized), exactly like the indicator block. Built at cache time from the resampled bars
+# (the env does not carry high/low) and threaded in via src/data/aux_features.py. APPENDED AT THE END
+# so obs indices 0..478 are UNCHANGED; only new indices 479..498 are added. DELIBERATE contract bump
+# (operator 2026-06-28): a trained v1.5.0 policy must retrain because the shape changed. ---
+OBS_BLOCK_OHLC: int = N_TIMEFRAMES * 4           # 20  (O,H,L,C per timeframe)
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -178,9 +185,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("sizing",           OBS_BLOCK_SIZING),       # v1.3.0 (appended -> 0..450 indices unchanged)
     ("cross_asset",      OBS_BLOCK_CROSS_ASSET),  # v1.4.0 (appended -> 0..460 indices unchanged)
     ("recent_context",   OBS_BLOCK_RECENT_CONTEXT),  # v1.5.0 (appended -> 0..470 indices unchanged)
+    ("ohlc",             OBS_BLOCK_OHLC),         # v1.6.0 (appended -> 0..478 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 479 (v1.5.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 499 (v1.6.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.5.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.6.0"

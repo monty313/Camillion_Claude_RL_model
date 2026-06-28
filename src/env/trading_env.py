@@ -27,6 +27,7 @@ from config.ftmo_config import load_active_config
 from config import variables as V
 from config import asset_specs as A
 from src.indicators.base import ALL_INDICATOR_COLUMNS
+from src.data import aux_features as AX
 from src.strategies.context import MarketContext
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
@@ -52,11 +53,24 @@ class TradingEnv:
                  symbol: str | None = None, value_per_point: float | None = None,
                  window: int | None = None, warmup: int = 200,
                  random_window: bool = False, seed: int | None = None,
-                 progress: bool = False, precomputed: dict | None = None):
+                 progress: bool = False, precomputed: dict | None = None,
+                 aux=None):
         self.ind = np.asarray(indicators, dtype=np.float32)
         self.close = np.asarray(close, dtype=np.float64).ravel()
         self.time_ns = np.asarray(time_ns).astype("int64").ravel()
         self.T = self.close.shape[0]
+        # v1.6.0 aux array (T, 32) = raw OHLC obs block (20) + ADX-DI side-channel (12). Optional:
+        # None (old caches / synthetic tests) -> OHLC obs block is zeros and the two ADX-DI alphas stay
+        # inactive (NaN -> abstain). OHLC is read in _obs; the DI half feeds the ctx in _precompute only.
+        self.aux = None if aux is None else np.asarray(aux, dtype=np.float32)
+        if self.aux is not None and self.aux.shape[0] != self.T:
+            raise ValueError(f"aux length {self.aux.shape[0]} != T {self.T} (must be time-aligned with close)")
+        if self.aux is not None:
+            self.ohlc_matrix = np.ascontiguousarray(self.aux[:, AX.OHLC_SLICE], dtype=np.float32)
+            self._ctx_cols = list(ALL_INDICATOR_COLUMNS) + list(AX.DI_COLUMNS)
+        else:
+            self.ohlc_matrix = np.zeros((self.T, C.OBS_BLOCK_OHLC), dtype=np.float32)
+            self._ctx_cols = ALL_INDICATOR_COLUMNS
         self.cfg = cfg or load_active_config()
         self.position_size = float(position_size)
         self.breach_penalty = float(breach_penalty)
@@ -100,10 +114,11 @@ class TradingEnv:
         T = self.T
         self.alpha_matrix = np.zeros((T, C.MAX_STRATEGIES), dtype=np.float32)
         _rep = max(1, T // 10) if getattr(self, "_progress", False) else 0   # ~10 progress ticks/symbol
+        di = None if self.aux is None else self.aux[:, AX.DI_SLICE]   # ADX-DI side-channel for the ctx
         for i in range(T):
+            row = self.ind[i].tolist() if di is None else (self.ind[i].tolist() + di[i].tolist())
             ctx = MarketContext(close=float(self.close[i]),
-                                indicators=dict(zip(ALL_INDICATOR_COLUMNS,
-                                                    self.ind[i].tolist())),
+                                indicators=dict(zip(self._ctx_cols, row)),
                                 bar_index=i, symbol=self.symbol or "",
                                 minute_of_day=int(self._minute_of_day[i]))
             self.alpha_matrix[i] = registry.collect_alphas(ctx)
@@ -406,6 +421,7 @@ class TradingEnv:
                 prev2=float(self._prev2_day[i]), today_sofar=float(self._today_sofar[i]),
                 typical_range=self._typical_range, days_elapsed=self._days_elapsed),
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
+            "ohlc": self.ohlc_matrix[i],   # v1.6.0: raw O/H/L/C per timeframe (zeros if no aux)
         })
 
     def _portfolio_block(self):

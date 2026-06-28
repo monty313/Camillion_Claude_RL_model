@@ -19,8 +19,8 @@
   - **`+1`** = active **BUY** setup (go long)
   - **`-1`** = active **SELL** setup (go short)
   - **`0`** = **inactive** — *this alpha sees no setup right now*
-- There are **16 production alphas** (canonical slots **0–15**) plus **3 example /
-  teaching strategies** (not wired into training). They fall into **6 families**:
+- There are **18 production alphas** (canonical slots **0–17**) plus **3 example /
+  teaching strategies** (not wired into training). They fall into **7 families**:
 
 | Family | Slots | Count | One-line idea |
 |---|---|---|---|
@@ -30,6 +30,7 @@
 | **SMA Stack Prophet** | 9–12 | 4 | Close vs a lagged SMA-of-high / SMA-of-low "envelope" on two TFs; **trend** vs **pullback** |
 | **SMA Reversion Rally** | 13–14 | 2 | Higher-TF SMA30>SMA50 regime + lower-TF close **re-crossing** its SMA30 (rejoin the trend) |
 | **ORB NY Breakout** | 15 | 1 | **Indices only** — break of the New-York opening range, filtered by the 30m SMA200; stateful per day |
+| **ADX-DI Alignment** | 16–17 | 2 | ADX/DMI **+DI vs −DI** on periods 14 & 45 across two TFs; **all −DI > +DI = SELL**, **all −DI < +DI = BUY** |
 | *Examples (not registered)* | — | 3 | SMA50/200 cross, RSI14 reversion, Bollinger breakout — teaching templates |
 
 > **Crucial distinction — `alpha = 0` is NOT "hold".** Alpha `0` means *"this
@@ -141,11 +142,11 @@ order = the slot order**:
 | 13 | `sma_reversion_rally_5m_30m` | SMA Reversion | 30m → 5m |
 | 14 | `sma_reversion_rally_30m_4h` | SMA Reversion | 4h → 30m |
 | 15 | `orb_ny_breakout_indices` | ORB | indices only |
-| 16–63 | *(empty)* | — | headroom |
+| 16 | `adx_di_align_5m_30m` | ADX-DI | 5m **&** 30m (periods 14 & 45) |
+| 17 | `adx_di_align_30m_4h` | ADX-DI | 30m **&** 4h (periods 14 & 45) |
+| 18–63 | *(empty)* | — | headroom |
 
-> The `alpha_pack.py` docstring still says *"gravity + the 14-alpha pack
-> (slots 1–14)"* — that wording predates the ORB alpha. The live count is **16**
-> filled slots (0–15).
+> The live count is **18** filled slots (0–17).
 
 ### How the policy actually sees the alphas
 
@@ -214,7 +215,7 @@ guard with `is_valid` / `_v` and fall back to `0`.
 
 ---
 
-## 3. The 16 production alphas
+## 3. The 18 production alphas
 
 Each writeup gives: the **idea** (prose), the **exact** BUY / SELL / INACTIVE
 rule (code box), the indicators it reads, and the key thresholds. A recurring
@@ -492,6 +493,39 @@ Stateful · indices only · registered.
 
 ---
 
+### Slots 16–17 — ADX-DI Alignment (`AdxDiAlign…`)
+
+📄 `adx_di_align_{5m_30m,30m_4h}_alpha.py` · classes `AdxDiAlign5m30mAlpha`, `AdxDiAlign30m4hAlpha`
+
+**Idea.** The ADX / DMI directional system. For each timeframe it reads the **+DI** (bullish
+directional movement) and **−DI** (bearish) lines at **two periods, 14 and 45**. Each alpha looks at
+**both of its timeframes** → **4 (timeframe × period) DI pairs**. It fires only when **all four agree**
+(operator 2026-06-28):
+
+```text
+# 4 pairs: (14@tfA, 45@tfA, 14@tfB, 45@tfB)
+SELL (-1):  -DI > +DI on ALL four   # bears in control on every TF AND every period
+BUY  (+1):  -DI < +DI on ALL four   # bulls in control everywhere
+INACTIVE (0): any pair disagrees, any pair is equal, or any value is still warming up
+```
+
+The two members differ only in the **TF pair**:
+
+| Slot | Name | Timeframes | Periods |
+|---:|---|---|---|
+| 16 | `adx_di_align_5m_30m` | 5m **&** 30m | 14 & 45 |
+| 17 | `adx_di_align_30m_4h` | 30m **&** 4h | 14 & 45 |
+
+> **The +DI/−DI are NOT in the 220-indicator vocabulary** (and NOT in the observation). ADX/DMI was new
+> to the repo, and the DI lines need raw high/low the env does not carry. They are precomputed at cache
+> time (`src/indicators/adx.py` → Wilder +DI/−DI, TA-Lib fast-path) into a **strategy-only side-channel**
+> (`src/data/aux_features.py`, columns `{tf}__plus_di{p}` / `{tf}__minus_di{p}` for 5m/30m/4h × 14/45)
+> and injected into the `MarketContext` for these two alphas only. The rule uses **only the sign of
+> (−DI − +DI)**; the ADX trend-strength line itself is available (`adx()`) but not used. Stateless ·
+> all assets · registered.
+
+---
+
 ## 4. Example / teaching strategies (NOT registered)
 
 📁 [src/strategies/examples/](../src/strategies/examples/) — three minimal,
@@ -554,6 +588,8 @@ All three guard with `MarketContext.is_valid(...)` and return `0` during warm-up
 | 13 | sma_reversion_rally_5m_30m | SMA Reversion | rally | 30m→5m | SMA30, SMA50, close |
 | 14 | sma_reversion_rally_30m_4h | SMA Reversion | rally | 4h→30m | SMA30, SMA50, close |
 | 15 | orb_ny_breakout_indices | ORB | breakout (stateful) | 30m + 1m close | opening range, 30m SMA200 |
+| 16 | adx_di_align_5m_30m | ADX-DI | trend-direction agreement | 5m+30m | +DI/−DI (14 & 45) |
+| 17 | adx_di_align_30m_4h | ADX-DI | trend-direction agreement | 30m+4h | +DI/−DI (14 & 45) |
 | — | sma_trend_50_200 | *example* | trend | 1m | SMA50, SMA200 |
 | — | rsi14_reversion | *example* | reversion | 1m | RSI14 |
 | — | bb20_2_breakout | *example* | breakout | 1m | BB(20, 2.0) |

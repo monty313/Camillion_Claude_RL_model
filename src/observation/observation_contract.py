@@ -18,6 +18,7 @@ from __future__ import annotations
 import numpy as np
 from config import constants as C
 from src.indicators.base import ALL_INDICATOR_COLUMNS
+from src.data.aux_features import OHLC_COLUMNS  # v1.6.0 raw OHLC obs block names (20)
 
 ACCOUNT_DAILY_NAMES = (
     "daily_win_rate_pct", "daily_realized_pnl_pct", "daily_drawdown_used_pct",
@@ -72,6 +73,7 @@ def _block_names() -> dict[str, list[str]]:
         "sizing": list(SIZING_NAMES),
         "cross_asset": list(CROSS_ASSET_NAMES),
         "recent_context": list(RECENT_CONTEXT_NAMES),
+        "ohlc": list(OHLC_COLUMNS),   # v1.6.0: raw O/H/L/C per timeframe (20)
     }
 
 

@@ -79,19 +79,20 @@ class StateProvider:
     def from_cache(cls, data_dir: str, symbol: str = "EURUSD", policy=None, warmup: int = 200):
         """Wire the provider to a REAL precomputed market cache (src/data/cache_builder.build_cache).
 
-        This is the 'go live' path: real data -> the real TradingEnv + the real 16 alphas.
+        This is the 'go live' path: real data -> the real TradingEnv + the real 18 alphas.
         `policy` is an optional callable obs->(logits,value). Build it from a TRAINED model loaded
         WITH its VecNormalize stats (src/training/trainer.load_for_eval + sb3_policy_fn) so the
         observation is scaled exactly as it was at train time; pass None for the honest no-model feed.
         """
-        from src.data.cache_builder import load_cache
+        from src.data.cache_builder import load_cache, load_aux
         from src.strategies.registry import AlphaRegistry
         from src.strategies.alpha_pack import register_all
         from src.env.trading_env import TradingEnv
         from config import asset_specs as A
         ind, close, time_ns = load_cache(data_dir, symbol)
+        aux = load_aux(data_dir, symbol)   # v1.6.0 OHLC obs block + ADX-DI side-channel (None for old caches)
         reg = AlphaRegistry(); register_all(reg)
-        kw = {"symbol": symbol, "warmup": int(warmup)}
+        kw = {"symbol": symbol, "warmup": int(warmup), "aux": aux}
         if symbol in A.SPECS:
             kw["position_size"] = A.calibrated_position_size(symbol)   # per-asset calibrated size
         env = TradingEnv(np.asarray(ind), np.asarray(close), np.asarray(time_ns), reg, **kw)

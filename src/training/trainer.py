@@ -154,14 +154,15 @@ def _make_day_report_callback(report_env, report_envs, total_timesteps, *, evals
 
 def train(indicators, close, time_ns, registry_factory, *, total_timesteps=1_000_000,
         n_envs=None, save_path="models/camillion_ppo", eval_env=None,
-        eval_freq: int | None = None, **env_kwargs):
-    """Train PPO with obs normalization (F1). SB3/torch imported here (Colab)."""
+        eval_freq: int | None = None, aux=None, **env_kwargs):
+    """Train PPO with obs normalization (F1). SB3/torch imported here (Colab).
+    `aux` (v1.6.0 OHLC obs block + ADX-DI side-channel) keeps single-symbol training on the full obs."""
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import EvalCallback
     from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_vec_env
 
-    venv = make_vec_env(indicators, close, time_ns, registry_factory, n_envs, **env_kwargs)
+    venv = make_vec_env(indicators, close, time_ns, registry_factory, n_envs, aux=aux, **env_kwargs)
     venv = VecNormalize(venv, **VECNORM_KW)            # F1: standardize policy input
     model = PPO("MlpPolicy", venv, verbose=1, **PPO_HPARAMS)
     cb = None
@@ -246,7 +247,7 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
 
     `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned across symbols). Every worker
     is a full PortfolioEnv: the policy decides one symbol at a time while seeing the shared pot's
-    exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (479),
+    exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (499),
     actions, VecNormalize and the MlpPolicy are identical to single-symbol training.
 
     resume=True (default): if a matching past model already exists at save_path, CONTINUE its training
@@ -266,7 +267,7 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
                                  symbols=symbols, use_subproc=tuned["use_subproc"], **env_kwargs)
     # RESUME (warm-start): if a past model + its saved stats already exist at save_path AND their obs/action
     # spaces MATCH this run, LOAD and CONTINUE training. SB3's PPO.load raises on any mismatch (e.g. a changed
-    # 479-obs contract), so a non-matching/old/absent model cleanly falls back to a FRESH bot. resume=False forces fresh.
+    # 499-obs contract), so a non-matching/old/absent model cleanly falls back to a FRESH bot. resume=False forces fresh.
     import os
     model = None
     _zip = save_path if save_path.endswith(".zip") else save_path + ".zip"
@@ -325,14 +326,14 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
 
 def resume(save_path, indicators, close, time_ns, registry_factory, *,
         total_timesteps=500_000, n_envs=None, eval_env=None,
-        eval_freq: int | None = None, **env_kwargs):
+        eval_freq: int | None = None, aux=None, **env_kwargs):
     """Resume training, restoring the saved normalization stats (keeps stats updating)."""
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import EvalCallback
     from stable_baselines3.common.vec_env import VecNormalize
     from src.training.vector_env_factory import make_vec_env
 
-    venv = make_vec_env(indicators, close, time_ns, registry_factory, n_envs, **env_kwargs)
+    venv = make_vec_env(indicators, close, time_ns, registry_factory, n_envs, aux=aux, **env_kwargs)
     venv = VecNormalize.load(_vecnorm_path(save_path), venv)   # restore mean/std
     venv.training = True; venv.norm_reward = False
     model = PPO.load(save_path, env=venv)
@@ -348,18 +349,19 @@ def resume(save_path, indicators, close, time_ns, registry_factory, *,
     return model
 
 
-def load_for_eval(save_path, indicators, close, time_ns, registry_factory, **env_kwargs):
+def load_for_eval(save_path, indicators, close, time_ns, registry_factory, *, aux=None, **env_kwargs):
     """Load model + FROZEN normalization stats for leakage-free eval / walk-forward.
 
     training=False so (1) the policy sees the same scaling it trained on, and
     (2) eval observations do NOT update the running stats. Returns (model, venv).
+    `aux` (v1.6.0 OHLC obs block + ADX-DI side-channel) is explicit so an eval env matches training.
     """
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
     from src.training.gym_adapter import make_gym_env
 
     venv = DummyVecEnv([lambda: make_gym_env(indicators, close, time_ns,
-                                             registry_factory(), **env_kwargs)])
+                                             registry_factory(), aux=aux, **env_kwargs)])
     venv = VecNormalize.load(_vecnorm_path(save_path), venv)
     venv.training = False        # freeze stats (no eval-time leakage)
     venv.norm_reward = False
