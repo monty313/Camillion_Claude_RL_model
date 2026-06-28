@@ -55,6 +55,12 @@ FTMO_ALPHA_AGREE_BONUS: float = 0.001       # USE the alphas: profitable close t
 FTMO_ALPHA_AGAINST_PENALTY: float = 0.001   # penalty for OPENING a trade against >=50% of firing alphas
 FTMO_ALPHA_BEAT_BONUS: float = 0.002        # BEAT the alphas: 2x the others (so beating isn't cancelled by the against-penalty); profit + day-up + capped at PnL
 
+# --- PER-DAY consistency signal: a "won day" = the day ENDS at >= +2.5% of INITIAL (measured at midnight,
+#     AFTER any give-back), NOT merely banking it intraday. Reward a won day, penalise a failed day. This
+#     also makes giving back a banked +2.5% (phase-2 leash) a real cost. Tune the magnitudes. ---
+FTMO_DAY_PASS_REWARD: float = 0.025         # reward when the day ENDS >= +2.5% of initial (a won day)
+FTMO_DAY_FAIL_PENALTY: float = 0.025        # penalty when the day ENDS below +2.5% (a failed day)
+
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
 # decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York
 # session on INDEX instruments. NY open = 13:30 UTC. A bonus QUALIFIES when, on indices, the

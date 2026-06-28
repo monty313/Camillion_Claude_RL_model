@@ -148,6 +148,9 @@ class PortfolioEnv:
         self._alpha_agree = float(getattr(self.cfg, "alpha_agree_bonus", 0.0))
         self._alpha_against = float(getattr(self.cfg, "alpha_against_penalty", 0.0))
         self._alpha_beat = float(getattr(self.cfg, "alpha_beat_bonus", 0.0))
+        # per-DAY consistency: a "won day" ENDS >= +2.5% of initial (scored at midnight, after any give-back)
+        self._day_pass_reward = float(getattr(self.cfg, "day_pass_reward", 0.0))
+        self._day_fail_penalty = float(getattr(self.cfg, "day_fail_penalty", 0.0))
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -202,8 +205,7 @@ class PortfolioEnv:
         self._cur_date = self._dates[self.t]
         self._days_elapsed = 0
         self._reset_phase2()                                   # per-day two-phase state on the shared pot
-        self._daily_pass_streak = 0                            # consecutive days that banked +2.5% (consistency)
-        self._day_passed = False                               # did TODAY bank +2.5% (net of fees)?
+        self._daily_pass_streak = 0                            # consecutive WON days (ended >= +2.5%) -> consistency
         self._entry_agreed = {}                                # per-open: did the entry agree with >=50% firing alphas?
         self._entry_alpha_dir = {}                             # per-open: the alpha consensus direction at entry
         self._mark()
@@ -381,8 +383,10 @@ class PortfolioEnv:
         #                                                                            divergent WIN isn't cancelled by AGAINST)
         #
         #   (3) ON BAR-ADVANCE (every len(symbols) steps, below):
-        #         - CONSISTENCY: 4 banked +2.5% days IN A ROW            -> + pass_bonus (1.0)   [rarely fires until
-        #                        the streak resets each episode; needs longer windows — Batch A, staged]
+        #         - PER-DAY at midnight: a "WON day" = the day ENDS >= +2.5% of initial (AFTER any give-back).
+        #                        won  -> + day_pass_reward (0.025)   failed -> - day_fail_penalty (0.025)
+        #         - CONSISTENCY: 4 WON days IN A ROW                     -> + pass_bonus (1.0)   [rarely fires until
+        #                        the window is long enough to contain 4 days — Batch A, staged]
         #         - BREACH: 4% trailing / 5% daily / 10% total (LIVE pot) -> - breach_penalty (1.0) + episode ENDS
         #         - +10% PASS: eval -> ENDS + pass_bonus; training(continue_after_pass) -> keep going (streak rewards it)
         #
@@ -398,18 +402,23 @@ class PortfolioEnv:
         truncated = False
         daily_target_hit = False
         if bar_advanced:
-            if self._dates[self.t] != self._cur_date:          # midnight -> per-day FTMO reset
-                # consistency reward: did the day that just ENDED bank +2.5%? 4 such days IN A ROW = a BIG
-                # bonus (and we KEEP training for more streaks). A failed day breaks the streak.
-                if self._day_passed:
+            if self._dates[self.t] != self._cur_date:          # midnight -> SCORE the day that just ENDED, then reset
+                # A "WON day" = the day ENDS at >= +2.5% of INITIAL (measured here at midnight, AFTER any
+                # give-back -- so banking +2.5% then leaking it back to +1.5% counts as a FAIL). Reward a won
+                # day, penalise a failed day; 4 WON days IN A ROW = a big bonus (we keep training for more).
+                d0 = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
+                day_end_gain = self.acc.equity - d0
+                won = day_end_gain >= (self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance)
+                if won:
+                    reward += self._day_pass_reward            # consistency: reward a WON day
                     self._daily_pass_streak += 1
                     if self._daily_pass_streak % 4 == 0:
-                        reward += self.pass_bonus              # +10% / 4-in-a-row achieved -> big bonus
+                        reward += self.pass_bonus              # 4 won days IN A ROW -> big bonus
                 else:
+                    reward -= self._day_fail_penalty           # consistency: penalise a FAILED day
                     self._daily_pass_streak = 0
                 self.acc.reset_day()
                 self._reset_phase2()                           # new day -> clear the day-lock / phase-2
-                self._day_passed = False
                 self._cur_date = self._dates[self.t]
                 self._days_elapsed += 1
             rep = BD.detect(self.acc, self.cfg)                # breach on the SHARED pot
@@ -434,7 +443,8 @@ class PortfolioEnv:
                 hit_net = (net_equity - day0) >= target_amt
                 if hit_net and not self._phase2_active and not self._day_locked:
                     self._flatten_all()                        # +2.5% (net) reached -> bank the whole book
-                    self._day_passed = True                    # counts toward the 4-in-a-row streak
+                    # NOTE: "won day" is scored at MIDNIGHT on the day's ENDING equity (not here), so a bank
+                    # that later gives back under the 1% leash correctly counts as a FAIL.
                     if getattr(self.cfg, "phase2_continue", False):
                         self._phase2_active = True
                         self._phase2_peak = self.acc.equity    # fresh 1% trail starts here

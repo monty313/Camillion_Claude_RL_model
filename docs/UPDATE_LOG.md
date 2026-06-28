@@ -780,3 +780,23 @@ report covers all days, model save/load works).
   pure follower bias (the leader-chasing the doctor flags). At 2x, a (large) divergent win nets +0.001 =
   the agreeing win → the follower bias is REMOVED (now neutral). Conditions unchanged (profit + day-up +
   capped at PnL). To make it actively PREFER beating, set beat > 2x. Suite 188/188; audit GO.
+
+## [2026-06-28] PER-DAY consistency scoring: "won day" = ENDS ≥ +2.5%, reward a won day / penalise a failed day
+- **I:** Operator: "a won day is only at the end of the day it has 2.5% of initial or more" + "there needs to
+  be a reward for passing the day AND failing the day." Before, a day counted as passed the moment it BANKED
+  +2.5% intraday (`_day_passed` set at the bank) — so banking +2.5% then leaking it back to +1.5% under the
+  phase-2 1% leash still counted as a "pass." That's the give-back hole the external review flagged.
+- **R:** consistency shaping; obs(479)/FTMO numbers unchanged; deliberate (per operator). **A:** removed the
+  intraday `_day_passed` flag; the day is now SCORED AT MIDNIGHT on its ENDING equity: `won = (equity −
+  day_start) ≥ 2.5% of initial`. A won day adds `day_pass_reward` (0.025) and advances the streak (4-in-a-row
+  still adds the big `pass_bonus`); a failed day subtracts `day_fail_penalty` (0.025) and resets the streak.
+  Coefs in `config/variables.py` (FTMO_DAY_PASS_REWARD / FTMO_DAY_FAIL_PENALTY), tunable.
+- **Why this is good:** (1) it makes the streak count REAL end-of-day wins, not transient banks; (2) it turns
+  giving back a banked +2.5% into a FAIL → a real cost → directly addresses the phase2_continue give-back
+  concern via the reward; (3) the fail penalty applies whether you trade or HOLD, so it pressures REACHING
+  +2.5% rather than sitting — low freeze risk. (Honest caveat: too large a fail penalty could push reckless
+  risk-taking to avoid failing → tune it; default 0.025 = the daily target magnitude.)
+- **Verified:** +3 tests (`tests/test_portfolio_day_score.py`): a +3% day → +pass at midnight; a +0.5% day and
+  a flat day → −penalty; the 4-in-a-row test still passes on the end-of-day logic. Suite 191/191; audit ✅ GO.
+- **C:** the consistency signal now means what the operator intends — the bot is rewarded for FINISHING days at
+  ≥ +2.5% and penalised for not, with give-backs correctly counted as fails.

@@ -43,6 +43,9 @@ class FTMOConfig:
     alpha_agree_bonus: float = 0.001       # USE the alphas: profitable close that agreed with >=50% firing alphas
     alpha_against_penalty: float = 0.001   # penalty for OPENING against >=50% firing alphas
     alpha_beat_bonus: float = 0.002        # BEAT the alphas: 2x (so a divergent win isn't cancelled by the against-penalty)
+    # per-day consistency: a "won day" ENDS >= +2.5% of initial (measured at midnight, after any give-back)
+    day_pass_reward: float = 0.025         # reward a won day
+    day_fail_penalty: float = 0.025        # penalty for a failed day (ended below +2.5%)
 
 
 @dataclass(frozen=True)
@@ -73,7 +76,9 @@ def load_ftmo_config() -> FTMOConfig:
         alpha_reward_enabled=getattr(V, "FTMO_ALPHA_REWARD_ENABLED", True),
         alpha_agree_bonus=getattr(V, "FTMO_ALPHA_AGREE_BONUS", 0.001),
         alpha_against_penalty=getattr(V, "FTMO_ALPHA_AGAINST_PENALTY", 0.001),
-        alpha_beat_bonus=getattr(V, "FTMO_ALPHA_BEAT_BONUS", 0.001),
+        alpha_beat_bonus=getattr(V, "FTMO_ALPHA_BEAT_BONUS", 0.002),
+        day_pass_reward=getattr(V, "FTMO_DAY_PASS_REWARD", 0.025),
+        day_fail_penalty=getattr(V, "FTMO_DAY_FAIL_PENALTY", 0.025),
     )
 
 
