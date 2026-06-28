@@ -42,7 +42,7 @@ class FTMOConfig:
     alpha_reward_enabled: bool = True
     alpha_agree_bonus: float = 0.001       # USE the alphas: profitable close that agreed with >=50% firing alphas
     alpha_against_penalty: float = 0.001   # penalty for OPENING against >=50% firing alphas
-    alpha_beat_bonus: float = 0.001        # BEAT the alphas: closed-trade PnL out-earned following the consensus
+    alpha_beat_bonus: float = 0.002        # BEAT the alphas: 2x (so a divergent win isn't cancelled by the against-penalty)
 
 
 @dataclass(frozen=True)

@@ -775,3 +775,8 @@ report covers all days, model save/load works).
 - **C:** the portfolio bot is now trained to lean on the alphas when they pay AND to be rewarded for beating
   them — a deliberate, reversible, PnL-capped design choice. (Honest caveat: this trains toward consensus-use,
   which the `policy_doctor` leader-chasing detector exists to watch; judge it on a real run.)
+- **[2026-06-28] BEAT bonus DOUBLED (0.001 → 0.002, operator).** Fixes the cancellation flagged earlier: with
+  equal coefs a divergent win netted 0 (BEAT +0.001 − AGAINST 0.001) while an agreeing win netted +0.001 → a
+  pure follower bias (the leader-chasing the doctor flags). At 2x, a (large) divergent win nets +0.001 =
+  the agreeing win → the follower bias is REMOVED (now neutral). Conditions unchanged (profit + day-up +
+  capped at PnL). To make it actively PREFER beating, set beat > 2x. Suite 188/188; audit GO.

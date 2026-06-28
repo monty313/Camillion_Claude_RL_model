@@ -53,7 +53,7 @@ FTMO_PROFIT_TARGET_PCT: float = 10.0        # FTMO Challenge PASS target (episod
 FTMO_ALPHA_REWARD_ENABLED: bool = True       # master switch for the three alpha terms below
 FTMO_ALPHA_AGREE_BONUS: float = 0.001       # USE the alphas: profitable close that AGREED with >=50% of firing alphas
 FTMO_ALPHA_AGAINST_PENALTY: float = 0.001   # penalty for OPENING a trade against >=50% of firing alphas
-FTMO_ALPHA_BEAT_BONUS: float = 0.001        # BEAT the alphas: closed-trade PnL out-earned following the consensus
+FTMO_ALPHA_BEAT_BONUS: float = 0.002        # BEAT the alphas: 2x the others (so beating isn't cancelled by the against-penalty); profit + day-up + capped at PnL
 
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
 # decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York
