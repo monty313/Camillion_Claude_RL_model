@@ -168,6 +168,17 @@ OBS_BLOCK_RECENT_CONTEXT: int = 8
 # so obs indices 0..478 are UNCHANGED; only new indices 479..498 are added. DELIBERATE contract bump
 # (operator 2026-06-28): a trained v1.5.0 policy must retrain because the shape changed. ---
 OBS_BLOCK_OHLC: int = N_TIMEFRAMES * 4           # 20  (O,H,L,C per timeframe)
+# --- v1.7.0: TRADE-RISK block (14 floats). The live RISK state of the CURRENT symbol's open trade so the
+# policy can MANAGE it (when to hold/close) and learn to RE-ENTER a winner: in-trade flag + direction,
+# unrealized P&L in ATR units and as % of the pot, how close price is to the 2x-ATR(14) SOFT stop and to
+# the 1m Bollinger(10,1) opposite-band HARD stop (0->1), bars held, max favorable/adverse excursion (ATR),
+# re-entry context (bars since this symbol's last close, that trade's direction, price-vs-last-exit in ATR),
+# and whether price is stacked ABOVE / BELOW BB200(dev1) AND BB10(dev1) on BOTH 1m and 5m (the band-stack
+# enter-bonus condition). All bounded ~[-1,1] / [0,1]. APPENDED AT THE END -> obs indices 0..498 UNCHANGED;
+# only new indices 499..512 are added. DELIBERATE contract bump (operator 2026-06-29): a v1.6.0 policy must
+# retrain because the shape changed. The block is DYNAMIC (recomputed each step from the position state);
+# the 1m+5m BB(10,1) bands it reads are precomputed in TradingEnv._precompute (no cache-format change). ---
+OBS_BLOCK_TRADE_RISK: int = 14
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -186,9 +197,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("cross_asset",      OBS_BLOCK_CROSS_ASSET),  # v1.4.0 (appended -> 0..460 indices unchanged)
     ("recent_context",   OBS_BLOCK_RECENT_CONTEXT),  # v1.5.0 (appended -> 0..470 indices unchanged)
     ("ohlc",             OBS_BLOCK_OHLC),         # v1.6.0 (appended -> 0..478 indices unchanged)
+    ("trade_risk",       OBS_BLOCK_TRADE_RISK),   # v1.7.0 (appended -> 0..498 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 499 (v1.6.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 513 (v1.7.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.6.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.7.0"

@@ -38,7 +38,11 @@ def test_save_then_load_gives_identical_features_and_obs():
     assert loaded is not None, "exact same inputs must be a cache HIT"
     env2 = TradingEnv(ind, close, tns, _reg(), symbol="EURUSD", precomputed=loaded)
     for a in TradingEnv._PRECOMPUTED_ATTRS:
-        assert np.array_equal(np.asarray(getattr(env, a)), np.asarray(getattr(env2, a))), f"array {a} differs"
+        a1 = np.asarray(getattr(env, a)); a2 = np.asarray(getattr(env2, a))
+        # NaN-safe equality: the v1.7.0 BB(10,1) bands carry a NaN warmup, and NaN != NaN under the
+        # plain array_equal -> use equal_nan for float arrays (identical NaN positions count as equal).
+        eq = np.array_equal(a1, a2, equal_nan=np.issubdtype(a1.dtype, np.floating))
+        assert eq, f"array {a} differs"
     env.reset(); env2.reset()
     for _ in range(5):                                   # the observation must be byte-identical to a rebuild
         assert np.array_equal(env._obs(), env2._obs())
@@ -104,9 +108,9 @@ def test_from_disk_worker_builds_env_via_cache():
     # 4-tuple per symbol (with aux) -- EXACTLY what the worker loads -> the cache the parent saves HITS.
     sd = align_symbol_data({s: (*load_cache(dcache, s), load_aux(dcache, s)) for s in syms})
     build_portfolio_subs(sd, _reg, progress=False, feature_cache_dir=fcache)   # parent populates the cache
-    # the worker rebuilds purely from disk -> must be a cache HIT and a valid 499 obs
+    # the worker rebuilds purely from disk -> must be a cache HIT and a valid 513 obs
     env = make_portfolio_gym_env_from_disk(dcache, syms, feature_cache_dir=fcache, warmup=0)
     obs, _ = env.reset()
-    assert obs.shape == (499,) and np.all(np.isfinite(obs))
+    assert obs.shape == (513,) and np.all(np.isfinite(obs))
     ind, close, tns, aux = sd["EURUSD"]
     assert FC.load(fcache, "EURUSD", ind, close, tns, _reg(), aux=aux) is not None   # cache populated + fingerprint matches

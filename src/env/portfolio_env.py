@@ -48,6 +48,7 @@ from src.risk import breach_detector as BD
 from src.observation import builder as OB
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
+from src.observation import trade_risk as TR
 from src.env.trading_env import TradingEnv
 
 _TARGET = {C.ACTION_HOLD: None, C.ACTION_BUY: 1, C.ACTION_SELL: -1, C.ACTION_CLOSE: 0}
@@ -85,7 +86,8 @@ def align_symbol_data(symbol_data: dict) -> dict:
 
 
 def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmup: int = 200,
-                         progress: bool = True, feature_cache_dir: str | None = None) -> dict:
+                         progress: bool = True, feature_cache_dir: str | None = None,
+                         risk_pct: float | None = None) -> dict:
     """Build ONE TradingEnv per symbol -- the expensive precompute (alphas/streaks/cross-asset over the
     whole history) -- so the result can be SHARED across every vectorised PortfolioEnv worker.
 
@@ -108,9 +110,14 @@ def build_portfolio_subs(symbol_data: dict, registry_factory, *, cfg=None, warmu
     for k, (sym, v) in enumerate(symbol_data.items(), 1):
         ind, close, time_ns, aux = unpack_symbol(v)
         ind = np.asarray(ind); close = np.asarray(close); time_ns = np.asarray(time_ns)
-        # calibrate lots to ~2.5%/day FOR THIS ACCOUNT SIZE (so behavior is identical at $10k or $200k);
-        # unknown symbols fall back to "1 lot = the account" which also scales with the balance.
-        ps = A.calibrated_position_size(sym, account=bal) if sym in A.SPECS else bal
+        # calibrate lots so that ONE typical full day on this symbol = `risk_pct`% of the account (default
+        # 2.5%). For a MULTI-symbol book the per-symbol risk should be SMALLER (positions stack): e.g. 4
+        # symbols x 0.6% = ~2.4% worst-case day, inside the 4% wall, while still able to sum to the +2.5%
+        # target. `risk_pct` is the per-trade/day risk knob (operator 2026-06-28). Unknown symbols fall back
+        # to "1 lot = the account" scaled by risk_pct/2.5 so the knob still shrinks them.
+        tp = 2.5 if risk_pct is None else float(risk_pct)
+        ps = (A.calibrated_position_size(sym, account=bal, target_pct=tp) if sym in A.SPECS
+              else bal * (tp / 2.5))
         reg = registry_factory()
         cached = fc.load(feature_cache_dir, sym, ind, close, time_ns, reg, aux=aux) if fc else None
         if cached is not None:
@@ -144,7 +151,8 @@ class PortfolioEnv:
     def __init__(self, symbol_data: dict | None = None, registry_factory=None, *, cfg=None, warmup: int = 200,
                  breach_penalty: float | None = None, reward_scale: float = 1.0, pass_bonus: float | None = None,
                  window: int | None = None, random_window: bool = False, seed: int | None = None,
-                 subs: dict | None = None, continue_after_pass: bool = False):
+                 subs: dict | None = None, continue_after_pass: bool = False,
+                 bb_stop_enabled: bool = False, risk_per_trade_pct: float | None = None):
         self.cfg = cfg or load_active_config()
         # breach cliff + pass bonus now default from the config (breach 0.2, pass 1.0); explicit args override.
         self.breach_penalty = float(breach_penalty if breach_penalty is not None
@@ -171,6 +179,14 @@ class PortfolioEnv:
         # with ZERO trades so "hiding" isn't free. Both 0.0 = pre-rebalance reward. (See config/variables.py.)
         self._seek_w = float(getattr(self.cfg, "target_seek_weight", 0.0))
         self._idle_pen = float(getattr(self.cfg, "idle_day_penalty", 0.0))
+        # v1.7.0 TRADE-RISK behaviours (all DEFAULT OFF -> existing trajectories byte-identical; the
+        # training path turns them on). bb_stop = auto-close at the 1m BB(10,1) opposite band; risk-based
+        # sizing = size each entry so a stop-out loses ~risk_per_trade_pct% of the pot (capped at the
+        # configured size); band_stack_bonus / reentry_bonus = small PnL-capped CLOSE bonuses (cfg coefs).
+        self._bb_stop_on = bool(bb_stop_enabled)
+        self._risk_pct = None if risk_per_trade_pct is None else float(risk_per_trade_pct)
+        self._band_bonus = float(getattr(self.cfg, "band_stack_bonus", 0.0))
+        self._reentry_bonus = float(getattr(self.cfg, "reentry_bonus", 0.0))
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -230,6 +246,7 @@ class PortfolioEnv:
         self._daily_pass_streak = 0                            # consecutive WON days (ended >= +2.5%) -> consistency
         self._entry_agreed = {}                                # per-open: did the entry agree with >=50% firing alphas?
         self._entry_alpha_dir = {}                             # per-open: the alpha consensus direction at entry
+        self._init_trade_risk_state()                          # v1.7.0 per-symbol open-trade risk state
         self._mark()
         return self._obs(), {"t": self.t}
 
@@ -266,7 +283,56 @@ class PortfolioEnv:
         self._daily_pass_streak = 0
         self._entry_agreed = {}
         self._entry_alpha_dir = {}
+        self._init_trade_risk_state()                          # v1.7.0: fresh per-symbol trade-risk state
         self._mark()
+
+    # ---- v1.7.0: per-symbol per-trade RISK state (trade-risk obs block + BB hard stop + risk sizing) ----
+    def _init_trade_risk_state(self) -> None:
+        """Reset every symbol's open-trade risk trackers (called on reset + restart_account)."""
+        p = self.t
+        self._trade_size = {s: float(self.subs[s].position_size) for s in self.symbols}
+        self._entry_bar = {s: int(p) for s in self.symbols}
+        self._entry_atr = {s: 0.0 for s in self.symbols}
+        self._entry_stop_band = {s: 0.0 for s in self.symbols}
+        self._mfe_atr = {s: 0.0 for s in self.symbols}
+        self._mae_atr = {s: 0.0 for s in self.symbols}
+        self._last_close_bar = {s: int(p) for s in self.symbols}
+        self._last_close_dir = {s: 0 for s in self.symbols}
+        self._last_exit_px = {s: float(self.subs[s].close[p]) for s in self.symbols}
+        self._entry_band_long = {s: False for s in self.symbols}    # band-stack at entry (enter-bonus)
+        self._entry_band_short = {s: False for s in self.symbols}
+        self._entry_reentry = {s: 0 for s in self.symbols}          # entered as a with-trend re-entry?
+
+    @staticmethod
+    def _atr_at(sub, t: int) -> float:
+        v = float(sub._atr1m[t])
+        return v if np.isfinite(v) else 0.0
+
+    def _update_excursions(self) -> None:
+        """At the (advanced) bar, update each open trade's max favorable / adverse excursion (ATR units)."""
+        i = self.t
+        for s in self.symbols:
+            if self.position[s] != 0 and self._entry_atr[s] > 0.0:
+                sub = self.subs[s]
+                exc = self.position[s] * (sub.close[i] - self.entry[s]) / self._entry_atr[s]
+                self._mfe_atr[s] = max(self._mfe_atr[s], exc)
+                self._mae_atr[s] = max(self._mae_atr[s], -exc)
+
+    def _trade_risk_block(self, sym, sub) -> np.ndarray:
+        """The 14-float v1.7.0 trade-risk block for the CURRENT symbol's open position (or re-entry context)."""
+        i = self.t
+        return TR.build(
+            pos=self.position[sym], entry_px=self.entry[sym], price=float(sub.close[i]),
+            trade_size=self._trade_size[sym], equity=self.acc.equity,
+            entry_atr=self._entry_atr[sym], atr_now=self._atr_at(sub, i),
+            entry_stop_band=self._entry_stop_band[sym],
+            bars_held=(i - self._entry_bar[sym]), mfe_atr=self._mfe_atr[sym], mae_atr=self._mae_atr[sym],
+            bars_since_close=(i - self._last_close_bar[sym]), last_dir=self._last_close_dir[sym],
+            last_exit_px=self._last_exit_px[sym],
+            bb200_1m_up=float(sub._bb200_1m_up[i]), bb200_1m_lo=float(sub._bb200_1m_lo[i]),
+            bb200_5m_up=float(sub._bb200_5m_up[i]), bb200_5m_lo=float(sub._bb200_5m_lo[i]),
+            bb10_1m_up=float(sub.bb10_1m_up[i]), bb10_1m_lo=float(sub.bb10_1m_lo[i]),
+            bb10_5m_up=float(sub.bb10_5m_up[i]), bb10_5m_lo=float(sub.bb10_5m_lo[i]))
 
     def _reset_phase2(self) -> None:
         """Reset the per-DAY two-phase state on the SHARED pot (reset + each midnight)."""
@@ -280,8 +346,9 @@ class PortfolioEnv:
         for s in self.symbols:
             if self.position[s] != 0:
                 sub = self.subs[s]
-                realized = self.position[s] * (sub.close[self.t] - self.entry[s]) * sub.position_size
-                realized -= sub.cost_frac * sub.close[self.t] * sub.position_size   # exit cost
+                ts = self._trade_size[s]                                        # v1.7.0 actual (risk-based) size
+                realized = self.position[s] * (sub.close[self.t] - self.entry[s]) * ts
+                realized -= sub.cost_frac * sub.close[self.t] * ts             # exit cost
                 self.th.record_close(self.acc, realized, bar_index=self.t)
                 self.position[s] = 0
         self.acc.equity = self.acc.balance
@@ -294,7 +361,7 @@ class PortfolioEnv:
         for s in self.symbols:
             if self.position[s] != 0:
                 sub = self.subs[s]
-                c += sub.cost_frac * sub.close[self.t] * sub.position_size
+                c += sub.cost_frac * sub.close[self.t] * self._trade_size[s]
         return c
 
     @property
@@ -310,9 +377,36 @@ class PortfolioEnv:
         for s in self.symbols:
             if self.position[s] != 0:
                 sub = self.subs[s]
-                unreal += self.position[s] * (sub.close[self.t] - self.entry[s]) * sub.position_size
+                unreal += self.position[s] * (sub.close[self.t] - self.entry[s]) * self._trade_size[s]
         self.acc.equity = self.acc.balance + unreal
         self.acc.mark_equity(self.acc.equity)
+
+    def _apply_bb_hard_stop(self) -> None:
+        """v1.7.0 BB HARD STOP: auto-close any open position whose price has crossed the 1m BB(10,1) opposite
+        band (long below the lower band, short above the upper). Protective -> BYPASSES the day-lock; realizes
+        at the current bar via record_close (with the trade's actual size), tallies, and records re-entry
+        context (a mechanical exit, like the two-phase flatten -> no shaping bonus). OFF unless bb_stop_enabled."""
+        if not self._bb_stop_on:
+            return
+        t = self.t
+        for s in self.symbols:
+            p = self.position[s]
+            if p == 0:
+                continue
+            sub = self.subs[s]
+            lo = float(sub.bb10_1m_lo[t]); up = float(sub.bb10_1m_up[t])
+            px = float(sub.close[t])
+            hit = ((p > 0 and np.isfinite(lo) and px < lo) or (p < 0 and np.isfinite(up) and px > up))
+            if not hit:
+                continue
+            ts = self._trade_size[s]
+            realized = p * (px - self.entry[s]) * ts - sub.cost_frac * px * ts
+            self.th.record_close(self.acc, realized, bar_index=t)
+            self._last_close_bar[s] = int(t)
+            self._last_close_dir[s] = int(p)
+            self._last_exit_px[s] = px
+            self.position[s] = 0
+        self._mark()
 
     def _set_aggregates(self):
         pos = self.position
@@ -349,6 +443,7 @@ class PortfolioEnv:
                 typical_range=sub._typical_range, days_elapsed=self._days_elapsed),
             "alpha_streak": np.minimum(sub.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
             "ohlc": sub.ohlc_matrix[i],   # v1.6.0: per-symbol raw O/H/L/C per timeframe
+            "trade_risk": self._trade_risk_block(sym, sub),   # v1.7.0: current symbol's open-trade risk state
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----
@@ -367,27 +462,53 @@ class PortfolioEnv:
         if target != self.position[sym]:
             if self.position[sym] != 0:                        # realize the closing leg into the POT
                 old_dir = self.position[sym]
-                realized = old_dir * (sub.close[t] - self.entry[sym]) * sub.position_size
-                realized -= sub.cost_frac * sub.close[t] * sub.position_size
+                ts_old = self._trade_size[sym]                          # v1.7.0 actual (risk-based) size
+                realized = old_dir * (sub.close[t] - self.entry[sym]) * ts_old
+                realized -= sub.cost_frac * sub.close[t] * ts_old
                 self.th.record_close(self.acc, realized, bar_index=t)   # single P&L truth
-                # ALPHA-SHAPING bonuses (paid only on a profitable close with the DAY net up; capped at PnL)
+                self._last_close_bar[sym] = int(t)                      # v1.7.0 re-entry context
+                self._last_close_dir[sym] = int(old_dir)
+                self._last_exit_px[sym] = float(sub.close[t])
+                # SHAPING bonuses (paid only on a profitable close with the DAY net up; capped at the trade PnL):
+                #   alpha USE+BEAT (cfg.alpha_*), band-stack ENTER bonus (cfg.band_stack_bonus), re-entry nudge.
                 day0 = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
-                if self._alpha_on and realized > 0.0 and self.acc.balance > day0:
+                if realized > 0.0 and self.acc.balance > day0:
                     pnl_frac = realized / self.cfg.starting_balance
                     bonus = 0.0
-                    if self._entry_agreed.get(sym, False):                  # USE the alphas: agreed >=50% and won
-                        bonus += self._alpha_agree
-                    move = sub.close[t] - self.entry[sym]                   # BEAT the alphas: out-earned a follow
-                    alpha_gross = self._entry_alpha_dir.get(sym, 0) * move * sub.position_size
-                    bot_gross = old_dir * move * sub.position_size
-                    if bot_gross > alpha_gross:
-                        bonus += min(self._alpha_beat, (bot_gross - alpha_gross) / self.cfg.starting_balance)
-                    alpha_shaping += min(bonus, pnl_frac)                   # CAP: bonus can never exceed the trade PnL
+                    if self._alpha_on:
+                        if self._entry_agreed.get(sym, False):              # USE the alphas: agreed >=50% and won
+                            bonus += self._alpha_agree
+                        move = sub.close[t] - self.entry[sym]               # BEAT the alphas: out-earned a follow
+                        alpha_gross = self._entry_alpha_dir.get(sym, 0) * move * ts_old
+                        bot_gross = old_dir * move * ts_old
+                        if bot_gross > alpha_gross:
+                            bonus += min(self._alpha_beat, (bot_gross - alpha_gross) / self.cfg.starting_balance)
+                    # BAND-STACK enter bonus: entered with price stacked above (long) / below (short) BB200 & BB10
+                    # on BOTH 1m and 5m, and the trade closed in profit with the day net up (operator 2026-06-29).
+                    if self._band_bonus > 0.0 and ((old_dir > 0 and self._entry_band_long.get(sym, False))
+                                                   or (old_dir < 0 and self._entry_band_short.get(sym, False))):
+                        bonus += self._band_bonus
+                    # RE-ENTRY nudge: this was a with-trend re-entry that paid off.
+                    if self._reentry_bonus > 0.0 and self._entry_reentry.get(sym, 0):
+                        bonus += self._reentry_bonus
+                    if bonus > 0.0:
+                        alpha_shaping += min(bonus, pnl_frac)              # CAP: bonus can never exceed the trade PnL
                 self._entry_agreed.pop(sym, None); self._entry_alpha_dir.pop(sym, None)
             self.position[sym] = target
             if target != 0:
                 self.entry[sym] = float(sub.close[t])
-                ecost = sub.cost_frac * sub.close[t] * sub.position_size
+                # v1.7.0 RISK-BASED sizing (gated): size so a BB(10,1) stop-out loses ~risk_per_trade_pct% of
+                # the pot, capped at the configured size. OFF (risk_per_trade_pct None) -> trade_size == base.
+                base = float(sub.position_size)
+                sb = float(sub.bb10_1m_lo[t] if target > 0 else sub.bb10_1m_up[t])   # the hard-stop band at entry
+                ts = base
+                if self._risk_pct is not None and np.isfinite(sb):
+                    dist = abs(float(sub.close[t]) - sb)
+                    if dist > 1e-12:
+                        risk_dollars = self.cfg.starting_balance * (self._risk_pct / 100.0)
+                        ts = min(base, risk_dollars / dist)
+                self._trade_size[sym] = ts
+                ecost = sub.cost_frac * sub.close[t] * ts
                 self.acc.balance -= ecost
                 self.acc.daily_realized_pnl -= ecost
                 self.acc.episode_realized_pnl -= ecost
@@ -397,6 +518,20 @@ class PortfolioEnv:
                 self._entry_alpha_dir[sym] = net_dir
                 if self._alpha_on and disagree >= 0.5:                      # opened AGAINST >=50% firing alphas
                     alpha_shaping -= self._alpha_against
+                # v1.7.0 per-trade risk state: entry bar/ATR, the BB(10,1) hard-stop band, reset MFE/MAE, the
+                # band-stack-at-entry flags (enter bonus), and whether this is a with-trend RE-ENTRY.
+                self._entry_bar[sym] = int(t)
+                self._entry_atr[sym] = self._atr_at(sub, t)
+                self._entry_stop_band[sym] = sb
+                self._mfe_atr[sym] = 0.0
+                self._mae_atr[sym] = 0.0
+                self._entry_band_long[sym] = TR.band_stack_long(
+                    sub.close[t], sub._bb200_1m_up[t], sub.bb10_1m_up[t], sub._bb200_5m_up[t], sub.bb10_5m_up[t])
+                self._entry_band_short[sym] = TR.band_stack_short(
+                    sub.close[t], sub._bb200_1m_lo[t], sub.bb10_1m_lo[t], sub._bb200_5m_lo[t], sub.bb10_5m_lo[t])
+                ld = self._last_close_dir[sym]
+                self._entry_reentry[sym] = int(
+                    ld != 0 and target == ld and ld * (float(sub.close[t]) - self._last_exit_px[sym]) > 0.0)
 
         # advance the cursor: next symbol; when it wraps, advance the bar
         self.j += 1
@@ -406,6 +541,7 @@ class PortfolioEnv:
             self.t = min(t + 1, self.T - 1)
             bar_advanced = True
         self._mark()
+        self._update_excursions()                              # v1.7.0: track each open trade's MFE/MAE (ATR)
         if any(self.position[s] != 0 for s in self.symbols):   # anti-hide: was the bot exposed today?
             self._day_had_exposure = True
         # =================================================================================================
@@ -509,6 +645,11 @@ class PortfolioEnv:
                     terminated = True
                     reward += self.pass_bonus
                 # training (continue_after_pass): keep going for CONSISTENCY; the 4-in-a-row bonus rewards it
+            # v1.7.0 BB HARD STOP (protective): auto-close any position past the 1m BB(10,1) opposite band.
+            # Runs BEFORE two-phase banking so a stopped trade isn't double-handled. Equity-neutral (closes at
+            # the marked bar) -> does not retroactively change this step's reward. OFF unless bb_stop_enabled.
+            if not terminated:
+                self._apply_bb_hard_stop()
             # DAILY ENGINE (two-phase) on the SHARED pot: bank +2.5% of initial NET OF FEES -> close ALL,
             # then STOP for the day (phase2_continue=False) or keep trading under a 1% trailing wall from
             # the banked peak. A PROTECTIVE overlay, never an episode breach. Skipped if breached.

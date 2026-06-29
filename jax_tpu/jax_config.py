@@ -24,10 +24,10 @@ from __future__ import annotations
 # OBS / ACTION (the locked contract — imported from config.constants at use site;
 # duplicated here only as a readable reference, asserted equal in jax_env).
 # ---------------------------------------------------------------------
-OBS_SIZE: int = 499                 # == config.constants.OBS_TOTAL_SIZE (v1.6.0: +20 raw OHLC block)
+OBS_SIZE: int = 513                 # == config.constants.OBS_TOTAL_SIZE (v1.7.0: +14 trade-risk block)
 N_ACTIONS: int = 4                  # HOLD, BUY, SELL, CLOSE
 N_STATIC_OBS: int = 459             # precomputed per-bar blocks (see jax_static_features); +20 OHLC in v1.6.0
-N_DYNAMIC_OBS: int = 40             # account_daily+episode+portfolio+sizing+recent_context
+N_DYNAMIC_OBS: int = 54             # account_daily+episode+portfolio+sizing+recent_context (40) + trade_risk (14, v1.7.0)
 
 # ---------------------------------------------------------------------
 # PPO HYPERPARAMETERS — MIRROR src/training/trainer.py EXACTLY.

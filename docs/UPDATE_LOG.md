@@ -3,6 +3,47 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-29] TRADE-RISK observation block + BB(10,1) hard stop + risk-based sizing + band-stack/re-entry bonuses (contract v1.7.0, CPU + TPU)
+- **I (Issue):** The bot traded with NO awareness of its OPEN-trade risk: no view of unrealized P&L in
+  ATR/account terms, no sense of how close it was to a stop, no max favorable/adverse excursion, no re-entry
+  context — and no hard stop or risk-aware sizing. Operator wants the policy to (a) SEE and MANAGE each trade,
+  (b) be auto-stopped at a real technical level, (c) size each entry to a fixed % risk, (d) learn to RE-ENTER
+  a winner, and (e) get a small bonus for entering with a multi-TF band-stack that closes in profit.
+- **R (Rule):** Operator 2026-06-29 (confirmed YES to all three design points + the band-stack bonus). A new
+  observation block is a **deliberate contract bump** (CLAUDE.md rule #1). FTMO numbers unchanged. No
+  TA-Lib/pandas in `step()` — the BB(10,1) bands are PRECOMPUTED.
+- **A (Application):**
+  - `config/constants.py` — **contract v1.6.0 → v1.7.0**: appended the 14-float `trade_risk` block →
+    **OBS_TOTAL_SIZE 499 → 513**. Indices 0..498 are UNCHANGED (append-only). Names in
+    `src/observation/observation_contract.py` (`TRADE_RISK_NAMES`).
+  - `src/observation/trade_risk.py` (**new**) — ONE shared numpy builder for the 14 floats: `in_trade`,
+    `direction`, unrealized P&L in **ATR units** and as **% of the pot**, distance to the **2×ATR(14) SOFT**
+    stop and to the **1m BB(10,1) opposite-band HARD** stop (0→1), `bars_held`, **MFE/MAE** in ATR, re-entry
+    context (bars since last close, last dir, price-vs-last-exit in ATR), and the **band-stack** flags
+    (price above/below BB200(dev1) AND BB10(dev1) on BOTH 1m & 5m). jnp twin: `jax_obs_blocks.trade_risk_features`
+    (cancellation-prone subtractions run in the native/x64 dtype to match the CPU — see its docstring).
+  - BB(10,1) bands: the 220-indicator cache has BB periods **20 & 200 only**, so `TradingEnv._precompute`
+    (`compute_bb10_bands`) builds the **1m + 5m BB(10,1) upper/lower** leak-free from `close`+`time` (no
+    cache-format change; cached as 4 new arrays, `feature_cache` bumped `fc-v1 → fc-v2`). BB200(dev1)+ATR(14)
+    are read from the existing cache columns. All threaded into the JAX env via `jax_static_features`.
+  - **Per-trade state** (entry bar/ATR, the hard-stop band at entry, MFE/MAE, last-close context, band-stack &
+    re-entry flags, the actual risk-based size) tracked in BOTH envs — single-symbol (`TradingEnv`/`jax_env`,
+    obs-only) and shared-pot (`PortfolioEnv`/`jax_portfolio_env`).
+  - **BEHAVIOURS (PortfolioEnv, default OFF — training turns them on):** (1) **BB hard stop** auto-closes a
+    long below / short above the 1m BB(10,1) band (protective, bypasses the day-lock); (2) **risk-based
+    sizing** sets each entry's size so a stop-out loses ~`risk_per_trade_pct`% of the pot, capped at the
+    calibrated size; (3) **band-stack** enter bonus + (4) **re-entry** nudge — small, PnL-capped CLOSE bonuses
+    (`cfg.band_stack_bonus`, `cfg.reentry_bonus`) paid when the qualifying trade closes in profit, day net up.
+  - JAX/TPU: `jax_config.OBS_SIZE 499→513`; `trade_risk` added to `DYNAMIC_BLOCKS`; per-symbol band/ATR arrays
+    threaded; `step_portfolio` mirrors all four behaviours branchlessly. Fixed a latent `jax_trainer`
+    `_restart_continue` bug (`s.t` vs single-symbol `s.ptr`) that broke single-symbol on-device training.
+- **C (Conclusion → consistency):** The policy can now SEE its open-trade risk (ATR/account/band units),
+  TIME exits, and RE-ENTER trends; a real BB(10,1) hard stop caps the downside; risk-based sizing keeps a
+  losing day small (one stop ≈ a fixed tiny % of the pot, so several losers can't breach the 4% wall); and the
+  band-stack/re-entry bonuses bias it toward high-quality, trend-aligned entries — all of which push toward the
+  consistent, low-drawdown +2.5%/day days the 40-won-day streak demands. CPU ↔ JAX verified **bar-for-bar**
+  (max|obs| 2.4e-7, max|reward| 3.7e-10) with the behaviours both OFF and ON.
+
 ## [2026-06-28] Two ADX-DI alphas (slots 16/17) + RAW OHLC observation block (contract v1.6.0, CPU + TPU)
 - **I (Issue):** Operator wants (1) two new alphas on the ADX/DMI directional system — ADX periods **14 & 45**,
   alpha A on **5m & 30m**, alpha B on **30m & 4h**; rule: *all −DI above +DI = SELL, all −DI below +DI = BUY* —

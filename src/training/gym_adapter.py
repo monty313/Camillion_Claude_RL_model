@@ -38,7 +38,7 @@ def make_gym_env(indicators, close, time_ns, alpha_registry, *, aux=None, **kwar
 def make_portfolio_gym_env(symbol_data, registry_factory, **kwargs):
     """Build a gymnasium.Env wrapping the shared-pot PortfolioEnv (one bot, all symbols, one pot).
 
-    Same obs(499)/action(4) interface as the single-symbol env, so the existing MlpPolicy +
+    Same obs(513)/action(4) interface as the single-symbol env, so the existing MlpPolicy +
     VecNormalize + trainer apply unchanged."""
     import gymnasium as gym
     from gymnasium import spaces

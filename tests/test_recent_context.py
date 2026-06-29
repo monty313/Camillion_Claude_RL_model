@@ -1,4 +1,4 @@
-# v1.6.0 RECENT-CONTEXT block: recent DAILY movement (prior days + last-week avg) expressed
+# v1.7.0 RECENT-CONTEXT block: recent DAILY movement (prior days + last-week avg) expressed
 # RELATIVE to the symbol's own average (scale-free), plus a TIME-aware "am I on pace to pass"
 # read (days elapsed, return so far, pace vs the +2.5%/day plan, target remaining).
 import numpy as np
@@ -13,7 +13,7 @@ from src.observation import observation_contract as OC
 
 
 def test_block_in_contract():
-    assert C.OBSERVATION_CONTRACT_VERSION == "v1.6.0" and C.OBS_TOTAL_SIZE == 499
+    assert C.OBSERVATION_CONTRACT_VERSION == "v1.7.0" and C.OBS_TOTAL_SIZE == 513
     assert C.OBS_BLOCK_RECENT_CONTEXT == 8
     sl = OC.BLOCK_SLICES["recent_context"]
     assert sl.stop - sl.start == 8
@@ -60,7 +60,7 @@ def test_in_env_obs_shape_and_days_elapsed():
                      idx.values.astype("datetime64[ns]").astype(np.int64), AlphaRegistry(),
                      warmup=300, symbol="EURUSD", position_size=1.0)
     obs, _ = env.reset()
-    assert obs.shape == (499,) and np.all(np.isfinite(obs))
+    assert obs.shape == (513,) and np.all(np.isfinite(obs))
     b = obs[OC.BLOCK_SLICES["recent_context"]]
     assert b.shape == (8,) and np.all((b >= -1.0) & (b <= 1.0))
     for _ in range(1500):

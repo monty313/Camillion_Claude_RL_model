@@ -4,7 +4,7 @@
 #      saliency (zero a block, measure the shift in the action distribution).
 #      Read-only telemetry -- NEVER fed back into the observation, never reward.
 # WHERE src/interpret/policy_introspector.py
-# HOW  policy is any callable: policy(obs(357,)) -> (logits(4,), value).
+# HOW  policy is any callable: policy(obs(513,)) -> (logits(4,), value).
 #      Ablation is model-agnostic (works with the SB3 policy or a mock); a
 #      gradient-saliency path can be added when torch is present.
 # DEPENDS_ON: config/constants.py, src/observation/observation_contract.py, numpy

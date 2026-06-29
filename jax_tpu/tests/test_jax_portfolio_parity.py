@@ -44,12 +44,21 @@ def _symbol_data(symbols, n_bars=4000, seed=21, drift=0.0):
     return out
 
 
-def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, actions=None):
+def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, actions=None, behaviors=None):
     cfg = load_ftmo_config()
+    # v1.7.0 trade-risk behaviours (default OFF). behaviors = {bb_stop, risk_pct, band_bonus, reentry_bonus}.
+    b = behaviors or {}
+    bb_stop = bool(b.get("bb_stop", False))
+    risk_pct = b.get("risk_pct", None)
+    if "band_bonus" in b or "reentry_bonus" in b:
+        import dataclasses
+        cfg = dataclasses.replace(cfg, band_stack_bonus=float(b.get("band_bonus", 0.0)),
+                                  reentry_bonus=float(b.get("reentry_bonus", 0.0)))
     if sym_data is None:
         sym_data = _symbol_data(symbols, seed=seed)
     subs = build_portfolio_subs(sym_data, _reg, cfg=cfg, warmup=50, progress=False)
-    env = PortfolioEnv(subs=subs, cfg=cfg, warmup=50, continue_after_pass=continue_after_pass)
+    env = PortfolioEnv(subs=subs, cfg=cfg, warmup=50, continue_after_pass=continue_after_pass,
+                       bb_stop_enabled=bb_stop, risk_per_trade_pct=risk_pct)
 
     psd = JSF.build_portfolio_static(subs)
     static = JPE.make_portfolio_device_static(psd)
@@ -65,7 +74,10 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         alpha_against=cfg.alpha_against_penalty, alpha_beat=cfg.alpha_beat_bonus,
         day_pass_reward=cfg.day_pass_reward, day_fail_penalty=cfg.day_fail_penalty,
         target_seek_weight=cfg.target_seek_weight, idle_day_penalty=cfg.idle_day_penalty,
-        dd_proximity_coef=cfg.dd_proximity_coef, breach_penalty=cfg.breach_penalty, pass_bonus=cfg.pass_bonus)
+        dd_proximity_coef=cfg.dd_proximity_coef, breach_penalty=cfg.breach_penalty, pass_bonus=cfg.pass_bonus,
+        bb_stop_enabled=1.0 if bb_stop else 0.0, risk_based=1.0 if risk_pct is not None else 0.0,
+        risk_frac=(float(risk_pct) / 100.0) if risk_pct is not None else 0.0,
+        band_stack_bonus=cfg.band_stack_bonus, reentry_bonus=cfg.reentry_bonus)
 
     cpu_obs, _ = env.reset()
     state = JPE.init_state(static, params, start=env.warmup, end=env.T - 1,
@@ -120,6 +132,19 @@ def test_portfolio_parity_banking_and_won_days():
     print(f"\n[portfolio uptrend bank/won] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
     assert ev["banked"], "expected two-phase banking to fire on the uptrend (test is too weak otherwise)"
     assert ev["won_day"], "expected at least one WON day (+2.5%) on the uptrend"
+
+
+def test_portfolio_parity_trade_risk_behaviors_on():
+    """v1.7.0: with the BB(10,1) HARD STOP + RISK-BASED sizing + band-stack & re-entry CLOSE bonuses ALL ON,
+    the JAX env must STILL match the CPU PortfolioEnv bar-for-bar (513 obs + reward). An uptrend + BUY-heavy
+    actions exercise risk-sized entries, hard-stop closes, and the band-stack bonus."""
+    syms = ["EURUSD", "GBPUSD"]
+    sym_data = _symbol_data(syms, seed=5, drift=6e-5)
+    acts = np.where(np.arange(6000) % 7 < 5, 1, 0)
+    behaviors = {"bb_stop": True, "risk_pct": 0.1, "band_bonus": 0.005, "reentry_bonus": 0.003}
+    mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts, behaviors=behaviors)
+    print(f"\n[portfolio trade-risk behaviors ON] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
+    assert mo < ATOL_OBS and mr < ATOL_REW, f"behaviors-on parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
 
 
 def test_portfolio_parity_breach():

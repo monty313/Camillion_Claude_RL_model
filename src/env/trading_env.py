@@ -37,6 +37,56 @@ from src.account.trade_history import TradeHistory
 from src.account import win_loss_features as WL
 from src.risk import breach_detector as BD
 from src.observation import builder as OB
+from src.observation import trade_risk as TR
+from src.indicators.bollinger import bollinger
+
+
+def _col_idx(name: str) -> int:
+    """Index of an indicator column in the 220 block, or -1 if absent (so the gather degrades to NaN)."""
+    try:
+        return ALL_INDICATOR_COLUMNS.index(name)
+    except ValueError:
+        return -1
+
+
+# Column indices the v1.7.0 trade-risk block reads from the 220-indicator cache (BB200(dev1) + ATR(14)).
+_IDX_ATR_1M = _col_idx("1m__atr14_raw")
+_IDX_BB200_1M_UP = _col_idx("1m__bb200_dev1.0_upper")
+_IDX_BB200_1M_LO = _col_idx("1m__bb200_dev1.0_lower")
+_IDX_BB200_5M_UP = _col_idx("5m__bb200_dev1.0_upper")
+_IDX_BB200_5M_LO = _col_idx("5m__bb200_dev1.0_lower")
+
+
+def compute_bb10_bands(close, time_ns):
+    """1m + 5m Bollinger(10, dev=1.0) upper/lower bands aligned to the 1m clock (LEAK-FREE).
+
+    Returns (up1, lo1, up5, lo5), each (T,) float32 (NaN warmup). The 5m band at bar t is the BB10 of the
+    most-recently-COMPLETED 5-minute bucket (a bucket counts only once price reaches its last 1m timestamp),
+    so no future bar leaks in. Precompute-only (this is where the BB(10,1) bands the env lacks are built —
+    BB periods in the 220 cache are (20, 200) only); never called from step()."""
+    close = np.asarray(close, dtype=np.float64).ravel()
+    T = close.shape[0]
+    up1, _m1, lo1 = bollinger(close, 10, 1.0)
+    tns = np.asarray(time_ns).astype(np.int64).ravel()
+    if T == 0:
+        z = np.zeros(0, np.float32)
+        return z, z, z.copy(), z.copy()
+    bucket = tns // (5 * 60 * 1_000_000_000)                 # 5-min bucket id (time is monotonic)
+    change = np.ones(T, dtype=bool)
+    change[1:] = bucket[1:] != bucket[:-1]
+    starts = np.where(change)[0]
+    ends = np.empty(starts.shape[0], dtype=np.int64)
+    ends[:-1] = starts[1:] - 1
+    ends[-1] = T - 1                                         # last bar of each bucket = its "close"
+    c5 = close[ends]
+    tend = tns[ends]
+    up5b, _m5, lo5b = bollinger(c5, 10, 1.0)
+    j = np.searchsorted(tend, tns, side="right") - 1        # last COMPLETED bucket as of bar t (leak-free)
+    valid = j >= 0
+    jj = np.clip(j, 0, len(up5b) - 1)
+    up5 = np.where(valid, up5b[jj], np.nan).astype(np.float32)
+    lo5 = np.where(valid, lo5b[jj], np.nan).astype(np.float32)
+    return up1.astype(np.float32), lo1.astype(np.float32), up5, lo5
 
 
 class TradingEnv:
@@ -156,8 +206,30 @@ class TradingEnv:
         cser = pd.Series(self.close)
         self.ref_move = (cser.rolling(240, min_periods=1).max()
                          - cser.rolling(240, min_periods=1).min()).to_numpy()
+        # v1.7.0: 1m + 5m Bollinger(10, dev=1.0) bands (the BB(10,1) the 220 cache lacks) for the
+        # trade-risk block + BB hard stop. Computed from close+time only (pandas-free, leak-free).
+        self.bb10_1m_up, self.bb10_1m_lo, self.bb10_5m_up, self.bb10_5m_lo = compute_bb10_bands(
+            self.close, self.time_ns)
         self._precompute_cross_asset()
         self._precompute_recent_context()
+        self._derive_band_refs()
+
+    # ---- v1.7.0: cheap per-bar BB200(dev1)+ATR(14) references for the trade-risk block (NOT cached;
+    #      they are plain slices of self.ind, derived after precompute OR after a cache load) ----
+    def _derive_band_refs(self):
+        """Pull the 1m+5m BB200(dev1) bands and a clean 1m ATR(14) out of the 220-indicator cache.
+        These feed the trade-risk block (band-stack flags + ATR-unit P&L). Missing column -> NaN."""
+        T = self.T
+        def _band(idx):
+            return (self.ind[:, idx].astype(np.float32) if idx >= 0
+                    else np.full(T, np.nan, dtype=np.float32))
+        self._bb200_1m_up = _band(_IDX_BB200_1M_UP)
+        self._bb200_1m_lo = _band(_IDX_BB200_1M_LO)
+        self._bb200_5m_up = _band(_IDX_BB200_5M_UP)
+        self._bb200_5m_lo = _band(_IDX_BB200_5M_LO)
+        atr = _band(_IDX_ATR_1M)
+        # clean ATR: finite & >0 else NaN (the block's ATR-unit math nan-safes itself)
+        self._atr1m = np.where(np.isfinite(atr) & (atr > 0), atr, np.float32(np.nan)).astype(np.float32)
 
     # ---- v1.5.0: recent daily-movement history (leak-free), precomputed once ----
     def _precompute_recent_context(self):
@@ -217,7 +289,9 @@ class TradingEnv:
     # feature_cache.PRECOMPUTED_ARRAY_KEYS (a test asserts they match).
     _PRECOMPUTED_ATTRS = ("alpha_matrix", "occupancy", "net_signal", "sig_acc", "time_feats",
                           "open_gate_blocked", "streak_matrix", "ref_move", "cross_asset_matrix",
-                          "_today_sofar", "_prev_day", "_prev2_day", "_week_avg")
+                          "_today_sofar", "_prev_day", "_prev2_day", "_week_avg",
+                          # v1.7.0: 1m+5m Bollinger(10,1) bands (trade-risk block + BB hard stop)
+                          "bb10_1m_up", "bb10_1m_lo", "bb10_5m_up", "bb10_5m_lo")
 
     def export_precomputed(self) -> dict:
         """Return {name: ndarray} for the cache (the expensive precompute output, read-only)."""
@@ -230,6 +304,7 @@ class TradingEnv:
             raise KeyError(f"feature cache missing arrays {missing}; rebuild instead of loading")
         for a in self._PRECOMPUTED_ATTRS:
             setattr(self, a, d[a])
+        self._derive_band_refs()   # cheap BB200/ATR slices of self.ind (not cached) — rebuild after a load
 
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
@@ -246,11 +321,46 @@ class TradingEnv:
         self.th = TradeHistory()
         self.position = 0
         self.entry_price = float(self.close[self.ptr])
+        self._init_trade_risk_state()   # v1.7.0 per-trade risk state (obs block; no behaviour change here)
         self._cur_date = self._dates[self.ptr]
         self._days_elapsed = 0          # trading days into this episode (for the time-to-pass pace)
         self._ny_reset()                # NY-session index-bonus state (per day)
         self._reset_phase2()
         return self._obs(), {"ptr": self.ptr}
+
+    # ---- v1.7.0: per-trade RISK state for the trade-risk obs block (single-symbol: obs-only) ----
+    def _init_trade_risk_state(self) -> None:
+        """Reset the open-trade risk trackers (called on reset). trade_size == position_size here
+        (the single-symbol env has no risk-based sizing; that lives in the shared-pot PortfolioEnv)."""
+        p = self.ptr
+        self._trade_size = float(self.position_size)
+        self._entry_bar = int(p)
+        self._entry_atr = 0.0
+        self._entry_stop_band = 0.0
+        self._mfe_atr = 0.0
+        self._mae_atr = 0.0
+        self._last_close_bar = int(p)
+        self._last_close_dir = 0
+        self._last_exit_px = float(self.close[p])
+
+    def _atr_at(self, t: int) -> float:
+        v = float(self._atr1m[t])
+        return v if np.isfinite(v) else 0.0
+
+    def _trade_risk_block(self) -> np.ndarray:
+        """The 14-float v1.7.0 trade-risk block for the current open position (or zeros + re-entry context)."""
+        i = self.ptr
+        return TR.build(
+            pos=self.position, entry_px=self.entry_price, price=float(self.close[i]),
+            trade_size=self._trade_size, equity=self.acc.equity,
+            entry_atr=self._entry_atr, atr_now=self._atr_at(i), entry_stop_band=self._entry_stop_band,
+            bars_held=(i - self._entry_bar), mfe_atr=self._mfe_atr, mae_atr=self._mae_atr,
+            bars_since_close=(i - self._last_close_bar), last_dir=self._last_close_dir,
+            last_exit_px=self._last_exit_px,
+            bb200_1m_up=float(self._bb200_1m_up[i]), bb200_1m_lo=float(self._bb200_1m_lo[i]),
+            bb200_5m_up=float(self._bb200_5m_up[i]), bb200_5m_lo=float(self._bb200_5m_lo[i]),
+            bb10_1m_up=float(self.bb10_1m_up[i]), bb10_1m_lo=float(self.bb10_1m_lo[i]),
+            bb10_5m_up=float(self.bb10_5m_up[i]), bb10_5m_lo=float(self.bb10_5m_lo[i]))
 
     def _reset_phase2(self) -> None:
         """Reset the per-DAY two-phase state (called on reset + each midnight)."""
@@ -333,6 +443,9 @@ class TradingEnv:
                 # daily/episode realized PnL + equity + tallies. Do NOT also add them
                 # here -- that double-counted every closed trade (banked 2x the PnL).
                 self.th.record_close(self.acc, realized, bar_index=t)
+                self._last_close_bar = int(t)            # v1.7.0 re-entry context
+                self._last_close_dir = int(self.position)
+                self._last_exit_px = float(self.close[t])
             self.position = target
             if target != 0:
                 self.entry_price = float(self.close[t])
@@ -340,12 +453,23 @@ class TradingEnv:
                 self.acc.balance -= ecost
                 self.acc.daily_realized_pnl -= ecost
                 self.acc.episode_realized_pnl -= ecost
+                # v1.7.0 per-trade risk state: stamp entry bar/ATR + the BB(10,1) hard-stop band, reset MFE/MAE
+                self._entry_bar = int(t)
+                self._entry_atr = self._atr_at(t)
+                self._entry_stop_band = float(self.bb10_1m_lo[t] if target > 0 else self.bb10_1m_up[t])
+                self._mfe_atr = 0.0
+                self._mae_atr = 0.0
 
         # 2) advance one bar, mark to market at close[t+1]
         self.ptr = min(t + 1, self.T - 1)
         unrealized = self.position * (self.close[self.ptr] - self.entry_price) * self.position_size
         self.acc.equity = self.acc.balance + unrealized
         self.acc.mark_equity(self.acc.equity)
+        # v1.7.0: update the open trade's max favorable / adverse excursion (ATR units) at the new bar
+        if self.position != 0 and self._entry_atr > 0.0:
+            exc = self.position * (self.close[self.ptr] - self.entry_price) / self._entry_atr
+            self._mfe_atr = max(self._mfe_atr, exc)
+            self._mae_atr = max(self._mae_atr, -exc)
 
         # 3) REWARD = equity change as a fraction of starting balance (objective only)
         reward = float((self.acc.equity - equity_before) / self.cfg.starting_balance) * self.reward_scale
@@ -422,6 +546,7 @@ class TradingEnv:
                 typical_range=self._typical_range, days_elapsed=self._days_elapsed),
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
             "ohlc": self.ohlc_matrix[i],   # v1.6.0: raw O/H/L/C per timeframe (zeros if no aux)
+            "trade_risk": self._trade_risk_block(),   # v1.7.0: live open-trade risk state (14)
         })
 
     def _portfolio_block(self):

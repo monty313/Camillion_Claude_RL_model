@@ -57,6 +57,12 @@ class FTMOConfig:
     dd_proximity_coef: float = 0.02
     breach_penalty: float = 0.2
     pass_bonus: float = 1.0
+    # v1.7.0 trade-risk CLOSE bonuses (operator 2026-06-29; PortfolioEnv only, PnL-capped, default 0 = off).
+    # band_stack_bonus: paid when a trade ENTERED with price stacked above (long) / below (short) BB200(dev1) AND
+    # BB10(dev1) on BOTH 1m and 5m CLOSES in profit with the day net up. reentry_bonus: a small nudge for a
+    # with-trend RE-ENTRY (re-opening this symbol in its last-close direction after price kept going) that pays off.
+    band_stack_bonus: float = 0.0
+    reentry_bonus: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -95,6 +101,8 @@ def load_ftmo_config() -> FTMOConfig:
         dd_proximity_coef=getattr(V, "FTMO_DD_PROXIMITY_COEF", 0.02),
         breach_penalty=getattr(V, "FTMO_BREACH_PENALTY", 0.2),
         pass_bonus=getattr(V, "FTMO_PASS_BONUS", 1.0),
+        band_stack_bonus=getattr(V, "FTMO_BAND_STACK_BONUS", 0.0),
+        reentry_bonus=getattr(V, "FTMO_REENTRY_BONUS", 0.0),
     )
 
 

@@ -1,9 +1,9 @@
 # =====================================================================
 # WHEN 2026-06-21 (Phase 0) | WHO Claude for Monty
-# WHY  THE single, authoritative list of all 357 observation feature names,
-#      their block boundaries, and a validator. This file IS the contract.
+# WHY  THE single, authoritative list of all OBS_TOTAL_SIZE observation feature
+#      names (513 @ v1.7.0), their block boundaries, and a validator. This IS the contract.
 # WHERE src/observation/observation_contract.py
-# HOW  Concatenate per-block name lists in OBS_BLOCK_ORDER; assert total==357.
+# HOW  Concatenate per-block name lists in OBS_BLOCK_ORDER; assert total==OBS_TOTAL_SIZE.
 #      validate() checks shape, dtype and finiteness of a built observation.
 # DEPENDS_ON: config/constants.py, src/indicators/base.py, numpy
 # USED_BY: src/observation/builder.py, src/barbershop/feature_doctor.py,
@@ -13,7 +13,7 @@
 #   list + offsets + validator. C: a frozen contract = model compatibility
 #   across phases and safe ablation by block.
 # =====================================================================
-"""The observation contract: 357 ordered feature names, offsets, validator."""
+"""The observation contract: 513 ordered feature names (v1.7.0), offsets, validator."""
 from __future__ import annotations
 import numpy as np
 from config import constants as C
@@ -55,6 +55,13 @@ RECENT_CONTEXT_NAMES = (
     "today_range_so_far_vs_week", "days_elapsed_norm", "episode_return_so_far",
     "pace_vs_2_5pct_plan", "challenge_target_remaining",
 )
+# v1.7.0 TRADE-RISK block: live risk state of the CURRENT symbol's open trade (manage + re-enter).
+TRADE_RISK_NAMES = (
+    "tr_in_trade", "tr_direction", "tr_unrealized_pnl_atr", "tr_unrealized_pnl_pct",
+    "tr_dist_to_soft_stop_2atr", "tr_dist_to_hard_stop_bb", "tr_bars_held_norm",
+    "tr_max_favorable_atr", "tr_max_adverse_atr", "tr_bars_since_last_close",
+    "tr_last_trade_dir", "tr_price_vs_last_exit_atr", "tr_band_stack_long", "tr_band_stack_short",
+)
 
 
 def _block_names() -> dict[str, list[str]]:
@@ -74,12 +81,13 @@ def _block_names() -> dict[str, list[str]]:
         "cross_asset": list(CROSS_ASSET_NAMES),
         "recent_context": list(RECENT_CONTEXT_NAMES),
         "ohlc": list(OHLC_COLUMNS),   # v1.6.0: raw O/H/L/C per timeframe (20)
+        "trade_risk": list(TRADE_RISK_NAMES),   # v1.7.0: current symbol's open-trade risk state (14)
     }
 
 
 BLOCK_NAMES = _block_names()
 
-# Full ordered feature-name list (length 357) + block offset slices.
+# Full ordered feature-name list (length OBS_TOTAL_SIZE (513)) + block offset slices.
 FEATURE_NAMES: list[str] = []
 BLOCK_SLICES: dict[str, slice] = {}
 _cursor = 0

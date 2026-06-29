@@ -60,8 +60,9 @@ def _fresh_states(key, n, static, params, warmup, train_end, window, env=JE):
 def _restart_continue(s, static, params, env):
     """Fail = START OVER and KEEP GOING: a fresh account at the CURRENT bar (same window, same risk), so the
     bot never trains a dead/breached account -- it restarts and tries again on the same timeline."""
+    cursor = s.t if hasattr(s, "t") else s.ptr   # PortfolioState uses .t, single-symbol EnvState uses .ptr
     rs = jax.vmap(env.init_state, in_axes=(None, None, 0, 0, 0, 0))(
-        static, params, s.t, s.end, s.daily_target_frac, s.trailing_dd_frac)
+        static, params, cursor, s.end, s.daily_target_frac, s.trailing_dd_frac)
     ro = jax.vmap(env.reset_obs, in_axes=(0, None, None))(rs, static, params)
     return rs, ro
 

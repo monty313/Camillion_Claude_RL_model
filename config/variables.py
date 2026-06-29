@@ -85,6 +85,11 @@ FTMO_IDLE_DAY_PENALTY: float = 0.02         # penalty for a day with ZERO trades
 FTMO_DD_PROXIMITY_COEF: float = 0.02        # per-step penalty = coef * (dd_used_fraction_of_wall)^2 (0 = off)
 FTMO_BREACH_PENALTY: float = 0.2            # the breach cliff (was 1.0); the 40-streak reset is the real deterrent
 FTMO_PASS_BONUS: float = 1.0               # +10% pass reward + the 4-won-days-in-a-row bonus (kept big)
+# --- v1.7.0 trade-risk CLOSE bonuses (PortfolioEnv only, PnL-capped, default 0 = off). Turn on in the
+# training path. band_stack: enter ABOVE/BELOW BB200 & BB10 (dev1) on 1m+5m and close in profit, day net up.
+# reentry: a with-trend re-entry that pays off. Small so they amplify a real win, never fabricate reward. ---
+FTMO_BAND_STACK_BONUS: float = 0.0         # bonus for a band-stacked entry that closes in profit (e.g. 0.005)
+FTMO_REENTRY_BONUS: float = 0.0            # nudge for a with-trend re-entry that pays off (e.g. 0.003)
 
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
 # decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York

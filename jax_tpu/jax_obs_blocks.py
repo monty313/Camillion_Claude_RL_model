@@ -191,3 +191,69 @@ def recent_context_features(equity, starting_balance, week_avg, prev_day, prev2,
     remaining = jnp.clip(target - ret, 0.0, 1.0)
     return jnp.stack([week_vs_typical, prev_vs_week, prev2_vs_week, today_vs_week,
                       days_norm, return_so_far, pace, remaining], axis=-1).astype(_F32)
+
+
+# --- v1.7.0 TRADE-RISK block (14) — jnp twin of src/observation/trade_risk.build (literals MUST match) ---
+_TR_ATR_PNL_SCALE = 5.0
+_TR_SOFT_STOP_ATR = 2.0
+_TR_MFE_SCALE = 5.0
+_TR_MAE_SCALE = 2.0
+_TR_BARS_HELD_NORM = 480.0
+_TR_BARS_SINCE_NORM = 480.0
+_TR_EPS = 1e-9
+
+
+def trade_risk_features(pos, entry_px, price, trade_size, equity, entry_atr, atr_now,
+                        entry_stop_band, bars_held, mfe_atr, mae_atr,
+                        bars_since_close, last_dir, last_exit_px,
+                        bb200_1m_up, bb200_1m_lo, bb200_5m_up, bb200_5m_lo,
+                        bb10_1m_up, bb10_1m_lo, bb10_5m_up, bb10_5m_lo):
+    """trade_risk block (14). CPU ref: src/observation/trade_risk.build (SAME field order + normalizers).
+
+    NOTE: the price-vs-band/entry subtractions are CATASTROPHIC CANCELLATION (price ~= band ~= 1.10), so the
+    math runs in the inputs' NATIVE (promoted) dtype — float64 under jax_enable_x64, exactly like the CPU's
+    Python-float math — and only the FINAL stack is cast to float32. Forcing float32 here diverged ~5e-4."""
+    f = _F32
+    pos = jnp.asarray(pos)
+    price = jnp.asarray(price); entry_px = jnp.asarray(entry_px)
+    in_trade = (pos != 0.0).astype(f)
+    flat = 1.0 - in_trade
+    move = price - entry_px
+    signed_move = pos * move
+    eatr = jnp.maximum(jnp.asarray(entry_atr), _TR_EPS)
+    aatr = jnp.maximum(jnp.asarray(atr_now), _TR_EPS)
+
+    pnl_atr = jnp.clip(signed_move / eatr / _TR_ATR_PNL_SCALE, -1.0, 1.0) * in_trade
+    pnl_pct = jnp.clip(signed_move * jnp.asarray(trade_size) / jnp.maximum(jnp.asarray(equity), _TR_EPS),
+                       -1.0, 1.0) * in_trade
+    adverse_atr = jnp.maximum(0.0, -signed_move) / eatr
+    dist_soft = jnp.clip(adverse_atr / _TR_SOFT_STOP_ATR, 0.0, 1.0) * in_trade
+
+    stop_band_now = jnp.where(pos > 0.0, jnp.asarray(bb10_1m_lo), jnp.asarray(bb10_1m_up))
+    room_now = pos * (price - stop_band_now)
+    room_entry = pos * (entry_px - jnp.asarray(entry_stop_band))
+    valid_band = (jnp.isfinite(room_entry) & (room_entry > _TR_EPS)).astype(f)
+    frac = jnp.where(valid_band > 0.5, 1.0 - room_now / jnp.maximum(room_entry, _TR_EPS), 0.0)
+    dist_hard = jnp.clip(frac, 0.0, 1.0) * in_trade * valid_band
+
+    bars_held_norm = jnp.clip(jnp.asarray(bars_held) / _TR_BARS_HELD_NORM, 0.0, 1.0) * in_trade
+    mfe_norm = jnp.clip(jnp.asarray(mfe_atr) / _TR_MFE_SCALE, 0.0, 1.0) * in_trade
+    mae_norm = jnp.clip(jnp.asarray(mae_atr) / _TR_MAE_SCALE, 0.0, 1.0) * in_trade
+
+    bars_since = jnp.clip(jnp.asarray(bars_since_close) / _TR_BARS_SINCE_NORM, 0.0, 1.0) * flat
+    ld = jnp.asarray(last_dir)
+    last_trade_dir = jnp.clip(ld, -1.0, 1.0) * flat
+    price_vs_exit = jnp.clip(ld * (price - jnp.asarray(last_exit_px)) / aatr / _TR_ATR_PNL_SCALE,
+                             -1.0, 1.0) * flat
+
+    bsl = ((price > bb200_1m_up) & (price > bb10_1m_up)
+           & (price > bb200_5m_up) & (price > bb10_5m_up)).astype(f)
+    bss = ((price < bb200_1m_lo) & (price < bb10_1m_lo)
+           & (price < bb200_5m_lo) & (price < bb10_5m_lo)).astype(f)
+
+    return jnp.stack([
+        in_trade, jnp.clip(pos, -1.0, 1.0).astype(f), pnl_atr.astype(f), pnl_pct.astype(f),
+        dist_soft.astype(f), dist_hard.astype(f), bars_held_norm.astype(f), mfe_norm.astype(f),
+        mae_norm.astype(f), bars_since.astype(f), last_trade_dir.astype(f), price_vs_exit.astype(f),
+        bsl, bss,
+    ], axis=-1).astype(f)

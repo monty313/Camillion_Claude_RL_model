@@ -247,7 +247,7 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
 
     `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned across symbols). Every worker
     is a full PortfolioEnv: the policy decides one symbol at a time while seeing the shared pot's
-    exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (499),
+    exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (513),
     actions, VecNormalize and the MlpPolicy are identical to single-symbol training.
 
     resume=True (default): if a matching past model already exists at save_path, CONTINUE its training

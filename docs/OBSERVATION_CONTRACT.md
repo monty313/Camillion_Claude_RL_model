@@ -1,4 +1,4 @@
-# OBSERVATION CONTRACT — v1.6.0  (499 float32)
+# OBSERVATION CONTRACT — v1.7.0  (513 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
@@ -6,8 +6,9 @@
 >
 > **Version history:** v1.1.0 (367) → v1.2.0 (451: indicators 200→220 + 64-wide `alpha_streak`)
 > → v1.3.0 (461: 10-float `sizing`) → v1.4.0 (471: 10-float `cross_asset`) → v1.5.0 (479: 8-float
-> `recent_context`) → **v1.6.0 (499): appended the 20-float raw `ohlc` block (O/H/L/C × 5 TFs).**
-> Appended blocks leave indices 0..(prev-1) unchanged (a v1.5.0 policy must retrain — shape changed).
+> `recent_context`) → v1.6.0 (499: 20-float raw `ohlc` block) → **v1.7.0 (513): appended the 14-float
+> `trade_risk` block (the open trade's live RISK state, for trade management + re-entry).**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.6.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -28,8 +29,17 @@
 | 13 | `cross_asset` | 10 | **v1.4.0**: asset-class one-hot (`pair/index/metal/energy/crypto`, classifier covers the full FTMO broker) + ATR-normalized movement (`move_in_atr`, `atr_pct_price`, `atr_regime` — **scale-free**, comparable across all instruments) + sessions (`asian`, `london_ny_overlap`). Lets one policy generalize across the universe. |
 | 14 | `recent_context` | 8 | **v1.5.0**: recent daily movement RELATIVE to the symbol's average — `week_avg_range_vs_typical`, `prev_day/prev2_day/today_range_vs_week` — + TIME-to-pass pace: `days_elapsed_norm`, `episode_return_so_far`, `pace_vs_2_5pct_plan` (0.5 = on plan), `challenge_target_remaining`. |
 | 15 | `ohlc` | 20 | **v1.6.0**: RAW Open/High/Low/Close of the last CLOSED bar on each of the 5 TFs (`{tf}__open/high/low/close`, TF-major). The policy finally sees High/Low/Open, not just close. NOT normalized (like block 1). Built at cache time from the resampled bars (the env carries only `close`) and threaded in via `src/data/aux_features.py`; leak-free (last-closed-bar). |
+| 16 | `trade_risk` | 14 | **v1.7.0**: the CURRENT symbol's OPEN-TRADE risk state, so the policy can MANAGE the trade and learn to RE-ENTER a winner. `tr_in_trade`, `tr_direction`, unrealized P&L in ATR units (`tr_unrealized_pnl_atr`) and as % of the pot (`tr_unrealized_pnl_pct`), distance to the 2×-ATR(14) SOFT stop (`tr_dist_to_soft_stop_2atr`) and to the 1m BB(10,1) opposite-band HARD stop (`tr_dist_to_hard_stop_bb`, 0→1), `tr_bars_held_norm`, max favorable / adverse excursion in ATR (`tr_max_favorable_atr`, `tr_max_adverse_atr`), re-entry context (`tr_bars_since_last_close`, `tr_last_trade_dir`, `tr_price_vs_last_exit_atr`), and the band-stack flags `tr_band_stack_long` / `tr_band_stack_short` (price above/below BB200(dev1) AND BB10(dev1) on BOTH 1m & 5m). DYNAMIC (recomputed each step from the position state). Shared builder `src/observation/trade_risk.py` (jnp twin in `jax_tpu/jax_obs_blocks.trade_risk_features`). |
 
-**Total = 499.**
+**Total = 513.**
+
+> **The trade-risk block is where the BB hard stop + risk-based sizing + band-stack/re-entry bonuses live.**
+> The 1m+5m BB(10,1) bands it needs are NOT in the 220-indicator cache (BB periods there are 20 & 200 only);
+> they are precomputed leak-free from `close`+`time` in `TradingEnv._precompute` (`compute_bb10_bands`) — no
+> cache-format change. The BEHAVIOURS (auto-close at the 1m BB(10,1) band, size each entry so a stop-out
+> loses ~`risk_per_trade_pct`% of the pot, PnL-capped band-stack/re-entry CLOSE bonuses) live in
+> `PortfolioEnv` and default OFF; the training path turns them on. The block itself (and the per-trade
+> MFE/MAE state) is always present and parity-clean (CPU ↔ JAX bar-for-bar).
 
 > **OHLC is built where the OHLC exists.** The env only carries `close`, so the 20-float raw OHLC
 > block (and the ADX-DI alpha side-channel) are precomputed at cache time into a `{symbol}_aux.npy`

@@ -71,6 +71,16 @@ class DeviceStatic(NamedTuple):
     prev_day: jnp.ndarray       # (T,)
     prev2_day: jnp.ndarray      # (T,)
     today_sofar: jnp.ndarray    # (T,)
+    # v1.7.0 trade-risk per-bar refs
+    atr1m: jnp.ndarray          # (T,)
+    bb200_1m_up: jnp.ndarray    # (T,)
+    bb200_1m_lo: jnp.ndarray    # (T,)
+    bb200_5m_up: jnp.ndarray    # (T,)
+    bb200_5m_lo: jnp.ndarray    # (T,)
+    bb10_1m_up: jnp.ndarray     # (T,)
+    bb10_1m_lo: jnp.ndarray     # (T,)
+    bb10_5m_up: jnp.ndarray     # (T,)
+    bb10_5m_lo: jnp.ndarray     # (T,)
 
 
 class EnvState(NamedTuple):
@@ -98,6 +108,15 @@ class EnvState(NamedTuple):
     episode_passed: jnp.ndarray
     position: jnp.ndarray
     entry_price: jnp.ndarray
+    # v1.7.0 per-trade risk state (obs-only in the single-symbol env)
+    entry_bar: jnp.ndarray
+    entry_atr: jnp.ndarray
+    entry_stop_band: jnp.ndarray
+    mfe_atr: jnp.ndarray
+    mae_atr: jnp.ndarray
+    last_close_bar: jnp.ndarray
+    last_close_dir: jnp.ndarray
+    last_exit_px: jnp.ndarray
     days_elapsed: jnp.ndarray
     phase2_active: jnp.ndarray
     phase2_peak: jnp.ndarray
@@ -123,6 +142,11 @@ def make_device_static(sd) -> DeviceStatic:
         prev_day=jnp.asarray(sd.prev_day),
         prev2_day=jnp.asarray(sd.prev2_day),
         today_sofar=jnp.asarray(sd.today_sofar),
+        atr1m=jnp.asarray(sd.atr1m),
+        bb200_1m_up=jnp.asarray(sd.bb200_1m_up), bb200_1m_lo=jnp.asarray(sd.bb200_1m_lo),
+        bb200_5m_up=jnp.asarray(sd.bb200_5m_up), bb200_5m_lo=jnp.asarray(sd.bb200_5m_lo),
+        bb10_1m_up=jnp.asarray(sd.bb10_1m_up), bb10_1m_lo=jnp.asarray(sd.bb10_1m_lo),
+        bb10_5m_up=jnp.asarray(sd.bb10_5m_up), bb10_5m_lo=jnp.asarray(sd.bb10_5m_lo),
     )
 
 
@@ -165,6 +189,10 @@ def init_state(static: DeviceStatic, params: EnvParams, start, end,
         episode_trades=jnp.float32(0.0), episode_consecutive_losses=jnp.float32(0.0),
         episode_breached=jnp.float32(0.0), episode_passed=jnp.float32(0.0),
         position=z, entry_price=jnp.asarray(static.close[start]),
+        entry_bar=jnp.asarray(start, jnp.int32), entry_atr=z, entry_stop_band=z,
+        mfe_atr=z, mae_atr=z,
+        last_close_bar=jnp.asarray(start, jnp.int32), last_close_dir=z,
+        last_exit_px=jnp.asarray(static.close[start]),
         days_elapsed=jnp.float32(0.0),
         phase2_active=jnp.float32(0.0), phase2_peak=z, day_locked=jnp.float32(0.0),
         ny_started=jnp.float32(0.0), ny_start_realized=z,
@@ -193,8 +221,15 @@ def _dynamic_obs(s: EnvState, static: DeviceStatic, params: EnvParams, t) -> dic
         s.equity, s.starting_balance, static.week_avg[t], static.prev_day[t], static.prev2_day[t],
         static.today_sofar[t], params.typical_range, s.days_elapsed,
         s.daily_target_frac, params.profit_target_frac)
+    tr = jax_obs_blocks.trade_risk_features(
+        s.position, s.entry_price, static.close[t], params.position_size, s.equity,
+        s.entry_atr, static.atr1m[t], s.entry_stop_band,
+        t.astype(jnp.float32) - s.entry_bar.astype(jnp.float32), s.mfe_atr, s.mae_atr,
+        t.astype(jnp.float32) - s.last_close_bar.astype(jnp.float32), s.last_close_dir, s.last_exit_px,
+        static.bb200_1m_up[t], static.bb200_1m_lo[t], static.bb200_5m_up[t], static.bb200_5m_lo[t],
+        static.bb10_1m_up[t], static.bb10_1m_lo[t], static.bb10_5m_up[t], static.bb10_5m_lo[t])
     return {"account_daily": daily, "account_episode": epi, "portfolio": port,
-            "sizing": size, "recent_context": ctx}
+            "sizing": size, "recent_context": ctx, "trade_risk": tr}
 
 
 def _assemble_obs(s: EnvState, static: DeviceStatic, params: EnvParams, t) -> jnp.ndarray:
@@ -260,6 +295,11 @@ def step_env(s: EnvState, action, static: DeviceStatic, params: EnvParams):
     # mark_equity(balance) inside record_close updates peaks (gated by close_mask)
     day_peak = jnp.where(close_mask > 0.5, jnp.maximum(s.day_peak_equity, balance), s.day_peak_equity)
     epi_peak = jnp.where(close_mask > 0.5, jnp.maximum(s.episode_peak_equity, balance), s.episode_peak_equity)
+    # v1.7.0: record re-entry context on the AGENT close leg (the two-phase flatten below does NOT, matching CPU)
+    lc = close_mask > 0.5
+    last_close_bar = jnp.where(lc, t.astype(jnp.int32), s.last_close_bar)
+    last_close_dir = jnp.where(lc, s.position, s.last_close_dir)
+    last_exit_px = jnp.where(lc, close_t, s.last_exit_px)
     # open cost (gated by open_mask)
     ecost = cost * close_t * size
     balance = balance - ecost * open_mask
@@ -267,6 +307,14 @@ def step_env(s: EnvState, action, static: DeviceStatic, params: EnvParams):
     episode_realized = episode_realized - ecost * open_mask
     entry_price = jnp.where(open_mask > 0.5, close_t, s.entry_price)
     position = target
+    # v1.7.0: stamp per-trade risk state on the open leg (entry bar/ATR + BB(10,1) hard-stop band, reset MFE/MAE)
+    op = open_mask > 0.5
+    entry_bar = jnp.where(op, t.astype(jnp.int32), s.entry_bar)
+    entry_atr = jnp.where(op, static.atr1m[t], s.entry_atr)
+    stop_band_open = jnp.where(target > 0.0, static.bb10_1m_lo[t], static.bb10_1m_up[t])
+    entry_stop_band = jnp.where(op, stop_band_open, s.entry_stop_band)
+    mfe_atr = jnp.where(op, jnp.zeros_like(s.mfe_atr), s.mfe_atr)
+    mae_atr = jnp.where(op, jnp.zeros_like(s.mae_atr), s.mae_atr)
 
     # --- 2) advance one bar, mark to market at close[t+1] ---
     t1 = jnp.minimum(t + 1, params.T - 1)
@@ -275,6 +323,11 @@ def step_env(s: EnvState, action, static: DeviceStatic, params: EnvParams):
     equity = balance + unrealized
     day_peak = jnp.maximum(day_peak, equity)
     epi_peak = jnp.maximum(epi_peak, equity)
+    # v1.7.0: update the open trade's max favorable / adverse excursion (ATR units) at the new bar
+    in_pos = (position != 0.0) & (entry_atr > 0.0)
+    exc = jnp.where(in_pos, position * (close_t1 - entry_price) / jnp.maximum(entry_atr, 1e-9), 0.0)
+    mfe_atr = jnp.where(in_pos, jnp.maximum(mfe_atr, exc), mfe_atr)
+    mae_atr = jnp.where(in_pos, jnp.maximum(mae_atr, -exc), mae_atr)
 
     # --- 3) reward = equity change / starting balance ---
     reward = ((equity - equity_before) / params.starting_balance) * params.reward_scale
@@ -373,7 +426,11 @@ def step_env(s: EnvState, action, static: DeviceStatic, params: EnvParams):
         episode_realized_pnl=episode_realized, episode_wins=episode_wins, episode_losses=episode_losses,
         episode_trades=episode_trades, episode_consecutive_losses=episode_consec,
         episode_breached=episode_breached, episode_passed=episode_passed,
-        position=position, entry_price=entry_price, days_elapsed=days_elapsed,
+        position=position, entry_price=entry_price,
+        entry_bar=entry_bar, entry_atr=entry_atr, entry_stop_band=entry_stop_band,
+        mfe_atr=mfe_atr, mae_atr=mae_atr,
+        last_close_bar=last_close_bar, last_close_dir=last_close_dir, last_exit_px=last_exit_px,
+        days_elapsed=days_elapsed,
         phase2_active=phase2_active_new, phase2_peak=phase2_peak_new, day_locked=day_locked_new,
         ny_started=ny_started, ny_start_realized=ny_start_realized, ny_half=ny_half, ny_full=ny_full,
         daily_target_frac=s.daily_target_frac, trailing_dd_frac=s.trailing_dd_frac,

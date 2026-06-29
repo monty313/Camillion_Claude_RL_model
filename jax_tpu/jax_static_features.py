@@ -1,7 +1,7 @@
 # =====================================================================
 # WHEN 2026-06-28 | WHO Claude for Monty
 # WHY  Build, ONCE on the host, the things the JAX env indexes instead of
-#      recomputing: (1) the (T, 499) STATIC observation tensor with the 9 per-bar
+#      recomputing: (1) the (T, 513) STATIC observation tensor with the 9 per-bar
 #      blocks placed at their exact contract indices (dynamic slots zeroed), and
 #      (2) the per-bar + per-symbol scalar arrays the branchless step needs
 #      (close, is_new_day, minute_of_day, ref_move, recent-context ranges, ...).
@@ -17,10 +17,10 @@
 # CHANGE_NOTES(IRAC): I: rewriting indicators/alphas in jnp is huge + risky; they're
 #   already precomputed on the host. R: CLAUDE.md #3 (no TA-Lib/pandas in step) +
 #   the shared-table scaling plan. A: lift the 9 static blocks from the CPU env into a
-#   (T,499) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
+#   (T,513) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
 #   static obs + a tiny per-env state -> thousands of envs fit on a TPU.
 # =====================================================================
-"""Host builder for the shared (T,499) static obs tensor + per-bar/per-symbol scalars."""
+"""Host builder for the shared (T,513) static obs tensor + per-bar/per-symbol scalars."""
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
@@ -39,8 +39,9 @@ def _block_ranges() -> dict[str, tuple[int, int]]:
 
 
 BLOCK_RANGES = _block_ranges()
-# blocks the JAX env recomputes every step (everything else is static, placed here)
-DYNAMIC_BLOCKS = ("account_daily", "account_episode", "portfolio", "sizing", "recent_context")
+# blocks the JAX env recomputes every step (everything else is static, placed here). v1.7.0 adds
+# trade_risk: it depends on the EVOLVING open-position state, so it is recomputed, not placed.
+DYNAMIC_BLOCKS = ("account_daily", "account_episode", "portfolio", "sizing", "recent_context", "trade_risk")
 DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 
 
@@ -48,7 +49,7 @@ DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 class StaticData:
     """Everything the JAX env needs that is FIXED per (symbol, bar). Arrays are numpy
     here; jax_env converts to device arrays once and shares them read-only."""
-    static_obs: np.ndarray      # (T, 499) float32 — static blocks placed, dynamic = 0
+    static_obs: np.ndarray      # (T, 513) float32 — static blocks placed, dynamic = 0
     close: np.ndarray           # (T,) float64 — price for P&L + mark
     is_new_day: np.ndarray      # (T,) float32 — 1.0 if bar t starts a new day vs t-1
     open_gate_blocked: np.ndarray  # (T,) float32 — 1.0 where a new directional open is gated (5m CCI neutral)
@@ -58,6 +59,17 @@ class StaticData:
     prev_day: np.ndarray        # (T,) float32
     prev2_day: np.ndarray       # (T,) float32
     today_sofar: np.ndarray     # (T,) float32
+    # v1.7.0 trade-risk per-bar references: clean 1m ATR(14) (NaN->0, matches _atr_at) + BB200(dev1)
+    # and BB10(dev1) upper/lower on 1m & 5m (raw; NaN warmup -> band-stack flag False, like the CPU block)
+    atr1m: np.ndarray           # (T,) float32 (NaN->0)
+    bb200_1m_up: np.ndarray     # (T,) float32
+    bb200_1m_lo: np.ndarray     # (T,) float32
+    bb200_5m_up: np.ndarray     # (T,) float32
+    bb200_5m_lo: np.ndarray     # (T,) float32
+    bb10_1m_up: np.ndarray      # (T,) float32
+    bb10_1m_lo: np.ndarray      # (T,) float32
+    bb10_5m_up: np.ndarray      # (T,) float32
+    bb10_5m_lo: np.ndarray      # (T,) float32
     # per-symbol scalars
     T: int
     starting_balance: float
@@ -146,6 +158,16 @@ def build_static_data(env) -> StaticData:
         prev_day=np.asarray(env._prev_day, dtype=np.float32).ravel(),
         prev2_day=np.asarray(env._prev2_day, dtype=np.float32).ravel(),
         today_sofar=np.asarray(env._today_sofar, dtype=np.float32).ravel(),
+        # v1.7.0 trade-risk per-bar refs (atr1m NaN->0 to match TradingEnv._atr_at; bands raw)
+        atr1m=np.nan_to_num(np.asarray(env._atr1m, np.float32).ravel(), nan=0.0),
+        bb200_1m_up=np.asarray(env._bb200_1m_up, np.float32).ravel(),
+        bb200_1m_lo=np.asarray(env._bb200_1m_lo, np.float32).ravel(),
+        bb200_5m_up=np.asarray(env._bb200_5m_up, np.float32).ravel(),
+        bb200_5m_lo=np.asarray(env._bb200_5m_lo, np.float32).ravel(),
+        bb10_1m_up=np.asarray(env.bb10_1m_up, np.float32).ravel(),
+        bb10_1m_lo=np.asarray(env.bb10_1m_lo, np.float32).ravel(),
+        bb10_5m_up=np.asarray(env.bb10_5m_up, np.float32).ravel(),
+        bb10_5m_lo=np.asarray(env.bb10_5m_lo, np.float32).ravel(),
         T=T,
         starting_balance=float(env.cfg.starting_balance),
         position_size=float(env.position_size),
@@ -180,6 +202,16 @@ class PortfolioStaticData:
     value_per_point: np.ndarray # (N,)
     typical_range: np.ndarray   # (N,) 0.0 == None
     cost_frac: np.ndarray       # (N,)
+    # v1.7.0 trade-risk per-bar refs (per symbol)
+    atr1m: np.ndarray           # (N, T)
+    bb200_1m_up: np.ndarray     # (N, T)
+    bb200_1m_lo: np.ndarray     # (N, T)
+    bb200_5m_up: np.ndarray     # (N, T)
+    bb200_5m_lo: np.ndarray     # (N, T)
+    bb10_1m_up: np.ndarray      # (N, T)
+    bb10_1m_lo: np.ndarray      # (N, T)
+    bb10_5m_up: np.ndarray      # (N, T)
+    bb10_5m_lo: np.ndarray      # (N, T)
     N: int
     T: int
     starting_balance: float
@@ -210,6 +242,10 @@ def build_portfolio_static(subs: dict) -> PortfolioStaticData:
         value_per_point=np.array([sds[s].value_per_point for s in symbols], np.float64),
         typical_range=np.array([sds[s].typical_range for s in symbols], np.float32),
         cost_frac=np.array([sds[s].cost_frac for s in symbols], np.float64),
+        atr1m=st("atr1m"), bb200_1m_up=st("bb200_1m_up"), bb200_1m_lo=st("bb200_1m_lo"),
+        bb200_5m_up=st("bb200_5m_up"), bb200_5m_lo=st("bb200_5m_lo"),
+        bb10_1m_up=st("bb10_1m_up"), bb10_1m_lo=st("bb10_1m_lo"),
+        bb10_5m_up=st("bb10_5m_up"), bb10_5m_lo=st("bb10_5m_lo"),
         N=len(symbols), T=T,
         starting_balance=float(sds[symbols[0]].starting_balance),
         warmup=int(sds[symbols[0]].warmup),
