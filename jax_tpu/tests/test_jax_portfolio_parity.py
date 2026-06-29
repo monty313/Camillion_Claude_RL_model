@@ -73,6 +73,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         alpha_on=1.0 if cfg.alpha_reward_enabled else 0.0, alpha_agree=cfg.alpha_agree_bonus,
         alpha_against=cfg.alpha_against_penalty, alpha_beat=cfg.alpha_beat_bonus,
         day_pass_reward=cfg.day_pass_reward, day_fail_penalty=cfg.day_fail_penalty,
+        streak_bonus=cfg.streak_bonus, streak_bonus_cap=cfg.streak_bonus_cap,
         target_seek_weight=cfg.target_seek_weight, idle_day_penalty=cfg.idle_day_penalty,
         dd_proximity_coef=cfg.dd_proximity_coef, breach_penalty=cfg.breach_penalty, pass_bonus=cfg.pass_bonus,
         bb_stop_enabled=1.0 if bb_stop else 0.0, risk_based=1.0 if risk_pct is not None else 0.0,

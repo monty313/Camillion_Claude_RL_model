@@ -60,7 +60,8 @@ def test_agree_bonus_fires_on_profitable_consensus_close():
     off = _run(_env(PR, alpha_on=False, consensus_dir=1), SEQ)
     on = _run(_env(PR, alpha_on=True, consensus_dir=1), SEQ)        # BUY agrees with the +1 consensus
     delta_close = on[1] - off[1]
-    assert abs(delta_close - 0.001) < 3e-4, f"agree bonus ~0.001 expected, got {delta_close}"
+    agree = FTMOConfig().alpha_agree_bonus                          # tracks the config (10x'd to 0.01 on 2026-06-29)
+    assert abs(delta_close - agree) < max(3e-4, agree * 0.3), f"agree bonus ~{agree} expected, got {delta_close}"
 
 
 def test_penalty_for_opening_against_the_consensus():
@@ -74,7 +75,7 @@ def test_beat_bonus_when_winning_against_the_consensus():
     off = _run(_env(PR, alpha_on=False, consensus_dir=-1), SEQ)
     on = _run(_env(PR, alpha_on=True, consensus_dir=-1), SEQ)       # alphas said SELL; BUY won -> beat them
     assert (on[0] - off[0]) < -0.0005          # entry: penalised for fighting the consensus
-    assert (on[1] - off[1]) > 0.0015           # close: BEAT bonus is 2x (~0.002) so it isn't cancelled by the penalty
+    assert (on[1] - off[1]) > 0.0015           # close: BEAT bonus (emphasised, ~0.05) easily clears the open-penalty
 
 
 def test_bonus_is_capped_at_the_trade_pnl():

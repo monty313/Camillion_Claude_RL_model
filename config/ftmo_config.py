@@ -40,22 +40,28 @@ class FTMOConfig:
     profit_target_total_pct: float = 10.0
     # alpha-shaping (ON by default 2026-06-27; deliberate departure from "reward=equity only" for PortfolioEnv)
     alpha_reward_enabled: bool = True
-    alpha_agree_bonus: float = 0.001       # USE the alphas: profitable close that agreed with >=50% firing alphas
-    alpha_against_penalty: float = 0.001   # penalty for OPENING against >=50% firing alphas
-    alpha_beat_bonus: float = 0.002        # BEAT the alphas: 2x (so a divergent win isn't cancelled by the against-penalty)
-    # per-day consistency: a "won day" ENDS >= +2.5% of initial (measured at midnight, after any give-back)
-    day_pass_reward: float = 0.025         # reward a won day
-    day_fail_penalty: float = 0.025        # penalty for a failed day (ended below +2.5%)
-    # seek-the-target vs hide rebalance (operator 2026-06-28, PortfolioEnv only). target_seek_weight:
-    # dense reward for NEW progress toward +2.5%/day (high-water-mark, <= this per won day); idle_day_penalty:
-    # penalty for a day with ZERO trades. Both 0.0 = pre-rebalance reward. See config/variables.py.
-    target_seek_weight: float = 0.10
+    # operator 2026-06-29 reward REBALANCE (see config/variables.py for the full rationale).
+    alpha_agree_bonus: float = 0.01        # USE the alphas (10x): profitable close that agreed with >=50% firing alphas
+    alpha_against_penalty: float = 0.01    # penalty for OPENING against >=50% firing alphas (10x)
+    alpha_beat_bonus: float = 0.05         # BEAT the alphas (emphasised): out-earn the consensus; profit + day-up + capped at PnL
+    # per-day consistency (operator 2026-06-29): a "won day" ENDS >= +2.5% of initial, paid +day_pass_reward PLUS
+    # an ESCALATING streak bonus; a failed day pays -day_fail_penalty and resets the streak. The escalation
+    # (streak_bonus per ADDITIONAL consecutive won day, capped) REPLACES the old every-4th jackpot.
+    day_pass_reward: float = 10.0          # reward a won day
+    day_fail_penalty: float = 5.0          # penalty for a failed day (ended below +2.5%) — also resets the streak
+    streak_bonus: float = 1.0              # +this per ADDITIONAL consecutive won day (day N pays +bonus*min(N-1, cap))
+    streak_bonus_cap: float = 10.0         # cap the escalation (value-function stability); 0 = no streak bonus
+    # seek-the-target vs hide rebalance (operator 2026-06-28/29, PortfolioEnv only). target_seek_weight: dense
+    # reward for NEW progress toward +2.5%/day (high-water-mark, <= this per won day), SCALED UP with the day
+    # reward so the climb stays visible; idle_day_penalty: penalty for a day with ZERO trades. 0 = off.
+    target_seek_weight: float = 3.0
     idle_day_penalty: float = 0.02
-    # drawdown-proximity penalty + smaller breach cliff (operator 2026-06-28; PortfolioEnv). dd_proximity_coef:
-    # per-step penalty = coef*(dd/wall)^2 as equity nears the trailing wall; breach_penalty: the breach cliff
-    # (dropped 1.0->0.2 — the 40-won-day-streak reset is the real deterrent); pass_bonus: +10% + 4-in-a-row bonus.
-    dd_proximity_coef: float = 0.02
-    breach_penalty: float = 0.2
+    # drawdown-proximity penalty + breach cliff (operator 2026-06-28/29; PortfolioEnv). dd_proximity_coef:
+    # per-step penalty = coef*(dd/wall)^2 as equity nears the trailing wall (SCALED UP so it bites near the wall);
+    # breach_penalty: the breach cliff (RAISED to 20 = 2x a won day, felt immediately); pass_bonus: the +10%
+    # CHALLENGE pass terminal bonus (eval only — training continues past +10% for long won-day streaks).
+    dd_proximity_coef: float = 2.0
+    breach_penalty: float = 20.0
     pass_bonus: float = 1.0
     # v1.7.0 trade-risk CLOSE bonuses (operator 2026-06-29; PortfolioEnv only, PnL-capped, default 0 = off).
     # band_stack_bonus: paid when a trade ENTERED with price stacked above (long) / below (short) BB200(dev1) AND
@@ -94,8 +100,10 @@ def load_ftmo_config() -> FTMOConfig:
         alpha_agree_bonus=getattr(V, "FTMO_ALPHA_AGREE_BONUS", 0.001),
         alpha_against_penalty=getattr(V, "FTMO_ALPHA_AGAINST_PENALTY", 0.001),
         alpha_beat_bonus=getattr(V, "FTMO_ALPHA_BEAT_BONUS", 0.002),
-        day_pass_reward=getattr(V, "FTMO_DAY_PASS_REWARD", 0.025),
-        day_fail_penalty=getattr(V, "FTMO_DAY_FAIL_PENALTY", 0.025),
+        day_pass_reward=getattr(V, "FTMO_DAY_PASS_REWARD", 10.0),
+        day_fail_penalty=getattr(V, "FTMO_DAY_FAIL_PENALTY", 5.0),
+        streak_bonus=getattr(V, "FTMO_STREAK_BONUS", 1.0),
+        streak_bonus_cap=getattr(V, "FTMO_STREAK_BONUS_CAP", 10.0),
         target_seek_weight=getattr(V, "FTMO_TARGET_SEEK_WEIGHT", 0.10),
         idle_day_penalty=getattr(V, "FTMO_IDLE_DAY_PENALTY", 0.02),
         dd_proximity_coef=getattr(V, "FTMO_DD_PROXIMITY_COEF", 0.02),

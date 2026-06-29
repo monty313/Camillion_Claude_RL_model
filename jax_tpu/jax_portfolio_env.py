@@ -54,6 +54,8 @@ class PortfolioParams(NamedTuple):
     alpha_beat: float
     day_pass_reward: float
     day_fail_penalty: float
+    streak_bonus: float          # +per ADDITIONAL consecutive won day (escalation; replaces the every-4th jackpot)
+    streak_bonus_cap: float
     target_seek_weight: float
     idle_day_penalty: float
     dd_proximity_coef: float
@@ -162,10 +164,10 @@ def make_portfolio_device_static(psd) -> PortfolioDeviceStatic:
 def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, daily_dd_frac=0.05,
                      total_dd_frac=0.10, profit_target_frac=0.10, trailing_enabled=1.0,
                      two_phase_enabled=1.0, phase2_continue=1.0, phase2_trailing_frac=0.01,
-                     breach_penalty=0.2, pass_bonus=1.0, reward_scale=1.0, continue_after_pass=1.0,
-                     alpha_on=1.0, alpha_agree=0.001, alpha_against=0.001, alpha_beat=0.002,
-                     day_pass_reward=0.025, day_fail_penalty=0.025,
-                     target_seek_weight=0.10, idle_day_penalty=0.02, dd_proximity_coef=0.02,
+                     breach_penalty=20.0, pass_bonus=1.0, reward_scale=1.0, continue_after_pass=1.0,
+                     alpha_on=1.0, alpha_agree=0.01, alpha_against=0.01, alpha_beat=0.05,
+                     day_pass_reward=10.0, day_fail_penalty=5.0, streak_bonus=1.0, streak_bonus_cap=10.0,
+                     target_seek_weight=3.0, idle_day_penalty=0.02, dd_proximity_coef=2.0,
                      bb_stop_enabled=0.0, risk_based=0.0, risk_frac=0.0,
                      band_stack_bonus=0.0, reentry_bonus=0.0,
                      max_bars=None) -> PortfolioParams:
@@ -180,7 +182,8 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         reward_scale=float(reward_scale), continue_after_pass=float(continue_after_pass),
         alpha_on=float(alpha_on), alpha_agree=float(alpha_agree), alpha_against=float(alpha_against),
         alpha_beat=float(alpha_beat), day_pass_reward=float(day_pass_reward),
-        day_fail_penalty=float(day_fail_penalty), target_seek_weight=float(target_seek_weight),
+        day_fail_penalty=float(day_fail_penalty), streak_bonus=float(streak_bonus),
+        streak_bonus_cap=float(streak_bonus_cap), target_seek_weight=float(target_seek_weight),
         idle_day_penalty=float(idle_day_penalty), dd_proximity_coef=float(dd_proximity_coef),
         bb_stop_enabled=float(bb_stop_enabled), risk_based=float(risk_based), risk_frac=float(risk_frac),
         band_stack_bonus=float(band_stack_bonus), reentry_bonus=float(reentry_bonus))
@@ -444,8 +447,10 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     d0 = s.day_start_balance
     won = (equity - d0 >= s.daily_target_frac * start).astype(jnp.float32)
     streak_if_won = s.daily_pass_streak + 1.0
-    four = (jnp.mod(streak_if_won, 4.0) == 0.0).astype(jnp.float32)
-    day_reward = won * (params.day_pass_reward + four * params.pass_bonus) - (1.0 - won) * params.day_fail_penalty
+    # ESCALATING streak bonus: every ADDITIONAL consecutive won day pays more, capped (replaces the every-4th
+    # jackpot). day N of a streak pays day_pass + streak_bonus*min(N-1, cap). 1:1 with PortfolioEnv.
+    streak_amt = params.streak_bonus * jnp.minimum(streak_if_won - 1.0, params.streak_bonus_cap)
+    day_reward = won * (params.day_pass_reward + streak_amt) - (1.0 - won) * params.day_fail_penalty
     reward = reward + new_day * day_reward
     # ANTI-HIDE: penalise a day the bot was FLAT all day (no exposure). Uses day_had_exposure accumulated
     # over the day; re-seeds below from the carried position (holding across midnight = exposed).

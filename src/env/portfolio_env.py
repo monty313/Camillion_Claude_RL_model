@@ -174,6 +174,10 @@ class PortfolioEnv:
         # per-DAY consistency: a "won day" ENDS >= +2.5% of initial (scored at midnight, after any give-back)
         self._day_pass_reward = float(getattr(self.cfg, "day_pass_reward", 0.0))
         self._day_fail_penalty = float(getattr(self.cfg, "day_fail_penalty", 0.0))
+        # ESCALATING streak bonus (operator 2026-06-29): every ADDITIONAL consecutive won day pays more (capped),
+        # replacing the old every-4th jackpot (no lumpy multiple to gamble for).
+        self._streak_bonus = float(getattr(self.cfg, "streak_bonus", 0.0))
+        self._streak_bonus_cap = float(getattr(self.cfg, "streak_bonus_cap", 0.0))
         # SEEK-THE-TARGET vs HIDE rebalance (operator 2026-06-28): a dense reward for NEW progress toward
         # the +2.5%/day target (high-water-mark) so the bot actively SEEKS profit, + a penalty for a day
         # with ZERO trades so "hiding" isn't free. Both 0.0 = pre-rebalance reward. (See config/variables.py.)
@@ -608,16 +612,16 @@ class PortfolioEnv:
         if bar_advanced:
             if self._dates[self.t] != self._cur_date:          # midnight -> SCORE the day that just ENDED, then reset
                 # A "WON day" = the day ENDS at >= +2.5% of INITIAL (measured here at midnight, AFTER any
-                # give-back -- so banking +2.5% then leaking it back to +1.5% counts as a FAIL). Reward a won
-                # day, penalise a failed day; 4 WON days IN A ROW = a big bonus (we keep training for more).
+                # give-back -- so banking +2.5% then leaking it back to +1.5% counts as a FAIL). A won day pays
+                # day_pass_reward PLUS an ESCALATING streak bonus (every ADDITIONAL consecutive won day is worth
+                # more, capped); a failed day penalises and RESETS the streak (operator 2026-06-29).
                 d0 = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
                 day_end_gain = self.acc.equity - d0
                 won = day_end_gain >= (self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance)
                 if won:
-                    reward += self._day_pass_reward            # consistency: reward a WON day
                     self._daily_pass_streak += 1
-                    if self._daily_pass_streak % 4 == 0:
-                        reward += self.pass_bonus              # 4 won days IN A ROW -> big bonus
+                    streak_bonus = self._streak_bonus * min(self._daily_pass_streak - 1, self._streak_bonus_cap)
+                    reward += self._day_pass_reward + streak_bonus   # won day + ESCALATING streak bonus
                 else:
                     reward -= self._day_fail_penalty           # consistency: penalise a FAILED day
                     self._daily_pass_streak = 0

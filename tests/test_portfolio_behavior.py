@@ -78,7 +78,9 @@ def test_four_daily_passes_in_a_row_earns_a_big_bonus():
         if term or trunc:
             break
     assert max_streak >= 4, f"should reach a 4-day pass streak (got {max_streak})"
-    assert max(rewards) >= 0.5, "the 4-in-a-row bonus (~pass_bonus=1.0) should dwarf the tiny step rewards"
+    # operator 2026-06-29: a WON day now pays +day_pass_reward (10) + an escalating streak bonus, so the
+    # midnight day reward dwarfs the tiny per-step rewards (no more every-4th jackpot).
+    assert max(rewards) >= 0.5, "a won-day reward (+10 + streak bonus) should dwarf the tiny per-step rewards"
 
 
 def test_position_size_scales_with_account_balance():

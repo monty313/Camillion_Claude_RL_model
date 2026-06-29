@@ -3,6 +3,36 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-29] Reward REBALANCE for 40-won-days-in-a-row (PortfolioEnv, CPU + TPU) — no obs/contract change
+- **I (Issue):** A code-grounded "bot psychology" review (multi-agent) found the reward's #1 threat to a 40-day
+  streak was its OWN shape: an **every-4th-won-day +1.0 jackpot** (largest scalar in the reward) taught the bot
+  to GAMBLE as a streak neared a multiple of 4, while a **−0.2 breach** was only a flinch, and the dense
+  intraday shaping (seek 0.10, dd-proximity 0.02) was tiny relative to the day outcomes. Operator chose a new
+  scale and asked for an honest review of it.
+- **R (Rule):** Operator 2026-06-29. Reward shaping only — the **locked 513-obs contract and the FTMO rule
+  numbers (2.5%/4%/5%/10%) are UNCHANGED.** Keep CPU ↔ JAX bar-for-bar.
+- **A (Application):** in `config/variables.py` + `config/ftmo_config.py`, mirrored in the day-scoring of
+  `src/env/portfolio_env.py` and `jax_tpu/jax_portfolio_env.py`:
+  - **WON day** = `+day_pass_reward (10)` **+ an ESCALATING streak bonus**: every ADDITIONAL consecutive won
+    day pays `+streak_bonus (1.0)` more, i.e. day N pays `10 + 1.0*min(N-1, streak_bonus_cap=10)`. This
+    REPLACES the lumpy every-4th `pass_bonus` jackpot — a smooth per-day reward has no multiple to gamble for;
+    the **cap** bounds the per-day value so the PPO value function can't blow up on a long ramp.
+  - **FAILED day** = `−day_fail_penalty (5)` and resets the streak; **BREACH** = `−breach_penalty (20)` (2× a
+    won day) felt immediately (the agent is near-sighted at γ≈0.9995 with the multi-symbol cycle, so the
+    streak-reset alone is too delayed a deterrent).
+  - **10× the alpha terms** (`agree 0.001→0.01`, `against 0.001→0.01`, `beat 0.002→0.05`, still PnL-capped +
+    day-up gated) so the bot develops real edge (BEAT) instead of merely shadowing the consensus.
+  - **SCALED the dense shaping with the day reward** so it stays visible (else the bot would learn only from the
+    sparse midnight outcome and lose proactive wall-avoidance): `target_seek_weight 0.10→3.0` (still HWM-capped,
+    ~⅓ of a won day) and `dd_proximity_coef 0.02→2.0` (nearing the 4% wall now costs real points every step).
+  - `pass_bonus (1.0)` is now ONLY the +10% CHALLENGE-pass terminal (eval; training continues past +10%).
+  - New params `streak_bonus`/`streak_bonus_cap` threaded through `FTMOConfig`, `PortfolioParams`,
+    `portfolio_params`, the notebook Step 8b kwargs, and the portfolio-parity test.
+- **C (Conclusion → consistency):** Removes the single biggest self-sabotage (the gamble-for-the-jackpot
+  incentive), makes a blow-up genuinely feared in the moment (−20), rewards SUSTAINED consistency (each extra
+  day worth more, bounded for stability), keeps the smooth "climb to +2.5% / ease off the wall" guidance alive
+  at the new scale, and pushes the bot to BEAT the alphas. CPU ↔ JAX verified bar-for-bar with the new reward.
+
 ## [2026-06-29] TRADE-RISK observation block + BB(10,1) hard stop + risk-based sizing + band-stack/re-entry bonuses (contract v1.7.0, CPU + TPU)
 - **I (Issue):** The bot traded with NO awareness of its OPEN-trade risk: no view of unrealized P&L in
   ATR/account terms, no sense of how close it was to a stop, no max favorable/adverse excursion, no re-entry
