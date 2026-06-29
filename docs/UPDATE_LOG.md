@@ -3,6 +3,25 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-29] "Don't trade the chop": 5m CCI open-gate OR→AND + wired into the portfolio (CPU + TPU)
+- **I (Issue):** Operator: don't allow a new trade when, on the 5m, BOTH CCI(30) AND CCI(100) sit in [-50,50]
+  (a flat, no-momentum market). The existing `open_gate` used OR (block if EITHER is neutral) and was applied
+  ONLY in the single-symbol env — the shared-pot PortfolioEnv (the product) ignored it. This is lesson #1
+  (`PSYCHOLOGY.md`): take a protected zero on a dead market instead of forcing a trade.
+- **R (Rule):** Reward/behaviour shaping only — obs unchanged (517/v1.8.0). CPU ↔ JAX bar-for-bar. `open_gate`
+  default OFF (existing trajectories unchanged); training turns it on.
+- **A (Application):**
+  - `TradingEnv._precompute`: `open_gate_blocked` is now **AND** — `(|5m cci30|<=50) & (|5m cci100|<=50)`
+    (was OR). Threshold stays 50. Blocks a new directional open only on a genuinely flat 5m.
+  - Wired into the **portfolio**: `PortfolioEnv(open_gate=…)` blocks a new open when `sub.open_gate_blocked[t]`;
+    `open_gate_blocked` threaded into `PortfolioStaticData` / `PortfolioDeviceStatic`, `open_gate` added to
+    `PortfolioParams`, and the JAX `step_portfolio` applies it branchlessly right after the day-lock.
+  - `test_open_gate.py` flipped to AND semantics; notebook Step 8b trains with `open_gate=1.0`.
+- **C (Conclusion → consistency):** The bot stops forcing entries into chop — fewer low-edge trades, fewer
+  whipsaw losses, and a real ability to sit out a dead 5m and protect the day/streak. Verified CPU ↔ JAX
+  bar-for-bar with the gate ON; full CPU suite green; portfolio learn-smoke finite with the gate + all
+  behaviours on.
+
 ## [2026-06-29] Streak psychology: stretch the horizon + SEE the multi-day standing + selectivity (contract v1.8.0)
 - **I (Issue):** A brutally-honest audit found the two pieces that make the operator's vision (a streak-guarding
   sniper, see `PSYCHOLOGY.md`) were missing: (1) the bot was **near-sighted** (gamma 0.9995 ≈ ⅓ day with the

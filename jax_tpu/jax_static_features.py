@@ -197,6 +197,7 @@ class PortfolioStaticData:
     prev_day: np.ndarray        # (N, T)
     prev2_day: np.ndarray       # (N, T)
     today_sofar: np.ndarray     # (N, T)
+    open_gate_blocked: np.ndarray  # (N, T) — 1.0 where the 5m is FLAT (both CCIs in +/-50) -> block new opens
     alpha_matrix: np.ndarray    # (N, T, 64) — +1/-1/0 per alpha slot
     occupancy: np.ndarray       # (N, 64)    — 1 assigned / 0 empty
     position_size: np.ndarray   # (N,)
@@ -237,6 +238,7 @@ def build_portfolio_static(subs: dict) -> PortfolioStaticData:
         is_new_day=sds[symbols[0]].is_new_day,            # shared clock
         ref_move=st("ref_move"), week_avg=st("week_avg"), prev_day=st("prev_day"),
         prev2_day=st("prev2_day"), today_sofar=st("today_sofar"),
+        open_gate_blocked=st("open_gate_blocked").astype(np.float32),
         alpha_matrix=np.stack([np.asarray(subs[s].alpha_matrix, np.float32) for s in symbols], axis=0),
         occupancy=np.stack([np.asarray(subs[s].occupancy, np.float32) for s in symbols], axis=0),
         position_size=np.array([sds[s].position_size for s in symbols], np.float64),

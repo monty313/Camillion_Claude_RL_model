@@ -182,14 +182,15 @@ class TradingEnv:
         self.sig_acc = accuracy_features(self.net_signal, self.close)        # (T,2) leak-free
         self.time_feats = np.stack([OB.time_features(pd.Timestamp(self.time_ns[i]))
                                     for i in range(T)]).astype(np.float32)    # (T,6)
-        # 5m CCI open-gate mask: True where EITHER 5m CCI sits within +/-threshold
-        # (flat/undecided short-term market) -> new directional opens are forbidden when
-        # self.open_gate is on. Allowed only when BOTH |cci| > threshold (a strong move).
+        # 5m CCI open-gate mask: True where BOTH 5m CCI(30) AND CCI(100) sit within +/-threshold
+        # (a genuinely FLAT/chop 5m -> no momentum) -> new directional opens are forbidden when
+        # self.open_gate is on (operator 2026-06-29: "don't trade the chop"). A trade is ALLOWED as long
+        # as AT LEAST ONE 5m CCI shows momentum (|cci| > threshold). (Was OR/either; now AND/both.)
         thr = self.open_gate_threshold
         try:
             j30 = ALL_INDICATOR_COLUMNS.index("5m__cci30_raw")
             j100 = ALL_INDICATOR_COLUMNS.index("5m__cci100_raw")
-            self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= thr) | (np.abs(self.ind[:, j100]) <= thr)
+            self.open_gate_blocked = (np.abs(self.ind[:, j30]) <= thr) & (np.abs(self.ind[:, j100]) <= thr)
         except ValueError:
             self.open_gate_blocked = np.zeros(self.T, dtype=bool)
         # v1.2.0: per-alpha signal streak (consecutive bars, same non-zero signal) -- leak-free
@@ -427,8 +428,8 @@ class TradingEnv:
         # 1) act at close[t]: realize on any position change, set new position
         target = {C.ACTION_HOLD: self.position, C.ACTION_BUY: 1,
                   C.ACTION_SELL: -1, C.ACTION_CLOSE: 0}[a]
-        # 5m CCI open-gate: forbid establishing a NEW direction when the 5m market is
-        # neutral (EITHER 5m CCI in [-50,50]). A flip just closes; holds/closes pass through.
+        # 5m CCI open-gate: forbid establishing a NEW direction when the 5m market is FLAT
+        # (BOTH 5m CCI30 AND CCI100 in [-50,50]). A flip just closes; holds/closes pass through.
         if self.open_gate and self.open_gate_blocked[t] and target != 0 and target != self.position:
             target = 0
         # two-phase day-lock: once the day is done (banked +2.5% then stopped, or hit the

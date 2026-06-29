@@ -68,6 +68,7 @@ class PortfolioParams(NamedTuple):
     band_stack_bonus: float
     reentry_bonus: float
     conviction_bonus: float      # >=2 of the 3 strong-setup alphas confirmed the entry + won (PnL-capped)
+    open_gate: float             # 1.0 -> block a NEW open when the 5m is flat (both CCIs in +/-50)
 
 
 class PortfolioDeviceStatic(NamedTuple):
@@ -79,6 +80,7 @@ class PortfolioDeviceStatic(NamedTuple):
     prev_day: jnp.ndarray       # (N, T)
     prev2_day: jnp.ndarray      # (N, T)
     today_sofar: jnp.ndarray    # (N, T)
+    open_gate_blocked: jnp.ndarray  # (N, T) — 1.0 where the 5m is flat (block new opens)
     alpha_matrix: jnp.ndarray   # (N, T, 64)
     occupancy: jnp.ndarray      # (N, 64)
     position_size: jnp.ndarray  # (N,)
@@ -157,6 +159,7 @@ def make_portfolio_device_static(psd) -> PortfolioDeviceStatic:
         static_obs=j(psd.static_obs), close=j(psd.close), is_new_day=j(psd.is_new_day),
         ref_move=j(psd.ref_move), week_avg=j(psd.week_avg), prev_day=j(psd.prev_day),
         prev2_day=j(psd.prev2_day), today_sofar=j(psd.today_sofar),
+        open_gate_blocked=j(psd.open_gate_blocked),
         alpha_matrix=j(psd.alpha_matrix), occupancy=j(psd.occupancy),
         position_size=j(psd.position_size), value_per_point=j(psd.value_per_point),
         typical_range=j(psd.typical_range), cost_frac=j(psd.cost_frac),
@@ -174,7 +177,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
                      day_pass_reward=10.0, day_fail_penalty=5.0, streak_bonus=1.0, streak_bonus_cap=10.0,
                      target_seek_weight=3.0, idle_day_penalty=0.02, dd_proximity_coef=2.0,
                      bb_stop_enabled=0.0, risk_based=0.0, risk_frac=0.0,
-                     band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0,
+                     band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0, open_gate=0.0,
                      max_bars=None) -> PortfolioParams:
     """Build PortfolioParams from a PortfolioStaticData + the FTMO/alpha knobs (defaults = FTMOConfig)."""
     return PortfolioParams(
@@ -192,7 +195,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         idle_day_penalty=float(idle_day_penalty), dd_proximity_coef=float(dd_proximity_coef),
         bb_stop_enabled=float(bb_stop_enabled), risk_based=float(risk_based), risk_frac=float(risk_frac),
         band_stack_bonus=float(band_stack_bonus), reentry_bonus=float(reentry_bonus),
-        conviction_bonus=float(conviction_bonus))
+        conviction_bonus=float(conviction_bonus), open_gate=float(open_gate))
 
 
 def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, end,
@@ -313,6 +316,9 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
               jnp.where(action == _BUY, 1.0, jnp.where(action == _SELL, -1.0, 0.0)))
     blocked = s.day_locked * ((target != 0.0) & (target != pos_j)).astype(pos_j.dtype)
     target = jnp.where(blocked > 0.5, 0.0, target)
+    # 5m CCI open-gate: block a NEW directional open when the 5m is flat (both CCIs in +/-50). 1:1 with CPU.
+    gate = params.open_gate * static.open_gate_blocked[j, t] * ((target != 0.0) & (target != pos_j)).astype(pos_j.dtype)
+    target = jnp.where(gate > 0.5, 0.0, target)
 
     changed = (target != pos_j)
     close_mask = (changed & (pos_j != 0.0)).astype(close_jt.dtype)

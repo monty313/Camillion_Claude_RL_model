@@ -153,7 +153,8 @@ class PortfolioEnv:
                  breach_penalty: float | None = None, reward_scale: float = 1.0, pass_bonus: float | None = None,
                  window: int | None = None, random_window: bool = False, seed: int | None = None,
                  subs: dict | None = None, continue_after_pass: bool = False,
-                 bb_stop_enabled: bool = False, risk_per_trade_pct: float | None = None):
+                 bb_stop_enabled: bool = False, risk_per_trade_pct: float | None = None,
+                 open_gate: bool = False):
         self.cfg = cfg or load_active_config()
         # breach cliff + pass bonus now default from the config (breach 0.2, pass 1.0); explicit args override.
         self.breach_penalty = float(breach_penalty if breach_penalty is not None
@@ -190,6 +191,9 @@ class PortfolioEnv:
         # configured size); band_stack_bonus / reentry_bonus = small PnL-capped CLOSE bonuses (cfg coefs).
         self._bb_stop_on = bool(bb_stop_enabled)
         self._risk_pct = None if risk_per_trade_pct is None else float(risk_per_trade_pct)
+        # 5m CCI open-gate: block a NEW directional open when the 5m is FLAT (both CCI30 & CCI100 in +/-50)
+        # -> "don't trade the chop" (operator 2026-06-29). OFF by default; the training path turns it on.
+        self._open_gate = bool(open_gate)
         self._band_bonus = float(getattr(self.cfg, "band_stack_bonus", 0.0))
         self._reentry_bonus = float(getattr(self.cfg, "reentry_bonus", 0.0))
         # CONVICTION bonus (operator 2026-06-29): paid when >=2 of the 3 strong-setup alphas (slots
@@ -471,6 +475,9 @@ class PortfolioEnv:
         # two-phase day-lock: once the pot banked +2.5% (then stopped), block NEW opens on EVERY
         # symbol until tomorrow. Holds (target==current) and closes (target==0) still pass through.
         if self._day_locked and target != 0 and target != self.position[sym]:
+            target = 0
+        # 5m CCI open-gate: block a NEW directional open when the 5m is FLAT (both CCIs in +/-50). Chop filter.
+        if self._open_gate and sub.open_gate_blocked[t] and target != 0 and target != self.position[sym]:
             target = 0
         alpha_shaping = 0.0
         if target != self.position[sym]:
