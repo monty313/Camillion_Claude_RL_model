@@ -24,18 +24,21 @@ from __future__ import annotations
 # OBS / ACTION (the locked contract — imported from config.constants at use site;
 # duplicated here only as a readable reference, asserted equal in jax_env).
 # ---------------------------------------------------------------------
-OBS_SIZE: int = 513                 # == config.constants.OBS_TOTAL_SIZE (v1.7.0: +14 trade-risk block)
+OBS_SIZE: int = 517                 # == config.constants.OBS_TOTAL_SIZE (v1.8.0: +4 consistency block)
 N_ACTIONS: int = 4                  # HOLD, BUY, SELL, CLOSE
 N_STATIC_OBS: int = 459             # precomputed per-bar blocks (see jax_static_features); +20 OHLC in v1.6.0
-N_DYNAMIC_OBS: int = 54             # account_daily+episode+portfolio+sizing+recent_context (40) + trade_risk (14, v1.7.0)
+N_DYNAMIC_OBS: int = 58             # account/sizing/recent (40) + trade_risk (14) + consistency (4, v1.8.0)
 
 # ---------------------------------------------------------------------
 # PPO HYPERPARAMETERS — MIRROR src/training/trainer.py EXACTLY.
 # (trainer.py PPO_HPARAMS + SB3 PPO/MlpPolicy defaults for the unset ones.)
 # Changing any of these makes JAX policies NOT comparable to CPU policies.
 # ---------------------------------------------------------------------
-GAMMA: float = 0.9995              # operator 2026-06-28: ~a full trading day (was 0.997 ~1.4h) so the bot
-                                   # plans toward the midnight +2.5% target and the trailing wall, not just minutes ahead
+GAMMA: float = 0.9999              # operator 2026-06-29: STRETCHED horizon (~1/(1-g)=10000 steps ~1.7 days). With
+                                   # the shared-pot env cycling N symbols (~5760 steps/day at 4 symbols), 0.9995 was
+                                   # only ~1/3 day -> the multi-day WON-DAY STREAK reward was discounted to ~0 a day
+                                   # out (the bot couldn't VALUE/PROTECT the streak). 0.9999 lets a breach TODAY also
+                                   # forfeit tomorrow's bigger streak reward. MUST match src/training/trainer.py.
 GAE_LAMBDA: float = 0.97            # trainer.py
 CLIP_RANGE: float = 0.2            # SB3 default
 ENT_COEF_START: float = 0.01       # trainer.py (start of the linear anneal)

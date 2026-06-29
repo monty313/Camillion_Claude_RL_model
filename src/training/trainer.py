@@ -32,9 +32,12 @@ from __future__ import annotations
 # pays a cost (immediate negative reward) while HOLD is exactly 0, so doing nothing is a stable trap.
 # A small bonus (~0.005-0.02; 0.01 here) keeps it trying real trades long enough to learn. Watch the
 # heartbeat's action-mix early in training -- if it's ~HOLD 100%, raise this; if it never settles, lower it.
-# gamma=0.9995 -> effective horizon ~1/(1-gamma)=2000 steps ~ a FULL trading day (was 0.997 ~1.4h, which
-# discounted the midnight +2.5% target and the 4% wall to near-zero, so they were only avoided REACTIVELY).
-PPO_HPARAMS = dict(gamma=0.9995, gae_lambda=0.97, n_steps=2048, batch_size=256,
+# gamma=0.9999 -> effective horizon ~1/(1-gamma)=10000 steps. With the SHARED-POT env cycling N symbols (N
+# steps/bar, ~5760 steps/day at 4 symbols), 0.9995 was only ~1/3 of a day -> the bot could NOT value the
+# multi-day WON-DAY STREAK (the escalating reward was discounted to ~0 a day out). Stretched to 0.9999 (~1.7
+# days) so it plans the FULL day AND feels that a breach today also forfeits tomorrow's (bigger) streak reward
+# -> the streak becomes a psychology, not just a number (operator 2026-06-29). MUST match jax_config.GAMMA.
+PPO_HPARAMS = dict(gamma=0.9999, gae_lambda=0.97, n_steps=2048, batch_size=256,
                    ent_coef=0.01, learning_rate=3e-4,
                    policy_kwargs=dict(net_arch=[256, 256, 256]))
 
@@ -247,7 +250,7 @@ def train_portfolio(symbol_data, registry_factory, *, total_timesteps=2_000_000,
 
     `symbol_data = {symbol: (indicators, close, time_ns)}` (time-aligned across symbols). Every worker
     is a full PortfolioEnv: the policy decides one symbol at a time while seeing the shared pot's
-    exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (513),
+    exposure, so it learns to BALANCE risk and generalises to the full FTMO universe live. Obs (517),
     actions, VecNormalize and the MlpPolicy are identical to single-symbol training.
 
     resume=True (default): if a matching past model already exists at save_path, CONTINUE its training

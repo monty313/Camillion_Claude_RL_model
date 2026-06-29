@@ -1,7 +1,7 @@
 # =====================================================================
 # WHEN 2026-06-28 | WHO Claude for Monty
 # WHY  Build, ONCE on the host, the things the JAX env indexes instead of
-#      recomputing: (1) the (T, 513) STATIC observation tensor with the 9 per-bar
+#      recomputing: (1) the (T, 517) STATIC observation tensor with the 9 per-bar
 #      blocks placed at their exact contract indices (dynamic slots zeroed), and
 #      (2) the per-bar + per-symbol scalar arrays the branchless step needs
 #      (close, is_new_day, minute_of_day, ref_move, recent-context ranges, ...).
@@ -17,10 +17,10 @@
 # CHANGE_NOTES(IRAC): I: rewriting indicators/alphas in jnp is huge + risky; they're
 #   already precomputed on the host. R: CLAUDE.md #3 (no TA-Lib/pandas in step) +
 #   the shared-table scaling plan. A: lift the 9 static blocks from the CPU env into a
-#   (T,513) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
+#   (T,517) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
 #   static obs + a tiny per-env state -> thousands of envs fit on a TPU.
 # =====================================================================
-"""Host builder for the shared (T,513) static obs tensor + per-bar/per-symbol scalars."""
+"""Host builder for the shared (T,517) static obs tensor + per-bar/per-symbol scalars."""
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
@@ -41,7 +41,8 @@ def _block_ranges() -> dict[str, tuple[int, int]]:
 BLOCK_RANGES = _block_ranges()
 # blocks the JAX env recomputes every step (everything else is static, placed here). v1.7.0 adds
 # trade_risk: it depends on the EVOLVING open-position state, so it is recomputed, not placed.
-DYNAMIC_BLOCKS = ("account_daily", "account_episode", "portfolio", "sizing", "recent_context", "trade_risk")
+DYNAMIC_BLOCKS = ("account_daily", "account_episode", "portfolio", "sizing", "recent_context", "trade_risk",
+                  "consistency")  # v1.8.0: multi-day FTMO standing / won-day streak (recomputed each step)
 DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 
 
@@ -49,7 +50,7 @@ DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 class StaticData:
     """Everything the JAX env needs that is FIXED per (symbol, bar). Arrays are numpy
     here; jax_env converts to device arrays once and shares them read-only."""
-    static_obs: np.ndarray      # (T, 513) float32 — static blocks placed, dynamic = 0
+    static_obs: np.ndarray      # (T, 517) float32 — static blocks placed, dynamic = 0
     close: np.ndarray           # (T,) float64 — price for P&L + mark
     is_new_day: np.ndarray      # (T,) float32 — 1.0 if bar t starts a new day vs t-1
     open_gate_blocked: np.ndarray  # (T,) float32 — 1.0 where a new directional open is gated (5m CCI neutral)

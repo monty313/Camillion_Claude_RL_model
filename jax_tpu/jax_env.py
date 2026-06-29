@@ -228,8 +228,10 @@ def _dynamic_obs(s: EnvState, static: DeviceStatic, params: EnvParams, t) -> dic
         t.astype(jnp.float32) - s.last_close_bar.astype(jnp.float32), s.last_close_dir, s.last_exit_px,
         static.bb200_1m_up[t], static.bb200_1m_lo[t], static.bb200_5m_up[t], static.bb200_5m_lo[t],
         static.bb10_1m_up[t], static.bb10_1m_lo[t], static.bb10_5m_up[t], static.bb10_5m_lo[t])
+    # v1.8.0 consistency: single-symbol env has no won-day streak -> 0/0, only days_elapsed is real
+    cons = jax_obs_blocks.consistency_features(0.0, 0.0, s.days_elapsed)
     return {"account_daily": daily, "account_episode": epi, "portfolio": port,
-            "sizing": size, "recent_context": ctx, "trade_risk": tr}
+            "sizing": size, "recent_context": ctx, "trade_risk": tr, "consistency": cons}
 
 
 def _assemble_obs(s: EnvState, static: DeviceStatic, params: EnvParams, t) -> jnp.ndarray:

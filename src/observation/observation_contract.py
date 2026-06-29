@@ -1,7 +1,7 @@
 # =====================================================================
 # WHEN 2026-06-21 (Phase 0) | WHO Claude for Monty
 # WHY  THE single, authoritative list of all OBS_TOTAL_SIZE observation feature
-#      names (513 @ v1.7.0), their block boundaries, and a validator. This IS the contract.
+#      names (517 @ v1.8.0), their block boundaries, and a validator. This IS the contract.
 # WHERE src/observation/observation_contract.py
 # HOW  Concatenate per-block name lists in OBS_BLOCK_ORDER; assert total==OBS_TOTAL_SIZE.
 #      validate() checks shape, dtype and finiteness of a built observation.
@@ -13,7 +13,7 @@
 #   list + offsets + validator. C: a frozen contract = model compatibility
 #   across phases and safe ablation by block.
 # =====================================================================
-"""The observation contract: 513 ordered feature names (v1.7.0), offsets, validator."""
+"""The observation contract: 517 ordered feature names (v1.8.0), offsets, validator."""
 from __future__ import annotations
 import numpy as np
 from config import constants as C
@@ -62,6 +62,10 @@ TRADE_RISK_NAMES = (
     "tr_max_favorable_atr", "tr_max_adverse_atr", "tr_bars_since_last_close",
     "tr_last_trade_dir", "tr_price_vs_last_exit_atr", "tr_band_stack_long", "tr_band_stack_short",
 )
+# v1.8.0 CONSISTENCY block: the bot's multi-day FTMO standing (value/protect the won-day streak).
+CONSISTENCY_NAMES = (
+    "won_day_streak_norm", "days_won_norm", "won_day_rate", "days_into_journey_norm",
+)
 
 
 def _block_names() -> dict[str, list[str]]:
@@ -82,12 +86,13 @@ def _block_names() -> dict[str, list[str]]:
         "recent_context": list(RECENT_CONTEXT_NAMES),
         "ohlc": list(OHLC_COLUMNS),   # v1.6.0: raw O/H/L/C per timeframe (20)
         "trade_risk": list(TRADE_RISK_NAMES),   # v1.7.0: current symbol's open-trade risk state (14)
+        "consistency": list(CONSISTENCY_NAMES),  # v1.8.0: multi-day FTMO standing / won-day streak (4)
     }
 
 
 BLOCK_NAMES = _block_names()
 
-# Full ordered feature-name list (length OBS_TOTAL_SIZE (513)) + block offset slices.
+# Full ordered feature-name list (length OBS_TOTAL_SIZE (517)) + block offset slices.
 FEATURE_NAMES: list[str] = []
 BLOCK_SLICES: dict[str, slice] = {}
 _cursor = 0

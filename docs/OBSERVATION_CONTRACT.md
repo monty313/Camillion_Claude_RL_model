@@ -1,4 +1,4 @@
-# OBSERVATION CONTRACT — v1.7.0  (513 float32)
+# OBSERVATION CONTRACT — v1.8.0  (517 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
@@ -6,9 +6,10 @@
 >
 > **Version history:** v1.1.0 (367) → v1.2.0 (451: indicators 200→220 + 64-wide `alpha_streak`)
 > → v1.3.0 (461: 10-float `sizing`) → v1.4.0 (471: 10-float `cross_asset`) → v1.5.0 (479: 8-float
-> `recent_context`) → v1.6.0 (499: 20-float raw `ohlc` block) → **v1.7.0 (513): appended the 14-float
-> `trade_risk` block (the open trade's live RISK state, for trade management + re-entry).**
-> Appended blocks leave indices 0..(prev-1) unchanged (a v1.6.0 policy must retrain — shape changed).
+> `recent_context`) → v1.6.0 (499: 20-float raw `ohlc` block) → v1.7.0 (513: 14-float `trade_risk` block)
+> → **v1.8.0 (517): appended the 4-float `consistency` block (the bot's multi-day FTMO standing / won-day
+> streak, so it can VALUE and PROTECT the streak with the stretched discount horizon).**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.7.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -31,7 +32,9 @@
 | 15 | `ohlc` | 20 | **v1.6.0**: RAW Open/High/Low/Close of the last CLOSED bar on each of the 5 TFs (`{tf}__open/high/low/close`, TF-major). The policy finally sees High/Low/Open, not just close. NOT normalized (like block 1). Built at cache time from the resampled bars (the env carries only `close`) and threaded in via `src/data/aux_features.py`; leak-free (last-closed-bar). |
 | 16 | `trade_risk` | 14 | **v1.7.0**: the CURRENT symbol's OPEN-TRADE risk state, so the policy can MANAGE the trade and learn to RE-ENTER a winner. `tr_in_trade`, `tr_direction`, unrealized P&L in ATR units (`tr_unrealized_pnl_atr`) and as % of the pot (`tr_unrealized_pnl_pct`), distance to the 2×-ATR(14) SOFT stop (`tr_dist_to_soft_stop_2atr`) and to the 1m BB(10,1) opposite-band HARD stop (`tr_dist_to_hard_stop_bb`, 0→1), `tr_bars_held_norm`, max favorable / adverse excursion in ATR (`tr_max_favorable_atr`, `tr_max_adverse_atr`), re-entry context (`tr_bars_since_last_close`, `tr_last_trade_dir`, `tr_price_vs_last_exit_atr`), and the band-stack flags `tr_band_stack_long` / `tr_band_stack_short` (price above/below BB200(dev1) AND BB10(dev1) on BOTH 1m & 5m). DYNAMIC (recomputed each step from the position state). Shared builder `src/observation/trade_risk.py` (jnp twin in `jax_tpu/jax_obs_blocks.trade_risk_features`). |
 
-**Total = 513.**
+| 17 | `consistency` | 4 | **v1.8.0**: the bot's MULTI-DAY FTMO standing, so it can VALUE and PROTECT the won-day STREAK (paired with the stretched discount horizon, gamma 0.9999). `won_day_streak_norm` (current consecutive won days / 40), `days_won_norm` (cumulative won days / 40), `won_day_rate` (days won / days elapsed = consistency %), `days_into_journey_norm` (days elapsed / 40). DYNAMIC. The shared-pot `PortfolioEnv` fills these from its midnight day-scoring; the single-symbol env (no streak logic) emits zeros (only `days_into_journey` is real). Shared builder `src/account/win_loss_features.consistency_features` (jnp twin in `jax_obs_blocks.consistency_features`). |
+
+**Total = 517.**
 
 > **The trade-risk block is where the BB hard stop + risk-based sizing + band-stack/re-entry bonuses live.**
 > The 1m+5m BB(10,1) bands it needs are NOT in the 220-indicator cache (BB periods there are 20 & 200 only);

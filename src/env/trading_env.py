@@ -547,6 +547,9 @@ class TradingEnv:
             "alpha_streak": np.minimum(self.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
             "ohlc": self.ohlc_matrix[i],   # v1.6.0: raw O/H/L/C per timeframe (zeros if no aux)
             "trade_risk": self._trade_risk_block(),   # v1.7.0: live open-trade risk state (14)
+            # v1.8.0 consistency: the single-symbol env has no won-day-streak logic -> streak/days_won = 0
+            # (only days_elapsed is real). The shared-pot PortfolioEnv fills these for real.
+            "consistency": WL.consistency_features(0, 0, self._days_elapsed),
         })
 
     def _portfolio_block(self):

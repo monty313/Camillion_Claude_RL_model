@@ -23,10 +23,10 @@ def test_obs_shape_and_finite():
     reg = AlphaRegistry(); register_examples(reg)
     env = TradingEnv(ind, close, t, reg, warmup=5)
     obs, _ = env.reset()
-    assert obs.shape == (513,) and obs.dtype == np.float32 and np.all(np.isfinite(obs))
+    assert obs.shape == (517,) and obs.dtype == np.float32 and np.all(np.isfinite(obs))
     for a in (C.ACTION_BUY, C.ACTION_HOLD, C.ACTION_SELL, C.ACTION_CLOSE):
         obs, r, term, trunc, info = env.step(a)
-        assert obs.shape == (513,) and np.all(np.isfinite(obs))
+        assert obs.shape == (517,) and np.all(np.isfinite(obs))
         assert np.isfinite(r)
 
 

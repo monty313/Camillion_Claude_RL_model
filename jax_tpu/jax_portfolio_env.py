@@ -26,10 +26,10 @@ import jax
 import jax.numpy as jnp
 from jax_tpu import jax_ftmo, jax_obs_blocks
 from jax_tpu.jax_static_features import BLOCK_RANGES, DYNAMIC_BLOCKS
-from src.strategies.alpha_pack import CONVICTION_SLOTS
+from src.strategies.alpha_pack import CONVICTION_ALIGN_CAP
 
 _HOLD, _BUY, _SELL, _CLOSE = 0, 1, 2, 3
-_CONV = tuple(int(s) for s in CONVICTION_SLOTS)   # the 3 strong-setup alpha slots (conviction bonus)
+_CONV_CAP = float(CONVICTION_ALIGN_CAP)   # conviction reward saturates at this many aligned signals
 _SL = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 
 
@@ -141,6 +141,7 @@ class PortfolioState(NamedTuple):
     entry_confirms: jnp.ndarray  # (N,) # of the 3 strong-setup alphas confirming the entry direction
     days_elapsed: jnp.ndarray
     daily_pass_streak: jnp.ndarray
+    days_won: jnp.ndarray        # cumulative WON days this episode (v1.8.0 consistency obs)
     phase2_active: jnp.ndarray
     phase2_peak: jnp.ndarray
     day_locked: jnp.ndarray
@@ -220,7 +221,7 @@ def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, en
         entry_bar=bar0, entry_atr=zN, entry_stop_band=zN, mfe_atr=zN, mae_atr=zN,
         last_close_bar=bar0, last_close_dir=zN, last_exit_px=entry0,
         entry_band_long=zN, entry_band_short=zN, entry_reentry=zN, entry_confirms=zN,
-        days_elapsed=jnp.float32(0.0), daily_pass_streak=jnp.float32(0.0),
+        days_elapsed=jnp.float32(0.0), daily_pass_streak=jnp.float32(0.0), days_won=jnp.float32(0.0),
         phase2_active=jnp.float32(0.0), phase2_peak=z, day_locked=jnp.float32(0.0),
         # day_progress_hwm is derived from equity (money dtype) each step -> init in the MONEY dtype so the
         # lax.scan training carry stays dtype-stable under x64 too (float32 on TPU is unchanged).
@@ -277,8 +278,9 @@ def _dynamic_obs(s: PortfolioState, static: PortfolioDeviceStatic, params: Portf
         t.astype(jnp.float32) - s.last_close_bar[j].astype(jnp.float32), s.last_close_dir[j], s.last_exit_px[j],
         static.bb200_1m_up[j, t], static.bb200_1m_lo[j, t], static.bb200_5m_up[j, t], static.bb200_5m_lo[j, t],
         static.bb10_1m_up[j, t], static.bb10_1m_lo[j, t], static.bb10_5m_up[j, t], static.bb10_5m_lo[j, t])
+    cons = jax_obs_blocks.consistency_features(s.daily_pass_streak, s.days_won, s.days_elapsed)  # v1.8.0
     return {"account_daily": daily, "account_episode": epi, "portfolio": port,
-            "sizing": size, "recent_context": ctx, "trade_risk": tr}
+            "sizing": size, "recent_context": ctx, "trade_risk": tr, "consistency": cons}
 
 
 def _assemble_obs(s: PortfolioState, static: PortfolioDeviceStatic, params: PortfolioParams, j, t):
@@ -351,7 +353,8 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     alpha_part = params.alpha_on * (s.entry_agreed[j] * params.alpha_agree + beat_term)
     band_ind = ((pos_j > 0.0).astype(jnp.float32) * s.entry_band_long[j]
                 + (pos_j < 0.0).astype(jnp.float32) * s.entry_band_short[j])
-    conviction = params.conviction_bonus * (s.entry_confirms[j] >= 2.0).astype(jnp.float32)
+    # conviction SCALES with aligned-signal count (capped), gated on trading WITH the majority (entry agreed)
+    conviction = params.conviction_bonus * (jnp.minimum(s.entry_confirms[j], _CONV_CAP) / _CONV_CAP) * s.entry_agreed[j]
     bonus = alpha_part + params.band_stack_bonus * band_ind + params.reentry_bonus * s.entry_reentry[j] + conviction
     close_active = close_mask * (realized > 0.0).astype(jnp.float32) * (balance > day0).astype(jnp.float32)
     alpha_shaping = close_active * jnp.minimum(bonus, pnl_frac)
@@ -395,9 +398,9 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     cont = last_close_dir_j * (close_jt - last_exit_px_j)          # with-trend re-entry (uses post-close-leg last_close)
     reentry_raw = ((last_close_dir_j != 0.0) & (target == last_close_dir_j) & (cont > 0.0)).astype(jnp.float32)
     entry_reentry_j = jnp.where(op, reentry_raw, s.entry_reentry[j])
-    # CONVICTION: # of the 3 strong-setup alphas (slots _CONV) pointing the SAME way as this entry
+    # SELECTIVITY: count ALL firing alphas pointing the SAME way as this entry (empty/inactive = 0 != target).
     am_jt = static.alpha_matrix[j, t]
-    confirms_raw = sum((am_jt[sl] == target).astype(jnp.float32) for sl in _CONV)
+    confirms_raw = jnp.sum((am_jt == target).astype(jnp.float32))
     entry_confirms_j = jnp.where(op, confirms_raw, s.entry_confirms[j])
 
     position = s.position.at[j].set(target)
@@ -468,6 +471,7 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     idle = (1.0 - day_had_exposure)
     reward = reward - new_day * idle * params.idle_day_penalty
     daily_pass_streak = jnp.where(new_day > 0.5, jnp.where(won > 0.5, streak_if_won, 0.0), s.daily_pass_streak)
+    days_won = s.days_won + new_day * won                      # v1.8.0: cumulative won days this episode
 
     def _rst(val, cur):
         return jnp.where(new_day > 0.5, val, cur)
@@ -587,7 +591,7 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
         mfe_atr=mfe_atr, mae_atr=mae_atr, last_close_bar=last_close_bar, last_close_dir=last_close_dir,
         last_exit_px=last_exit_px, entry_band_long=entry_band_long, entry_band_short=entry_band_short,
         entry_reentry=entry_reentry, entry_confirms=entry_confirms,
-        days_elapsed=days_elapsed, daily_pass_streak=daily_pass_streak,
+        days_elapsed=days_elapsed, daily_pass_streak=daily_pass_streak, days_won=days_won,
         phase2_active=phase2_active, phase2_peak=phase2_peak, day_locked=day_locked,
         day_progress_hwm=day_progress_hwm, day_had_exposure=day_had_exposure,
         daily_target_frac=s.daily_target_frac, trailing_dd_frac=s.trailing_dd_frac)

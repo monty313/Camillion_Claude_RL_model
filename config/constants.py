@@ -179,6 +179,14 @@ OBS_BLOCK_OHLC: int = N_TIMEFRAMES * 4           # 20  (O,H,L,C per timeframe)
 # retrain because the shape changed. The block is DYNAMIC (recomputed each step from the position state);
 # the 1m+5m BB(10,1) bands it reads are precomputed in TradingEnv._precompute (no cache-format change). ---
 OBS_BLOCK_TRADE_RISK: int = 14
+# --- v1.8.0: CONSISTENCY block (4 floats). The bot's MULTI-DAY FTMO standing so it can VALUE and PROTECT the
+# won-day STREAK (the operator's 40-in-a-row goal), paired with the stretched discount horizon: current
+# won-day streak (toward 40), cumulative won days, won-day RATE (days won / days elapsed = consistency), and
+# how deep into the 40-day journey it is. Shared-pot env fills these from the pot's day-scoring; the
+# single-symbol env (no streak logic) emits zeros. APPENDED AT THE END -> obs indices 0..512 UNCHANGED; only
+# new indices 513..516 are added. DELIBERATE contract bump (operator 2026-06-29): a v1.7.0 policy must retrain
+# because the shape changed. DYNAMIC block (recomputed each step from the episode's day-scoring state). ---
+OBS_BLOCK_CONSISTENCY: int = 4
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -198,9 +206,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("recent_context",   OBS_BLOCK_RECENT_CONTEXT),  # v1.5.0 (appended -> 0..470 indices unchanged)
     ("ohlc",             OBS_BLOCK_OHLC),         # v1.6.0 (appended -> 0..478 indices unchanged)
     ("trade_risk",       OBS_BLOCK_TRADE_RISK),   # v1.7.0 (appended -> 0..498 indices unchanged)
+    ("consistency",      OBS_BLOCK_CONSISTENCY),  # v1.8.0 (appended -> 0..512 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 513 (v1.7.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 517 (v1.8.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.7.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.8.0"

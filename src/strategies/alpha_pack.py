@@ -57,6 +57,11 @@ def register_all(registry):
 # the canonical register order; a test asserts it equals the resolved slots so a future reorder can't drift.
 CONVICTION_ALPHA_NAMES = ("cci_x160_align_5m_30m", "bb_double_breakout_anytf", "fwd_sma4_align_5m_30m")
 CONVICTION_SLOTS = (18, 19, 20)
+# SELECTIVITY (operator 2026-06-29): the conviction reward scales with the NUMBER of firing alphas pointing
+# the SAME way as the trade (the "greatest amount of signals in one direction"), gated on the bot trading WITH
+# the consensus (entry agreed with the majority). Saturates at this many aligned signals (so a strong,
+# lopsided stack pays the full bonus; a thin one pays a fraction). Read by BOTH the CPU and JAX envs.
+CONVICTION_ALIGN_CAP = 8.0
 
 
 def slot_of(name: str, registry=None) -> int:

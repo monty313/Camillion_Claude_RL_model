@@ -49,7 +49,7 @@ from src.observation import builder as OB
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
 from src.observation import trade_risk as TR
-from src.strategies.alpha_pack import CONVICTION_SLOTS
+from src.strategies.alpha_pack import CONVICTION_ALIGN_CAP
 from src.env.trading_env import TradingEnv
 
 _TARGET = {C.ACTION_HOLD: None, C.ACTION_BUY: 1, C.ACTION_SELL: -1, C.ACTION_CLOSE: 0}
@@ -195,7 +195,7 @@ class PortfolioEnv:
         # CONVICTION bonus (operator 2026-06-29): paid when >=2 of the 3 strong-setup alphas (slots
         # CONVICTION_SLOTS) confirmed the trade direction at entry AND it closes in profit (day net up).
         self._conviction_bonus = float(getattr(self.cfg, "conviction_bonus", 0.0))
-        self._conviction_slots = CONVICTION_SLOTS
+        self._conviction_cap = float(CONVICTION_ALIGN_CAP)
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -253,6 +253,7 @@ class PortfolioEnv:
         self._day_progress_hwm = 0.0                           # high-water mark of progress toward +2.5% today (seek reward)
         self._day_had_exposure = False                         # did the bot hold ANY position today? (anti-hide)
         self._daily_pass_streak = 0                            # consecutive WON days (ended >= +2.5%) -> consistency
+        self._days_won = 0                                     # cumulative WON days this episode (v1.8.0 consistency obs)
         self._entry_agreed = {}                                # per-open: did the entry agree with >=50% firing alphas?
         self._entry_alpha_dir = {}                             # per-open: the alpha consensus direction at entry
         self._init_trade_risk_state()                          # v1.7.0 per-symbol open-trade risk state
@@ -290,6 +291,7 @@ class PortfolioEnv:
         self._day_progress_hwm = 0.0
         self._day_had_exposure = False
         self._daily_pass_streak = 0
+        self._days_won = 0
         self._entry_agreed = {}
         self._entry_alpha_dir = {}
         self._init_trade_risk_state()                          # v1.7.0: fresh per-symbol trade-risk state
@@ -454,6 +456,8 @@ class PortfolioEnv:
             "alpha_streak": np.minimum(sub.streak_matrix[i], C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP),
             "ohlc": sub.ohlc_matrix[i],   # v1.6.0: per-symbol raw O/H/L/C per timeframe
             "trade_risk": self._trade_risk_block(sym, sub),   # v1.7.0: current symbol's open-trade risk state
+            "consistency": WL.consistency_features(            # v1.8.0: multi-day FTMO standing (won-day streak)
+                self._daily_pass_streak, self._days_won, self._days_elapsed),
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----
@@ -501,9 +505,12 @@ class PortfolioEnv:
                     # RE-ENTRY nudge: this was a with-trend re-entry that paid off.
                     if self._reentry_bonus > 0.0 and self._entry_reentry.get(sym, 0):
                         bonus += self._reentry_bonus
-                    # CONVICTION nudge: entered with >=2 of the 3 strong-setup alphas confirming -> won.
-                    if self._conviction_bonus > 0.0 and self._entry_confirms.get(sym, 0) >= 2:
-                        bonus += self._conviction_bonus
+                    # CONVICTION (selectivity): reward SCALES with how many signals aligned with this entry
+                    # (the greatest one-directional consensus pays most), but ONLY if the bot traded WITH the
+                    # majority (entry agreed). Capped at CONVICTION_ALIGN_CAP aligned signals.
+                    if self._conviction_bonus > 0.0 and self._entry_agreed.get(sym, False):
+                        strength = min(self._entry_confirms.get(sym, 0), self._conviction_cap) / self._conviction_cap
+                        bonus += self._conviction_bonus * strength
                     if bonus > 0.0:
                         alpha_shaping += min(bonus, pnl_frac)              # CAP: bonus can never exceed the trade PnL
                 self._entry_agreed.pop(sym, None); self._entry_alpha_dir.pop(sym, None)
@@ -545,9 +552,10 @@ class PortfolioEnv:
                 ld = self._last_close_dir[sym]
                 self._entry_reentry[sym] = int(
                     ld != 0 and target == ld and ld * (float(sub.close[t]) - self._last_exit_px[sym]) > 0.0)
-                # CONVICTION: how many of the 3 strong-setup alphas point the SAME way as this entry, right now
-                am_row = sub.alpha_matrix[t]
-                self._entry_confirms[sym] = int(sum(1 for sl in self._conviction_slots if am_row[sl] == target))
+                # SELECTIVITY: count ALL firing alphas pointing the SAME way as this entry (the "amount of
+                # signals in one direction"). Empty/inactive slots are 0 != +/-1, so this counts only firing,
+                # aligned alphas. The close-time conviction reward scales with this (capped), gated on agreeing.
+                self._entry_confirms[sym] = int((sub.alpha_matrix[t] == target).sum())
 
         # advance the cursor: next symbol; when it wraps, advance the bar
         self.j += 1
@@ -632,6 +640,7 @@ class PortfolioEnv:
                 won = day_end_gain >= (self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance)
                 if won:
                     self._daily_pass_streak += 1
+                    self._days_won += 1                            # v1.8.0 consistency obs (cumulative won days)
                     streak_bonus = self._streak_bonus * min(self._daily_pass_streak - 1, self._streak_bonus_cap)
                     reward += self._day_pass_reward + streak_bonus   # won day + ESCALATING streak bonus
                 else:

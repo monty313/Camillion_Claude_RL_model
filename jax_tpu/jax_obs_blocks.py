@@ -257,3 +257,18 @@ def trade_risk_features(pos, entry_px, price, trade_size, equity, entry_atr, atr
         mae_norm.astype(f), bars_since.astype(f), last_trade_dir.astype(f), price_vs_exit.astype(f),
         bsl, bss,
     ], axis=-1).astype(f)
+
+
+# --- v1.8.0 CONSISTENCY block (4) — jnp twin of src/account/win_loss_features.consistency_features ---
+_CONSIST_TARGET = 40.0   # MUST match win_loss_features.WON_DAY_STREAK_TARGET (the 40-won-days goal)
+
+
+def consistency_features(won_day_streak, days_won, days_elapsed, target=_CONSIST_TARGET):
+    """consistency block (4): [streak/target, days_won/target, won-day rate, days-into-journey]. 1:1 CPU."""
+    f = _F32
+    t = float(target)
+    streak_norm = jnp.clip(jnp.asarray(won_day_streak, f), 0.0, t) / t
+    days_won_norm = jnp.clip(jnp.asarray(days_won, f), 0.0, t) / t
+    won_rate = jnp.clip(jnp.asarray(days_won, f) / jnp.maximum(jnp.asarray(days_elapsed, f), 1.0), 0.0, 1.0)
+    days_norm = jnp.clip(jnp.asarray(days_elapsed, f) / t, 0.0, 1.0)
+    return jnp.stack([streak_norm, days_won_norm, won_rate, days_norm], axis=-1).astype(f)

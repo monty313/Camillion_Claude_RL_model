@@ -3,6 +3,37 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-29] Streak psychology: stretch the horizon + SEE the multi-day standing + selectivity (contract v1.8.0)
+- **I (Issue):** A brutally-honest audit found the two pieces that make the operator's vision (a streak-guarding
+  sniper, see `PSYCHOLOGY.md`) were missing: (1) the bot was **near-sighted** (gamma 0.9995 ≈ ⅓ day with the
+  4-symbol cycle), so the escalating won-day STREAK reward was discounted to ~0 a day out — it couldn't VALUE
+  or PROTECT the streak; and (2) the conviction nudge was a flat ≥2-of-3 gate that didn't reward the
+  **strongest** consensus, and the daily-quota pressure drowned selectivity.
+- **R (Rule):** Operator 2026-06-29. A new obs block is a deliberate **contract bump** (CLAUDE.md rule #1 —
+  append-only, obs 513→517, v1.8.0). FTMO numbers unchanged. CPU ↔ JAX bar-for-bar. `gamma` must stay in sync
+  across `jax_config` and `src/training/trainer.py`.
+- **A (Application):**
+  - **Stretched the horizon:** `gamma 0.9995 → 0.9999` (~1/3 day → ~1.7 days) in `jax_config.GAMMA` +
+    `trainer.PPO_HPARAMS`. Now a breach TODAY is felt as also forfeiting tomorrow's (bigger) streak reward —
+    the streak becomes a psychology, not just a number. (Even 0.9999 can't see 40 days; the obs block below +
+    the escalation carry the rest.)
+  - **CONSISTENCY obs block (v1.8.0, 4 floats, append → 513..516):** the bot's multi-day FTMO standing so it
+    can SEE what it's protecting — `won_day_streak_norm`, `days_won_norm`, `won_day_rate`, `days_into_journey`.
+    Shared builder `win_loss_features.consistency_features` (jnp twin in `jax_obs_blocks`); `PortfolioEnv`/JAX
+    track a new `days_won` counter; the single-symbol env emits zeros (no streak logic). DYNAMIC block, both
+    envs, parity-clean.
+  - **Selectivity = strongest one-directional consensus:** the conviction reward now SCALES with the **number
+    of firing alphas aligned with the trade** (`(alpha_matrix == target).sum()`, capped at
+    `CONVICTION_ALIGN_CAP=8`), and pays ONLY when the bot traded WITH the majority (`entry_agreed`) and won —
+    so it prefers the symbol/direction with the greatest signal agreement, never a thin or against-consensus
+    trade. Replaces the flat ≥2-of-3 gate; mirrored CPU + JAX.
+  - `PSYCHOLOGY.md` (new): the canonical statement of the trader we're building, to judge every future change
+    against.
+- **C (Conclusion → consistency):** The bot can now both **value** (longer horizon) and **see** (the streak in
+  its obs) its multi-day run, so "protect the streak" becomes a real drive — and its conviction reward pulls it
+  toward the highest-agreement trend setups it trades *with*, sharpening the sniper over the churner. Verified
+  CPU ↔ JAX bar-for-bar at 517 (single + portfolio, x64); full CPU suite green.
+
 ## [2026-06-29] 3 strong-setup ALPHAS (slots 18/19/20) + a PnL-capped CONVICTION bonus (PortfolioEnv, CPU + TPU)
 - **I (Issue):** Operator wants the bot motivated to trade the day's strong setups: (1) CCI extended beyond
   +/-160 on 5m AND 30m, (2) price beyond BOTH BB(200,dev1) AND BB(20,dev1) on ANY timeframe, (3) price

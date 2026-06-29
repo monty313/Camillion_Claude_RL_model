@@ -1,6 +1,6 @@
 # =====================================================================
 # WHEN 2026-06-21 (Phase 0) | WHO Claude for Monty
-# WHY  Assemble the final (513,) float32 observation by concatenating every
+# WHY  Assemble the final (517,) float32 observation by concatenating every
 #      block in the contract order. Single place that builds what the policy sees.
 # WHERE src/observation/builder.py
 # HOW  build_from_blocks() fills missing blocks with zeros, sanitises any
@@ -15,7 +15,7 @@
 #   spec fixed shape + float32 + Monty hybrid blocks. A: ordered concat +
 #   nan_to_num + validate. C: a finite, contract-shaped vector every step.
 # =====================================================================
-"""ObservationBuilder: assemble + sanitise + validate the 513-float32 vector."""
+"""ObservationBuilder: assemble + sanitise + validate the 517-float32 vector."""
 from __future__ import annotations
 import math
 import numpy as np

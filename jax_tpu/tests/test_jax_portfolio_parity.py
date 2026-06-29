@@ -139,7 +139,7 @@ def test_portfolio_parity_banking_and_won_days():
 
 def test_portfolio_parity_trade_risk_behaviors_on():
     """v1.7.0: with the BB(10,1) HARD STOP + RISK-BASED sizing + band-stack & re-entry CLOSE bonuses ALL ON,
-    the JAX env must STILL match the CPU PortfolioEnv bar-for-bar (513 obs + reward). An uptrend + BUY-heavy
+    the JAX env must STILL match the CPU PortfolioEnv bar-for-bar (517 obs + reward). An uptrend + BUY-heavy
     actions exercise risk-sized entries, hard-stop closes, and the band-stack bonus."""
     syms = ["EURUSD", "GBPUSD"]
     sym_data = _symbol_data(syms, seed=5, drift=6e-5)

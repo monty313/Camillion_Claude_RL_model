@@ -174,3 +174,19 @@ def recent_context_features(acc: AccountState, cfg=None, *, week_avg: float, pre
     remaining = np.clip(target - ret, 0.0, 1.0)
     return np.array([week_vs_typical, prev_vs_week, prev2_vs_week, today_vs_week,
                      days_norm, return_so_far, pace, remaining], dtype=np.float32)
+
+
+# v1.8.0 CONSISTENCY block: the bot's MULTI-DAY FTMO standing so it can VALUE/PROTECT the won-day streak.
+WON_DAY_STREAK_TARGET = 40.0   # the operator's "40 winning days in a row" goal (normalizer)
+
+
+def consistency_features(won_day_streak, days_won, days_elapsed, target=WON_DAY_STREAK_TARGET):
+    """consistency block (4): [current won-day streak / target, cumulative won days / target,
+    won-day RATE (days won / days elapsed), how deep into the 40-day journey]. The shared-pot env passes
+    its real day-scoring state; the single-symbol env (no streak logic) passes zeros. Bounded [0,1]."""
+    t = max(1.0, float(target))
+    streak_norm = min(max(float(won_day_streak), 0.0), t) / t
+    days_won_norm = min(max(float(days_won), 0.0), t) / t
+    won_rate = float(np.clip(float(days_won) / max(float(days_elapsed), 1.0), 0.0, 1.0))
+    days_norm = float(np.clip(float(days_elapsed) / t, 0.0, 1.0))
+    return np.array([streak_norm, days_won_norm, won_rate, days_norm], dtype=np.float32)
