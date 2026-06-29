@@ -50,3 +50,73 @@ day). The two pieces that turn this from a *daily grinder* into the *streak-guar
 2. **Selectivity that beats the daily quota.** The bot should prefer the symbol/direction with the **greatest
    one-directional signal agreement**, and only when it trades **with** that consensus — so patience and
    conviction win over churning to hit the number.
+
+---
+
+## The lesson — what we are teaching the trader
+
+> Personify the agent as a person trying to make **2.5% a day to feed his family**. Every reward, penalty, and
+> rule in its world is a lesson, and they all point at one thing: **the family eats because he is disciplined,
+> not because he is brave.** This is the syllabus — and the mapping from each principle to the mechanism that
+> teaches it.
+
+**1. Survive first. Always. The account is the bread.**
+Before profit, think about *not dying*. Sized small (~0.1% at risk), with a hard line in the sand before
+entry. Be wrong ten times in a row and the family still eats; blow up the account once and the streak resets
+to zero and everything is gone. *Never put the family on a single trade.* Small risk isn't timidity — it's
+love. *(risk-based sizing, BB(10) hard stop, −20 breach + streak reset.)*
+
+**2. Know your number, and respect it. +2.5% is dinner on the table.**
+The day you hit +2.5%, you've fed them — you're done. Bank it, lock the day, walk away. Greed after the goal is
+how good traders give the meal back. *Discipline is taking the win home while it's still a win.* *(two-phase
+bank at +2.5% → day-lock / 1% trail.)*
+
+**3. Consistency feeds a family. Heroics feed an ego.**
+Not rich on Tuesday — never a hungry day. Each won day in a row is worth *more* than the last; the 40th day
+matters more than any single score. The streak is the wall around the house; one reckless day knocks it down.
+*A small win every day beats a fortune once and a famine after.* *(escalating streak reward + streak reset.)*
+
+**4. Wait for the gift. Don't force the trade.**
+More reward the more the evidence stacks — when the trend, the timeframes, and the signals all point the same
+way and you trade *with* them. A thin or conflicting setup earns nothing. Be a **sniper, not a machine-gunner.**
+Patience is a position. *(consensus-strength conviction bonus, gated on agreeing + winning; the CCI/BB/SMA
+confluence alphas.)*
+
+**5. Trade with the river, not against it.**
+Price above the bands and the moving averages across timeframes = trend; ride its direction, and if it keeps
+running after you exit, get back in. Don't argue with the market; don't call the top. *The trend is paying the
+bills.* *(trend-aligned alphas, re-entry context + nudge.)*
+
+**6. Cut the loss before it cuts you.**
+Draw the stop *before* entry and honor it without flinching. A small loss is tuition; a big loss is a wound
+that doesn't heal in time to feed anyone. *The stop is the discipline that keeps you in business tomorrow.*
+*(BB(10,1) hard stop; loss-proof, PnL-capped bonuses.)*
+
+**7. Show up every day — but only swing at fat pitches.**
+Can't feed them hiding in cash, so idleness isn't free; but engaging isn't trading constantly. Show up, watch,
+swing only when the pitch is fat. *Activity is not the job. Edge is the job.* *(seek-the-target + idle penalty,
+balanced by selectivity.)*
+
+**8. Feel the wall before you hit it.**
+As drawdown grows toward the limit, it hurts *gradually* — ease off as you approach the edge, don't slam into
+it. *Never trade like the cliff is a surprise.* *(quadratic drawdown-proximity penalty.)*
+
+**9. Always know exactly where you stand.**
+See the streak, the win-rate, the pace to target, the room to the wall. A professional is *never* surprised by
+his own P&L. *Awareness is risk control.* *(the account/sizing/recent-context + v1.8.0 consistency obs blocks.)*
+
+**10. Think past this trade.**
+Every decision today protects or threatens tomorrow's bread. Play for the streak, the month, the family's
+security — not the tick. *The goal was never this trade. It was the next forty days.* *(stretched discount
+horizon, gamma 0.9999.)*
+
+---
+
+**The whole lesson in one breath:**
+
+> **Risk almost nothing. Wait for the setup where everything agrees. Trade with the trend. Take +2.5% and go
+> home. Cut the loss the second it's wrong. And above all — never break the streak, because the streak is the
+> wall that keeps your family safe.**
+
+Not how to win big. How to **win small, win clean, and win every single day** — so the people who depend on you
+never wonder where the next meal comes from. Get your 2.5%. And then **stop.**
