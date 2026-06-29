@@ -26,8 +26,10 @@ import jax
 import jax.numpy as jnp
 from jax_tpu import jax_ftmo, jax_obs_blocks
 from jax_tpu.jax_static_features import BLOCK_RANGES, DYNAMIC_BLOCKS
+from src.strategies.alpha_pack import CONVICTION_SLOTS
 
 _HOLD, _BUY, _SELL, _CLOSE = 0, 1, 2, 3
+_CONV = tuple(int(s) for s in CONVICTION_SLOTS)   # the 3 strong-setup alpha slots (conviction bonus)
 _SL = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 
 
@@ -65,6 +67,7 @@ class PortfolioParams(NamedTuple):
     risk_frac: float            # risk_per_trade_pct / 100
     band_stack_bonus: float
     reentry_bonus: float
+    conviction_bonus: float      # >=2 of the 3 strong-setup alphas confirmed the entry + won (PnL-capped)
 
 
 class PortfolioDeviceStatic(NamedTuple):
@@ -135,6 +138,7 @@ class PortfolioState(NamedTuple):
     entry_band_long: jnp.ndarray # (N,)
     entry_band_short: jnp.ndarray# (N,)
     entry_reentry: jnp.ndarray   # (N,)
+    entry_confirms: jnp.ndarray  # (N,) # of the 3 strong-setup alphas confirming the entry direction
     days_elapsed: jnp.ndarray
     daily_pass_streak: jnp.ndarray
     phase2_active: jnp.ndarray
@@ -169,7 +173,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
                      day_pass_reward=10.0, day_fail_penalty=5.0, streak_bonus=1.0, streak_bonus_cap=10.0,
                      target_seek_weight=3.0, idle_day_penalty=0.02, dd_proximity_coef=2.0,
                      bb_stop_enabled=0.0, risk_based=0.0, risk_frac=0.0,
-                     band_stack_bonus=0.0, reentry_bonus=0.0,
+                     band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0,
                      max_bars=None) -> PortfolioParams:
     """Build PortfolioParams from a PortfolioStaticData + the FTMO/alpha knobs (defaults = FTMOConfig)."""
     return PortfolioParams(
@@ -186,7 +190,8 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         streak_bonus_cap=float(streak_bonus_cap), target_seek_weight=float(target_seek_weight),
         idle_day_penalty=float(idle_day_penalty), dd_proximity_coef=float(dd_proximity_coef),
         bb_stop_enabled=float(bb_stop_enabled), risk_based=float(risk_based), risk_frac=float(risk_frac),
-        band_stack_bonus=float(band_stack_bonus), reentry_bonus=float(reentry_bonus))
+        band_stack_bonus=float(band_stack_bonus), reentry_bonus=float(reentry_bonus),
+        conviction_bonus=float(conviction_bonus))
 
 
 def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, end,
@@ -214,7 +219,7 @@ def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, en
         trade_size=jnp.asarray(static.position_size).astype(bal.dtype),   # base size until an open sets it
         entry_bar=bar0, entry_atr=zN, entry_stop_band=zN, mfe_atr=zN, mae_atr=zN,
         last_close_bar=bar0, last_close_dir=zN, last_exit_px=entry0,
-        entry_band_long=zN, entry_band_short=zN, entry_reentry=zN,
+        entry_band_long=zN, entry_band_short=zN, entry_reentry=zN, entry_confirms=zN,
         days_elapsed=jnp.float32(0.0), daily_pass_streak=jnp.float32(0.0),
         phase2_active=jnp.float32(0.0), phase2_peak=z, day_locked=jnp.float32(0.0),
         # day_progress_hwm is derived from equity (money dtype) each step -> init in the MONEY dtype so the
@@ -346,7 +351,8 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     alpha_part = params.alpha_on * (s.entry_agreed[j] * params.alpha_agree + beat_term)
     band_ind = ((pos_j > 0.0).astype(jnp.float32) * s.entry_band_long[j]
                 + (pos_j < 0.0).astype(jnp.float32) * s.entry_band_short[j])
-    bonus = alpha_part + params.band_stack_bonus * band_ind + params.reentry_bonus * s.entry_reentry[j]
+    conviction = params.conviction_bonus * (s.entry_confirms[j] >= 2.0).astype(jnp.float32)
+    bonus = alpha_part + params.band_stack_bonus * band_ind + params.reentry_bonus * s.entry_reentry[j] + conviction
     close_active = close_mask * (realized > 0.0).astype(jnp.float32) * (balance > day0).astype(jnp.float32)
     alpha_shaping = close_active * jnp.minimum(bonus, pnl_frac)
 
@@ -389,6 +395,10 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     cont = last_close_dir_j * (close_jt - last_exit_px_j)          # with-trend re-entry (uses post-close-leg last_close)
     reentry_raw = ((last_close_dir_j != 0.0) & (target == last_close_dir_j) & (cont > 0.0)).astype(jnp.float32)
     entry_reentry_j = jnp.where(op, reentry_raw, s.entry_reentry[j])
+    # CONVICTION: # of the 3 strong-setup alphas (slots _CONV) pointing the SAME way as this entry
+    am_jt = static.alpha_matrix[j, t]
+    confirms_raw = sum((am_jt[sl] == target).astype(jnp.float32) for sl in _CONV)
+    entry_confirms_j = jnp.where(op, confirms_raw, s.entry_confirms[j])
 
     position = s.position.at[j].set(target)
     entry = s.entry.at[j].set(entry_j_new)
@@ -405,6 +415,7 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     entry_band_long = s.entry_band_long.at[j].set(entry_band_long_j)
     entry_band_short = s.entry_band_short.at[j].set(entry_band_short_j)
     entry_reentry = s.entry_reentry.at[j].set(entry_reentry_j)
+    entry_confirms = s.entry_confirms.at[j].set(entry_confirms_j)
 
     # --- advance cursor: next symbol; wrap -> advance the bar ---
     j2 = j + 1
@@ -575,7 +586,7 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
         trade_size=trade_size, entry_bar=entry_bar, entry_atr=entry_atr, entry_stop_band=entry_stop_band,
         mfe_atr=mfe_atr, mae_atr=mae_atr, last_close_bar=last_close_bar, last_close_dir=last_close_dir,
         last_exit_px=last_exit_px, entry_band_long=entry_band_long, entry_band_short=entry_band_short,
-        entry_reentry=entry_reentry,
+        entry_reentry=entry_reentry, entry_confirms=entry_confirms,
         days_elapsed=days_elapsed, daily_pass_streak=daily_pass_streak,
         phase2_active=phase2_active, phase2_peak=phase2_peak, day_locked=day_locked,
         day_progress_hwm=day_progress_hwm, day_had_exposure=day_had_exposure,

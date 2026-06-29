@@ -108,6 +108,12 @@ FTMO_PASS_BONUS: float = 1.0               # the +10% CHALLENGE pass terminal bo
 # --- v1.7.0 trade-risk CLOSE bonuses (PortfolioEnv only, PnL-capped, default 0 = off). Turn on in the
 # training path. band_stack: enter ABOVE/BELOW BB200 & BB10 (dev1) on 1m+5m and close in profit, day net up.
 # reentry: a with-trend re-entry that pays off. Small so they amplify a real win, never fabricate reward. ---
+# operator 2026-06-29 CONVICTION bonus: a PnL-capped nudge paid when a trade was ENTERED with >=2 of the 3
+# strong-setup alphas (CCI|>160| 5m+30m, BB200&BB20 double-breakout any-TF, fwd-SMA(4) 5m+30m) CONFIRMING its
+# direction AND it CLOSES in profit (day net up). Reads the 3 alpha slots (no precompute). Kept MODEST on
+# purpose: a "big incentive to trade" fights the 40-won-day goal, so this only breaks ties toward high-
+# conviction setups and can NEVER pay for a loser (the min(bonus, trade-PnL) cap is shared with the others).
+FTMO_CONVICTION_BONUS: float = 0.0         # ceiling for the >=2-confirm conviction bonus (e.g. 0.1; PnL-capped)
 FTMO_BAND_STACK_BONUS: float = 0.0         # bonus for a band-stacked entry that closes in profit (e.g. 0.005)
 FTMO_REENTRY_BONUS: float = 0.0            # nudge for a with-trend re-entry that pays off (e.g. 0.003)
 

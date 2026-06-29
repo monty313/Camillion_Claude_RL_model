@@ -50,10 +50,11 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     b = behaviors or {}
     bb_stop = bool(b.get("bb_stop", False))
     risk_pct = b.get("risk_pct", None)
-    if "band_bonus" in b or "reentry_bonus" in b:
+    if "band_bonus" in b or "reentry_bonus" in b or "conviction_bonus" in b:
         import dataclasses
         cfg = dataclasses.replace(cfg, band_stack_bonus=float(b.get("band_bonus", 0.0)),
-                                  reentry_bonus=float(b.get("reentry_bonus", 0.0)))
+                                  reentry_bonus=float(b.get("reentry_bonus", 0.0)),
+                                  conviction_bonus=float(b.get("conviction_bonus", 0.0)))
     if sym_data is None:
         sym_data = _symbol_data(symbols, seed=seed)
     subs = build_portfolio_subs(sym_data, _reg, cfg=cfg, warmup=50, progress=False)
@@ -78,7 +79,8 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         dd_proximity_coef=cfg.dd_proximity_coef, breach_penalty=cfg.breach_penalty, pass_bonus=cfg.pass_bonus,
         bb_stop_enabled=1.0 if bb_stop else 0.0, risk_based=1.0 if risk_pct is not None else 0.0,
         risk_frac=(float(risk_pct) / 100.0) if risk_pct is not None else 0.0,
-        band_stack_bonus=cfg.band_stack_bonus, reentry_bonus=cfg.reentry_bonus)
+        band_stack_bonus=cfg.band_stack_bonus, reentry_bonus=cfg.reentry_bonus,
+        conviction_bonus=cfg.conviction_bonus)
 
     cpu_obs, _ = env.reset()
     state = JPE.init_state(static, params, start=env.warmup, end=env.T - 1,
@@ -142,7 +144,8 @@ def test_portfolio_parity_trade_risk_behaviors_on():
     syms = ["EURUSD", "GBPUSD"]
     sym_data = _symbol_data(syms, seed=5, drift=6e-5)
     acts = np.where(np.arange(6000) % 7 < 5, 1, 0)
-    behaviors = {"bb_stop": True, "risk_pct": 0.1, "band_bonus": 0.005, "reentry_bonus": 0.003}
+    behaviors = {"bb_stop": True, "risk_pct": 0.1, "band_bonus": 0.005, "reentry_bonus": 0.003,
+                 "conviction_bonus": 0.1}
     mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts, behaviors=behaviors)
     print(f"\n[portfolio trade-risk behaviors ON] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
     assert mo < ATOL_OBS and mr < ATOL_REW, f"behaviors-on parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"

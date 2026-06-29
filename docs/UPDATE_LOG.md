@@ -3,6 +3,35 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-29] 3 strong-setup ALPHAS (slots 18/19/20) + a PnL-capped CONVICTION bonus (PortfolioEnv, CPU + TPU)
+- **I (Issue):** Operator wants the bot motivated to trade the day's strong setups: (1) CCI extended beyond
+  +/-160 on 5m AND 30m, (2) price beyond BOTH BB(200,dev1) AND BB(20,dev1) on ANY timeframe, (3) price
+  above/below the forward-displaced SMA(4) on 2+ timeframes. A code-grounded multi-agent review concluded
+  these are **signal generators (alphas)**, not bespoke reward bonuses, and that a literal "BIG incentive to
+  TRADE" is the #1 risk to a 40-day streak (it teaches over-trading into the 4% wall).
+- **R (Rule):** CLAUDE.md — "each strategy = a signal generator (+1/-1/0); grow to ~1000 alphas; the obs is
+  locked." Alphas fill free slots (NO obs-contract change, the obs stays 513/v1.7.0). Keep CPU <-> JAX
+  bar-for-bar. Leak-free (no future-shifted data).
+- **A (Application):**
+  - **ROUTE A — 3 new per-slot alphas** (free slots 18/19/20 of 64; columns already cached, no precompute):
+    `cci_x160_align_5m_30m` (|cci30| > 160 on 5m AND 30m), `bb_double_breakout_anytf` (close beyond BB200(dev1)
+    AND BB20(dev1) on ANY TF), `fwd_sma4_align_5m_30m` (close vs the forward-displaced `sma_p4_s3` on 5m AND
+    30m). The bot SEES them in the alpha obs blocks and the existing (10x'd) alpha-shaping reward motivates
+    trading WITH / BEATING them — and it learns a per-alpha WEIGHT. No obs-shape change; alphas precompute into
+    the alpha matrix both envs already consume, so ZERO JAX kernel change.
+  - **ROUTE B — one PnL-capped CONVICTION bonus** (`cfg.conviction_bonus`, default 0.0 = off; notebook trains
+    at 0.1): paid when **>=2 of those 3 alphas confirmed the trade's direction AT ENTRY** and the trade CLOSES
+    in profit with the day net up. Reads the 3 alpha slots from the per-symbol alpha matrix (no new precompute,
+    no new side arrays). Shares the existing `min(bonus, trade-PnL)` cap with the alpha/band/re-entry terms, so
+    it can NEVER pay for a loser or for volume — it only breaks ties toward high-conviction setups. Mirrored in
+    `src/env/portfolio_env.py` + `jax_tpu/jax_portfolio_env.py` (PortfolioParams + EnvState `entry_confirms` +
+    open-leg compute + close-leg pay); `CONVICTION_SLOTS=(18,19,20)` resolved by name in `alpha_pack` (a test
+    asserts it can't drift).
+- **C (Conclusion → consistency):** The bot gains explicit perception + signal for the operator's three
+  high-quality setups (the designed, scalable mechanism), and a SMALL, loss-proof nudge toward entering when
+  multiple setups agree — without the over-trading trap of a literal "pay to trade" bonus. Verified CPU <-> JAX
+  bar-for-bar with the conviction bonus ON; obs unchanged at 513.
+
 ## [2026-06-29] Reward REBALANCE for 40-won-days-in-a-row (PortfolioEnv, CPU + TPU) — no obs/contract change
 - **I (Issue):** A code-grounded "bot psychology" review (multi-agent) found the reward's #1 threat to a 40-day
   streak was its OWN shape: an **every-4th-won-day +1.0 jackpot** (largest scalar in the reward) taught the bot

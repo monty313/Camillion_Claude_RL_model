@@ -69,6 +69,9 @@ class FTMOConfig:
     # with-trend RE-ENTRY (re-opening this symbol in its last-close direction after price kept going) that pays off.
     band_stack_bonus: float = 0.0
     reentry_bonus: float = 0.0
+    # conviction_bonus (operator 2026-06-29): PnL-capped nudge when >=2 of the 3 strong-setup alphas confirmed
+    # the trade's direction at entry AND it closes in profit (day net up). Reads the alpha slots; no precompute.
+    conviction_bonus: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,7 @@ def load_ftmo_config() -> FTMOConfig:
         pass_bonus=getattr(V, "FTMO_PASS_BONUS", 1.0),
         band_stack_bonus=getattr(V, "FTMO_BAND_STACK_BONUS", 0.0),
         reentry_bonus=getattr(V, "FTMO_REENTRY_BONUS", 0.0),
+        conviction_bonus=getattr(V, "FTMO_CONVICTION_BONUS", 0.0),
     )
 
 

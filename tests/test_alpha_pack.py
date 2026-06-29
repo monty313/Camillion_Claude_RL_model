@@ -44,12 +44,19 @@ def test_alpha_pack_wiring_and_479():
     cl = 100 + np.cumsum(np.random.default_rng(3).standard_normal(n) * 0.04 + 0.01)
     df = pd.DataFrame({"open": cl, "high": cl + .05, "low": cl - .05, "close": cl, "volume": 1.}, index=idx)
     ind = build_aligned_indicators(df); assert ind.shape[1] == 220
-    reg = AlphaRegistry(); register_all(reg); assert reg.assigned_count == 18
+    reg = AlphaRegistry(); register_all(reg); assert reg.assigned_count == 21   # +3 strong-setup alphas (2026-06-29)
     env = TradingEnv(ind, df["close"].values.astype("float32"),
                      idx.values.astype("datetime64[ns]").astype("int64"), reg, warmup=300)
     o, _ = env.reset()
     assert o.shape == (513,) and np.all(np.isfinite(o))
-    assert o[OC.BLOCK_SLICES["alpha_mask"]][:18].sum() == 18           # all 18 slots occupied (incl. 2 ADX-DI)
+    assert o[OC.BLOCK_SLICES["alpha_mask"]][:21].sum() == 21           # all 21 slots occupied (incl. the 3 new setups)
     assert np.all(np.isfinite(o[OC.BLOCK_SLICES["alpha_streak"]]))     # streak block present
-    fires = (env.alpha_matrix[300:, :18] != 0).sum(axis=0)
+    fires = (env.alpha_matrix[300:, :21] != 0).sum(axis=0)
     assert fires.sum() > 0                                             # the pack produces signals
+
+
+def test_conviction_slots_match_canonical_order():
+    # the conviction bonus reads these EXACT slots in BOTH the CPU and JAX envs; a reorder must not drift them.
+    from src.strategies.alpha_pack import conviction_slots, CONVICTION_SLOTS, CONVICTION_ALPHA_NAMES
+    assert conviction_slots() == CONVICTION_SLOTS == (18, 19, 20)
+    assert CONVICTION_ALPHA_NAMES == ("cci_x160_align_5m_30m", "bb_double_breakout_anytf", "fwd_sma4_align_5m_30m")

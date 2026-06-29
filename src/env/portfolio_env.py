@@ -49,6 +49,7 @@ from src.observation import builder as OB
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
 from src.observation import trade_risk as TR
+from src.strategies.alpha_pack import CONVICTION_SLOTS
 from src.env.trading_env import TradingEnv
 
 _TARGET = {C.ACTION_HOLD: None, C.ACTION_BUY: 1, C.ACTION_SELL: -1, C.ACTION_CLOSE: 0}
@@ -191,6 +192,10 @@ class PortfolioEnv:
         self._risk_pct = None if risk_per_trade_pct is None else float(risk_per_trade_pct)
         self._band_bonus = float(getattr(self.cfg, "band_stack_bonus", 0.0))
         self._reentry_bonus = float(getattr(self.cfg, "reentry_bonus", 0.0))
+        # CONVICTION bonus (operator 2026-06-29): paid when >=2 of the 3 strong-setup alphas (slots
+        # CONVICTION_SLOTS) confirmed the trade direction at entry AND it closes in profit (day net up).
+        self._conviction_bonus = float(getattr(self.cfg, "conviction_bonus", 0.0))
+        self._conviction_slots = CONVICTION_SLOTS
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -306,6 +311,7 @@ class PortfolioEnv:
         self._entry_band_long = {s: False for s in self.symbols}    # band-stack at entry (enter-bonus)
         self._entry_band_short = {s: False for s in self.symbols}
         self._entry_reentry = {s: 0 for s in self.symbols}          # entered as a with-trend re-entry?
+        self._entry_confirms = {s: 0 for s in self.symbols}         # # of the 3 strong-setup alphas confirming at entry
 
     @staticmethod
     def _atr_at(sub, t: int) -> float:
@@ -495,6 +501,9 @@ class PortfolioEnv:
                     # RE-ENTRY nudge: this was a with-trend re-entry that paid off.
                     if self._reentry_bonus > 0.0 and self._entry_reentry.get(sym, 0):
                         bonus += self._reentry_bonus
+                    # CONVICTION nudge: entered with >=2 of the 3 strong-setup alphas confirming -> won.
+                    if self._conviction_bonus > 0.0 and self._entry_confirms.get(sym, 0) >= 2:
+                        bonus += self._conviction_bonus
                     if bonus > 0.0:
                         alpha_shaping += min(bonus, pnl_frac)              # CAP: bonus can never exceed the trade PnL
                 self._entry_agreed.pop(sym, None); self._entry_alpha_dir.pop(sym, None)
@@ -536,6 +545,9 @@ class PortfolioEnv:
                 ld = self._last_close_dir[sym]
                 self._entry_reentry[sym] = int(
                     ld != 0 and target == ld and ld * (float(sub.close[t]) - self._last_exit_px[sym]) > 0.0)
+                # CONVICTION: how many of the 3 strong-setup alphas point the SAME way as this entry, right now
+                am_row = sub.alpha_matrix[t]
+                self._entry_confirms[sym] = int(sum(1 for sl in self._conviction_slots if am_row[sl] == target))
 
         # advance the cursor: next symbol; when it wraps, advance the bar
         self.j += 1
