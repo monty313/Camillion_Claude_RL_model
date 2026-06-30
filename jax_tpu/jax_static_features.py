@@ -137,6 +137,7 @@ def build_static_data(env) -> StaticData:
     place("alpha_streak", np.minimum(env.streak_matrix, C.ALPHA_STREAK_CAP) / float(C.ALPHA_STREAK_CAP))
     place("cross_asset", env.cross_asset_matrix)
     place("ohlc", env.ohlc_matrix)   # v1.6.0: raw O/H/L/C per timeframe (static; zeros if env has no aux)
+    place("momentum", env.momentum_matrix)   # v1.9.0: momentum-perception scores (static, byte-identical)
     # dynamic blocks (account_daily/episode, portfolio, sizing, recent_context) stay 0 here.
 
     # sanitize EXACTLY like the CPU builder (np.nan_to_num on the whole vector)

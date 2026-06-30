@@ -19,6 +19,7 @@ import numpy as np
 from config import constants as C
 from src.indicators.base import ALL_INDICATOR_COLUMNS
 from src.data.aux_features import OHLC_COLUMNS  # v1.6.0 raw OHLC obs block names (20)
+from src.observation.momentum_scores import MOMENTUM_NAMES  # v1.9.0 momentum-perception scores (9)
 
 ACCOUNT_DAILY_NAMES = (
     "daily_win_rate_pct", "daily_realized_pnl_pct", "daily_drawdown_used_pct",
@@ -87,6 +88,7 @@ def _block_names() -> dict[str, list[str]]:
         "ohlc": list(OHLC_COLUMNS),   # v1.6.0: raw O/H/L/C per timeframe (20)
         "trade_risk": list(TRADE_RISK_NAMES),   # v1.7.0: current symbol's open-trade risk state (14)
         "consistency": list(CONSISTENCY_NAMES),  # v1.8.0: multi-day FTMO standing / won-day streak (4)
+        "momentum": list(MOMENTUM_NAMES),         # v1.9.0: momentum-perception scores (9, one per tree node)
     }
 
 

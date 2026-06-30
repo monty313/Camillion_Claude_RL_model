@@ -1,4 +1,4 @@
-# OBSERVATION CONTRACT — v1.8.0  (517 float32)
+# OBSERVATION CONTRACT — v1.9.0  (526 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
@@ -7,9 +7,12 @@
 > **Version history:** v1.1.0 (367) → v1.2.0 (451: indicators 200→220 + 64-wide `alpha_streak`)
 > → v1.3.0 (461: 10-float `sizing`) → v1.4.0 (471: 10-float `cross_asset`) → v1.5.0 (479: 8-float
 > `recent_context`) → v1.6.0 (499: 20-float raw `ohlc` block) → v1.7.0 (513: 14-float `trade_risk` block)
-> → **v1.8.0 (517): appended the 4-float `consistency` block (the bot's multi-day FTMO standing / won-day
-> streak, so it can VALUE and PROTECT the streak with the stretched discount horizon).**
-> Appended blocks leave indices 0..(prev-1) unchanged (a v1.7.0 policy must retrain — shape changed).
+> → v1.8.0 (517): appended the 4-float `consistency` block (the bot's multi-day FTMO standing / won-day
+> streak, so it can VALUE and PROTECT the streak with the stretched discount horizon)
+> → **v1.9.0 (526): appended the 9-float `momentum` block — momentum-PERCEPTION scores (one per the
+> operator's momentum decision tree), so the policy learns the PRINCIPLE of momentum, not hard-coded CCI
+> rules (see `JORDAN_PRINCIPLES.md`).**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.8.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -34,7 +37,9 @@
 
 | 17 | `consistency` | 4 | **v1.8.0**: the bot's MULTI-DAY FTMO standing, so it can VALUE and PROTECT the won-day STREAK (paired with the stretched discount horizon, gamma 0.9999). `won_day_streak_norm` (current consecutive won days / 40), `days_won_norm` (cumulative won days / 40), `won_day_rate` (days won / days elapsed = consistency %), `days_into_journey_norm` (days elapsed / 40). DYNAMIC. The shared-pot `PortfolioEnv` fills these from its midnight day-scoring; the single-symbol env (no streak logic) emits zeros (only `days_into_journey` is real). Shared builder `src/account/win_loss_features.consistency_features` (jnp twin in `jax_obs_blocks.consistency_features`). |
 
-**Total = 517.**
+| 18 | `momentum` | 9 | **v1.9.0**: momentum-PERCEPTION scores — the operator's "momentum" decomposed into learnable sub-problems (a decision tree), one per-bar SCORE each, so the policy CONSUMES momentum (it doesn't reinvent it from raw indicators) and learns the PRINCIPLE, not a hard CCI threshold (see `JORDAN_PRINCIPLES.md`). `mom_tradeability` (is momentum present? graded 0..1), `mom_bias` (higher-TF direction, ±1), `mom_alignment` (do 5m/30m/4h agree? ±1), `mom_strength` (graded |CCI| ladder 0..1), `mom_exhaustion` (blow-off risk past ~160), `mom_location` (extension vs pullback = 5m band position, ±1), `mom_structure` (position in the recent range → near a breakout, 0..1), `mom_persistence` (recent follow-through, 0..1), `mom_decay` (momentum dying = CCI rolled back from its peak, 0..1). **STATIC** (market-only, per-bar) → computed once in `src/observation/momentum_scores.py`, lifted byte-identical into the JAX env (auto parity; no jnp twin). Levels/windows are TUNABLE — the policy learns the weighting. |
+
+**Total = 526.**
 
 > **The trade-risk block is where the BB hard stop + risk-based sizing + band-stack/re-entry bonuses live.**
 > The 1m+5m BB(10,1) bands it needs are NOT in the 220-indicator cache (BB periods there are 20 & 200 only);

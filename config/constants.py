@@ -187,6 +187,14 @@ OBS_BLOCK_TRADE_RISK: int = 14
 # new indices 513..516 are added. DELIBERATE contract bump (operator 2026-06-29): a v1.7.0 policy must retrain
 # because the shape changed. DYNAMIC block (recomputed each step from the episode's day-scoring state). ---
 OBS_BLOCK_CONSISTENCY: int = 4
+# --- v1.9.0: MOMENTUM-PERCEPTION block (9 floats). Teach the PRINCIPLE of momentum, not hard-coded CCI rules
+# (JORDAN_PRINCIPLES.md). The operator decomposed momentum into learnable sub-problems; each is a per-bar SCORE
+# the policy consumes and LEARNS to act on: tradeability, higher-TF bias, multi-TF alignment, strength (graded
+# CCI ladder), exhaustion, entry location (extension vs pullback), structure (position in recent range),
+# persistence (follow-through), decay (momentum dying). STATIC (market-only, per-bar) -> placed in the static
+# obs tensor, lifted byte-identical into the JAX env (auto parity). APPENDED -> obs indices 0..516 UNCHANGED;
+# new indices 517..525. DELIBERATE contract bump (operator 2026-06-30): a v1.8.0 policy must retrain. ---
+OBS_BLOCK_MOMENTUM: int = 9
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -207,9 +215,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("ohlc",             OBS_BLOCK_OHLC),         # v1.6.0 (appended -> 0..478 indices unchanged)
     ("trade_risk",       OBS_BLOCK_TRADE_RISK),   # v1.7.0 (appended -> 0..498 indices unchanged)
     ("consistency",      OBS_BLOCK_CONSISTENCY),  # v1.8.0 (appended -> 0..512 indices unchanged)
+    ("momentum",         OBS_BLOCK_MOMENTUM),     # v1.9.0 (appended -> 0..516 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 517 (v1.8.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 526 (v1.9.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.8.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.9.0"

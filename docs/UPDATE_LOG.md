@@ -3,6 +3,31 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] Momentum as a PRINCIPLE: v1.9.0 `momentum` perception block (9 scores, CPU + TPU)
+- **I (Issue):** The operator decomposed "momentum" into a decision tree of learnable sub-problems
+  (is anything happening → which way → how strong → right spot → still alive) and insisted the bot learn the
+  PRINCIPLE of momentum, not hard-coded CCI rules, "so it can use it no matter what indicators are better
+  used." The policy could see raw CCI/SMA/BB but had to *reinvent* momentum from them every time.
+- **R (Rule):** Obs-contract bump (v1.8.0 517 → **v1.9.0 526**, APPENDED → indices 0..516 unchanged; a v1.8.0
+  policy retrains). The block is **STATIC** (market-only, per-bar) → computed once, lifted byte-identical into
+  the JAX env, so CPU↔JAX parity is automatic (no jnp twin). Levels/windows are TUNABLE (the policy learns the
+  weighting). No FTMO numbers touched. New full design doc: `JORDAN_PRINCIPLES.md`.
+- **A (Application):**
+  - `src/observation/momentum_scores.py` (NEW): `compute_momentum_scores` → (T, 9) leak-free float32, one
+    score per tree node — `mom_tradeability, mom_bias, mom_alignment, mom_strength, mom_exhaustion,
+    mom_location, mom_structure, mom_persistence, mom_decay`. Each input nz-guarded so a not-yet-warm higher
+    TF contributes 0 instead of poisoning the score.
+  - `config/constants.py`: `OBS_BLOCK_MOMENTUM=9`, appended to `OBS_BLOCK_ORDER`, `OBS_TOTAL_SIZE=526`,
+    `OBSERVATION_CONTRACT_VERSION="v1.9.0"`. `observation_contract.py`: `MOMENTUM_NAMES` + block names.
+  - `TradingEnv._precompute`: `self.momentum_matrix=compute_momentum_scores(...)`; added to
+    `_PRECOMPUTED_ATTRS` + `feature_cache` keys (`fc-v2→fc-v3`, old caches rebuild). Both CPU envs place
+    `"momentum"` in `_obs`; `jax_static_features` does `place("momentum", env.momentum_matrix)` (STATIC).
+    `jax_config`: `OBS_SIZE=526`, `N_STATIC_OBS=468`.
+- **C (Conclusion):** The bot now PERCEIVES momentum the way a trader decomposes it and learns Jordan's
+  PREFERENCES over those states (continuation > reversal, cheap entry > late chase, stand down in chop) — so it
+  GENERALIZES the edge across instruments/sessions/regimes instead of memorizing one CCI trigger. Verified:
+  266 CPU + 3 momentum-unit + 10 JAX parity (single+portfolio, x64) green at 526; static block ⇒ auto parity.
+
 ## [2026-06-29] "Don't trade the chop": 5m CCI open-gate OR→AND + wired into the portfolio (CPU + TPU)
 - **I (Issue):** Operator: don't allow a new trade when, on the 5m, BOTH CCI(30) AND CCI(100) sit in [-50,50]
   (a flat, no-momentum market). The existing `open_gate` used OR (block if EITHER is neutral) and was applied
