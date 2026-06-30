@@ -121,6 +121,10 @@ FTMO_REENTRY_BONUS: float = 0.0            # nudge for a with-trend re-entry tha
 # one on an INDEX/METAL (the stick is 2x the carrot). Gated off when exhaustion/extension/decay conflict.
 FTMO_HUG_PRESSURE_BONUS: float = 0.01      # per-step bonus for riding a >=2-TF hug (very heavy; tune down if needed)
 FTMO_HUG_MISS_PENALTY: float = 0.02        # per-step penalty for sitting out a clean index/metal hug (very heavy)
+# v1.12.0 OVERTRADING penalty (the scalper should be selective): a discrete penalty per NEW open once today's
+# trade count is at/over the soft cap. Discourages churn without a per-step accumulation blow-up.
+FTMO_OVERTRADE_SOFT_CAP: float = 15.0      # trades/day before the penalty kicks in
+FTMO_OVERTRADE_PENALTY: float = 0.1        # subtracted per over-cap open (interpretable; ~ -1.5/day at 30 trades)
 
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
 # decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York

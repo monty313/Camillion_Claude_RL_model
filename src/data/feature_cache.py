@@ -33,7 +33,7 @@ from src.indicators.base import ALL_INDICATOR_COLUMNS
 
 # Bump this if the cache FORMAT or the set of saved arrays changes (a manual backstop on top of
 # the automatic code/data hashes below).
-FEATURE_CACHE_VERSION = "fc-v5"   # v5: +dual-BB interaction scores (v1.11.0) -> old caches rebuild
+FEATURE_CACHE_VERSION = "fc-v6"   # v6: +1m scalp-momentum scores (v1.12.0) -> old caches rebuild
 
 # The arrays produced by TradingEnv._precompute (+ its sub-methods) -- the expensive part we cache.
 # Kept here as the single source of truth for save/load; TradingEnv.export_precomputed mirrors it.
@@ -49,6 +49,8 @@ PRECOMPUTED_ARRAY_KEYS = [
     "hug_pressure_matrix",
     # v1.11.0: dual-BB interaction scores (12) -- static obs block.
     "bb_interactions_matrix",
+    # v1.12.0: 1m scalp-momentum scores (4) -- static obs block.
+    "scalp_momentum_matrix",
 ]
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

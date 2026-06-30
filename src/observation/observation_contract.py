@@ -22,6 +22,7 @@ from src.data.aux_features import OHLC_COLUMNS  # v1.6.0 raw OHLC obs block name
 from src.observation.momentum_scores import MOMENTUM_NAMES  # v1.9.0 momentum-perception scores (9)
 from src.observation.hug_pressure import HUG_PRESSURE_NAMES  # v1.10.0 shifted-SMA hugging-pressure (15)
 from src.observation.bb_interactions import BB_INTERACTION_NAMES  # v1.11.0 dual-BB interactions (12)
+from src.observation.scalp_momentum import SCALP_MOMENTUM_NAMES  # v1.12.0 1m scalp-momentum (4)
 
 ACCOUNT_DAILY_NAMES = (
     "daily_win_rate_pct", "daily_realized_pnl_pct", "daily_drawdown_used_pct",
@@ -93,6 +94,7 @@ def _block_names() -> dict[str, list[str]]:
         "momentum": list(MOMENTUM_NAMES),         # v1.9.0: momentum-perception scores (9, one per tree node)
         "hug_pressure": list(HUG_PRESSURE_NAMES), # v1.10.0: shifted-SMA hugging pressure (15, 5m/15m/1h)
         "bb_interactions": list(BB_INTERACTION_NAMES),  # v1.11.0: dual-BB squeeze/cascade/MR (12, new logic only)
+        "scalp_momentum": list(SCALP_MOMENTUM_NAMES),   # v1.12.0: 1m scalp-momentum entry-timing (4)
     }
 
 

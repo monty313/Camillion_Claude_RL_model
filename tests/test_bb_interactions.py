@@ -34,7 +34,8 @@ def test_cascade_and_expansion_vary():
 
 
 def test_block_in_contract():
-    assert OC.BLOCK_SLICES["bb_interactions"] == slice(C.OBS_TOTAL_SIZE - 12, C.OBS_TOTAL_SIZE)
+    sl = OC.BLOCK_SLICES["bb_interactions"]               # appended at v1.11.0 (scalp_momentum appended after)
+    assert sl == slice(541, 553) and sl.stop - sl.start == 12
     assert OC.BLOCK_NAMES["bb_interactions"] == list(BBI.BB_INTERACTION_NAMES)
 
 

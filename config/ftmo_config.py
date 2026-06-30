@@ -78,6 +78,10 @@ class FTMOConfig:
     # default per the operator (and tunable from the DIAGNOSIS line). Set 0.0 to disable a side.
     hug_pressure_bonus: float = 0.0
     hug_miss_penalty: float = 0.0
+    # v1.12.0 OVERTRADING penalty: a discrete penalty subtracted each time a NEW trade OPENS while today's trade
+    # count is already at/over the soft cap -> discourages churn (the "super scalper" should be selective).
+    overtrade_soft_cap: float = 15.0
+    overtrade_penalty: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -123,6 +127,8 @@ def load_ftmo_config() -> FTMOConfig:
         conviction_bonus=getattr(V, "FTMO_CONVICTION_BONUS", 0.0),
         hug_pressure_bonus=getattr(V, "FTMO_HUG_PRESSURE_BONUS", 0.0),
         hug_miss_penalty=getattr(V, "FTMO_HUG_MISS_PENALTY", 0.0),
+        overtrade_soft_cap=getattr(V, "FTMO_OVERTRADE_SOFT_CAP", 15.0),
+        overtrade_penalty=getattr(V, "FTMO_OVERTRADE_PENALTY", 0.0),
     )
 
 

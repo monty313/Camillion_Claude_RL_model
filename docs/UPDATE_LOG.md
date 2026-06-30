@@ -3,6 +3,30 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] Super-scalper Stage 1: v1.12.0 `scalp_momentum` block (4) + over-trading penalty (CPU+TPU)
+- **I (Issue):** The "super scalper" brief wants a multi-head TP/SL/lot actor (a from-scratch action-space
+  rewrite — staged separately) plus a 1m entry layer + over-trading discipline + session/spread/news features.
+  Honest audit: sessions already in obs; spread + news need data we don't have; 1m already a TF; cascade/
+  expansion already built on 5m+. The NEW, no-missing-data pieces: 1m-base scalp momentum + an over-trade
+  penalty. (Operator: "just get it all done now" — so the multi-head actor proceeds in verified stages; this
+  is Stage 1.)
+- **R (Rule):** Obs bump (v1.11.0 553 → **v1.12.0 557**, APPENDED) + one reward term. STATIC obs → auto
+  parity. No FTMO numbers, no contract/action-space change yet.
+- **A (Application):**
+  - `src/observation/scalp_momentum.py` (NEW): `compute_scalp_momentum(ind, close)` → (T,4) leak-free:
+    `scalp_fast_dist_1m`, `scalp_fast_roc_1m`, `scalp_vol_exp_1m_vs_5m`, `scalp_cascade_1m` (1m fast-dist accel
+    signed by the 5m & 30m slow trend; brief's "x 1h trend" adapted to our real higher TFs). Wired into both
+    envs + JAX static (OBS_SIZE=557, N_STATIC_OBS=499; feature_cache fc-v5→fc-v6).
+  - OVER-TRADING penalty: discrete `-overtrade_penalty` subtracted on each NEW open once today's trade count is
+    at/over `overtrade_soft_cap` (CPU `portfolio_env` open path next to alpha-against; JAX mirror next to
+    `against`, using the post-close `daily_trades` for 1:1). `config/variables.py` FTMO_OVERTRADE_SOFT_CAP=15,
+    FTMO_OVERTRADE_PENALTY=0.1; `ftmo_config` fields + load; threaded through `portfolio_params`.
+- **C (Conclusion):** The policy can now time fast 1m entries that agree with the higher-TF trend, and pays a
+  discrete penalty for churning past the daily cap (selectivity). Verified: full CPU suite + 15 JAX parity
+  (the over-trade penalty is exercised by the random-action portfolio runs) green at 557. NEXT: the multi-head
+  TP/SL/lot actor — Stage 2 (env bracket-order model), Stage 3 (policy heads + mixed-action PPO), Stage 4
+  (trainer/eval + R:R reward + curriculum).
+
 ## [2026-06-30] v1.11.0 `bb_interactions` block (12) — ONLY the dual-BB logic the obs didn't already have
 - **I (Issue):** A "hierarchical dual-BB" briefing proposed a large cross-TF Bollinger feature block + 6 reward
   terms. Honest audit: ~70% already existed (multi-TF agreement → momentum.alignment + hug; band position →

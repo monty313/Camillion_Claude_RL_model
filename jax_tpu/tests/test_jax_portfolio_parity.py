@@ -93,7 +93,8 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         risk_frac=(float(risk_pct) / 100.0) if risk_pct is not None else 0.0,
         band_stack_bonus=cfg.band_stack_bonus, reentry_bonus=cfg.reentry_bonus,
         conviction_bonus=cfg.conviction_bonus, open_gate=1.0 if open_gate else 0.0,
-        hug_pressure_bonus=cfg.hug_pressure_bonus, hug_miss_penalty=cfg.hug_miss_penalty)
+        hug_pressure_bonus=cfg.hug_pressure_bonus, hug_miss_penalty=cfg.hug_miss_penalty,
+        overtrade_soft_cap=cfg.overtrade_soft_cap, overtrade_penalty=cfg.overtrade_penalty)
 
     cpu_obs, _ = env.reset()
     state = JPE.init_state(static, params, start=env.warmup, end=env.T - 1,
@@ -152,7 +153,7 @@ def test_portfolio_parity_banking_and_won_days():
 
 def test_portfolio_parity_trade_risk_behaviors_on():
     """v1.7.0: with the BB(10,1) HARD STOP + RISK-BASED sizing + band-stack & re-entry CLOSE bonuses ALL ON,
-    the JAX env must STILL match the CPU PortfolioEnv bar-for-bar (553 obs + reward). An uptrend + BUY-heavy
+    the JAX env must STILL match the CPU PortfolioEnv bar-for-bar (557 obs + reward). An uptrend + BUY-heavy
     actions exercise risk-sized entries, hard-stop closes, and the band-stack bonus."""
     syms = ["EURUSD", "GBPUSD"]
     sym_data = _symbol_data(syms, seed=5, drift=6e-5)
@@ -167,7 +168,7 @@ def test_portfolio_parity_trade_risk_behaviors_on():
 def test_portfolio_parity_hug_pressure_on():
     """v1.10.0: with the HEAVY hugging-pressure reward ON (ride bonus + indices/metals miss-penalty) on
     INDEX + METAL symbols (US30, XAUUSD) fed real 1m High/Low (aux) on a trend, the JAX env must STILL match
-    the CPU PortfolioEnv bar-for-bar (553 obs + reward) — including the >=3-TF hug gate, the conflict carve-out,
+    the CPU PortfolioEnv bar-for-bar (557 obs + reward) — including the >=3-TF hug gate, the conflict carve-out,
     and the post-+2.5%-goal MUTING (no penalty + zeroed hug obs). Random actions -> alignment varies so BOTH
     the ride-bonus and the miss-penalty paths fire."""
     syms = ["US30", "XAUUSD"]                                   # index + metal -> miss-penalty applies to both

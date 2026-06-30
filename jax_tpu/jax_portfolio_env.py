@@ -81,6 +81,8 @@ class PortfolioParams(NamedTuple):
     open_gate: float             # 1.0 -> block a NEW open when the 5m is flat (both CCIs in +/-50)
     hug_pressure_bonus: float    # v1.10.0: per-step bonus for riding a >=3-TF shifted-SMA hug (aligned)
     hug_miss_penalty: float      # v1.10.0: per-step penalty for sitting out a CLEAN hug on an INDEX/METAL
+    overtrade_soft_cap: float    # v1.12.0: trades/day before the over-trading penalty kicks in
+    overtrade_penalty: float     # v1.12.0: discrete penalty per NEW open once at/over the cap
 
 
 class PortfolioDeviceStatic(NamedTuple):
@@ -197,6 +199,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
                      bb_stop_enabled=0.0, risk_based=0.0, risk_frac=0.0,
                      band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0, open_gate=0.0,
                      hug_pressure_bonus=0.0, hug_miss_penalty=0.0,
+                     overtrade_soft_cap=15.0, overtrade_penalty=0.0,
                      max_bars=None) -> PortfolioParams:
     """Build PortfolioParams from a PortfolioStaticData + the FTMO/alpha knobs (defaults = FTMOConfig)."""
     return PortfolioParams(
@@ -215,7 +218,8 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         bb_stop_enabled=float(bb_stop_enabled), risk_based=float(risk_based), risk_frac=float(risk_frac),
         band_stack_bonus=float(band_stack_bonus), reentry_bonus=float(reentry_bonus),
         conviction_bonus=float(conviction_bonus), open_gate=float(open_gate),
-        hug_pressure_bonus=float(hug_pressure_bonus), hug_miss_penalty=float(hug_miss_penalty))
+        hug_pressure_bonus=float(hug_pressure_bonus), hug_miss_penalty=float(hug_miss_penalty),
+        overtrade_soft_cap=float(overtrade_soft_cap), overtrade_penalty=float(overtrade_penalty))
 
 
 def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, end,
@@ -407,6 +411,10 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     agree, disagree, net_dir = _consensus(static.alpha_matrix[j, t], static.occupancy[j], target)
     against = params.alpha_on * open_mask * (disagree >= 0.5).astype(jnp.float32) * params.alpha_against
     alpha_shaping = alpha_shaping - against
+    # OVERTRADING: discrete penalty when this NEW open is at/over today's soft cap (daily_trades already
+    # includes this step's close leg, matching CPU). 1:1 with PortfolioEnv.
+    over_cap = (daily_trades >= params.overtrade_soft_cap).astype(jnp.float32)
+    alpha_shaping = alpha_shaping - params.overtrade_penalty * open_mask * over_cap
     agreed_j = jnp.where(open_mask > 0.5, (agree >= 0.5).astype(jnp.float32), agreed_tmp)
     dir_j = jnp.where(open_mask > 0.5, net_dir, dir_tmp)
     entry_j_new = jnp.where(open_mask > 0.5, close_jt, entry_j)

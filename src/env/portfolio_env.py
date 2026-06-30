@@ -210,6 +210,9 @@ class PortfolioEnv:
         self._hug_bonus = float(getattr(self.cfg, "hug_pressure_bonus", 0.0))
         self._hug_miss_pen = float(getattr(self.cfg, "hug_miss_penalty", 0.0))
         self._HUG_ZERO = np.zeros(C.OBS_BLOCK_HUG_PRESSURE, dtype=np.float32)   # muted hug obs after the daily goal
+        # v1.12.0 OVERTRADING penalty: discrete penalty per NEW open once today's trade count is at/over the cap.
+        self._overtrade_cap = float(getattr(self.cfg, "overtrade_soft_cap", 15.0))
+        self._overtrade_pen = float(getattr(self.cfg, "overtrade_penalty", 0.0))
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -482,6 +485,7 @@ class PortfolioEnv:
             # observing the agent after the goal so it doesn't tempt a give-back). Re-armed next day.
             "hug_pressure": (self._HUG_ZERO if self._daily_target_reached else sub.hug_pressure_matrix[i]),
             "bb_interactions": sub.bb_interactions_matrix[i],   # v1.11.0: 12 dual-BB interaction scores (static)
+            "scalp_momentum": sub.scalp_momentum_matrix[i],     # v1.12.0: 4 1m scalp-momentum scores (static)
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----
@@ -565,6 +569,10 @@ class PortfolioEnv:
                 self._entry_alpha_dir[sym] = net_dir
                 if self._alpha_on and disagree >= 0.5:                      # opened AGAINST >=50% firing alphas
                     alpha_shaping -= self._alpha_against
+                # OVERTRADING: this NEW open is beyond today's soft cap -> discrete churn penalty (daily_trades
+                # already includes this step's close leg, matching the JAX env's post-close count).
+                if self._overtrade_pen > 0.0 and self.acc.daily_trades >= self._overtrade_cap:
+                    alpha_shaping -= self._overtrade_pen
                 # v1.7.0 per-trade risk state: entry bar/ATR, the BB(10,1) hard-stop band, reset MFE/MAE, the
                 # band-stack-at-entry flags (enter bonus), and whether this is a with-trend RE-ENTRY.
                 self._entry_bar[sym] = int(t)

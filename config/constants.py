@@ -213,6 +213,11 @@ OBS_BLOCK_HUG_PRESSURE: int = 15
 # they are NOT re-encoded here. STATIC (market-only) -> static obs tensor, byte-identical into JAX (auto
 # parity). APPENDED -> obs indices 0..540 UNCHANGED; new 541..552. NO reward change (perception only). ---
 OBS_BLOCK_BB_INTERACTIONS: int = 12
+# --- v1.12.0: 1m SCALP-MOMENTUM block (4 floats). The "super scalper" 1m entry-timing layer (bb_interactions
+# starts at 5m): 1m fast-band distance + roc, 1m-vs-5m vol expansion, and the 1m momentum cascade signed by the
+# 5m & 30m slow trend. STATIC -> static obs tensor, byte-identical into JAX. APPENDED -> 0..552 unchanged;
+# new 553..556. Perception only (no reward change). ---
+OBS_BLOCK_SCALP_MOMENTUM: int = 4
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -236,9 +241,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("momentum",         OBS_BLOCK_MOMENTUM),     # v1.9.0 (appended -> 0..516 indices unchanged)
     ("hug_pressure",     OBS_BLOCK_HUG_PRESSURE), # v1.10.0 (appended -> 0..525 indices unchanged)
     ("bb_interactions",  OBS_BLOCK_BB_INTERACTIONS),  # v1.11.0 (appended -> 0..540 indices unchanged)
+    ("scalp_momentum",   OBS_BLOCK_SCALP_MOMENTUM),   # v1.12.0 (appended -> 0..552 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 553 (v1.11.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 557 (v1.12.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.11.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.12.0"

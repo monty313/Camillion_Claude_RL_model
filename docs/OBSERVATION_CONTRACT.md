@@ -1,4 +1,4 @@
-# OBSERVATION CONTRACT — v1.11.0  (553 float32)
+# OBSERVATION CONTRACT — v1.12.0  (557 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
@@ -16,8 +16,10 @@
 > Pressure" agent (heavy): shifted-SMA(2)-on-High/Low envelope hug across 5m/15m/1h (15m & 1h resampled)
 > → **v1.11.0 (553): appended the 12-float `bb_interactions` block — only the dual-Bollinger logic the obs
 > did NOT already have (BB-width squeeze/expansion, BB-distance cross-TF momentum cascade, BB-extreme
-> mean-reversion flags); multi-TF agreement / band position / trend strength were already covered.**
-> Appended blocks leave indices 0..(prev-1) unchanged (a v1.10.0 policy must retrain — shape changed).
+> mean-reversion flags); multi-TF agreement / band position / trend strength were already covered
+> → **v1.12.0 (557): appended the 4-float `scalp_momentum` block — the 1m entry-timing layer (1m fast-band
+> distance + roc, 1m-vs-5m vol expansion, 1m with-trend cascade) for the super-scalper.**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.11.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -48,7 +50,9 @@
 
 | 20 | `bb_interactions` | 12 | **v1.11.0**: engineered DUAL-Bollinger (20 & 200) interactions — but **only the logic the obs didn't already have** (operator: "add any logic we don't have, don't duplicate"). Multi-TF agreement (→ `momentum.alignment` + `hug`), band position (→ `momentum.location`), band-stack (→ `trade_risk`), and the raw bands themselves are NOT re-encoded. **New:** (1) **BB-width squeeze/expansion** — fast(20) band width vs its own recent avg, per 5m/30m/4h + an all-coiled flag (`bbw_expansion_*`, `bbw_squeeze_all`); (2) **BB-distance momentum cascade** — fast band-distance acceleration signed by the next higher TF's slow trend (`bb_cascade_5m_30m`, `bb_cascade_30m_4h`, `bb_cascade_net`); (3) **BB-extreme mean-reversion flags** — price at a higher-TF BB200 edge AND the 5m fast band reverting inside (`bb_mr_long/short_30m/4h`); + a 5m-vs-4h fast-width vol ratio. **STATIC** (market-only) → computed in `src/observation/bb_interactions.py` from the cached bb20/bb200 columns, lifted byte-identical into the JAX env (auto parity). **No reward change** (perception only). |
 
-**Total = 553.**
+| 21 | `scalp_momentum` | 4 | **v1.12.0**: the 1m entry-timing layer for the super-scalper (`bb_interactions` starts at 5m). `scalp_fast_dist_1m` (signed σ from the 1m BB20 center, tanh), `scalp_fast_roc_1m` (3-bar acceleration of it), `scalp_vol_exp_1m_vs_5m` (1m BB width / 5m BB width — 1m breakout vs 5m structure), `scalp_cascade_1m` (1m fast-dist acceleration signed by the 5m & 30m slow trend — with-trend ignition). **STATIC** → `src/observation/scalp_momentum.py`, byte-identical into JAX (auto parity). No reward change. |
+
+**Total = 557.**
 
 > **The trade-risk block is where the BB hard stop + risk-based sizing + band-stack/re-entry bonuses live.**
 > The 1m+5m BB(10,1) bands it needs are NOT in the 220-indicator cache (BB periods there are 20 & 200 only);
