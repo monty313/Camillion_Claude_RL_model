@@ -1,4 +1,4 @@
-# The alpha pack: per-family logic truth-tables + full-pack wiring (18 alphas, 541 obs).
+# The alpha pack: per-family logic truth-tables + full-pack wiring (18 alphas, 553 obs).
 import numpy as np, pandas as pd
 from src.strategies.context import MarketContext
 from src.strategies.registry import AlphaRegistry
@@ -48,7 +48,7 @@ def test_alpha_pack_wiring_and_479():
     env = TradingEnv(ind, df["close"].values.astype("float32"),
                      idx.values.astype("datetime64[ns]").astype("int64"), reg, warmup=300)
     o, _ = env.reset()
-    assert o.shape == (541,) and np.all(np.isfinite(o))
+    assert o.shape == (553,) and np.all(np.isfinite(o))
     assert o[OC.BLOCK_SLICES["alpha_mask"]][:21].sum() == 21           # all 21 slots occupied (incl. the 3 new setups)
     assert np.all(np.isfinite(o[OC.BLOCK_SLICES["alpha_streak"]]))     # streak block present
     fires = (env.alpha_matrix[300:, :21] != 0).sum(axis=0)

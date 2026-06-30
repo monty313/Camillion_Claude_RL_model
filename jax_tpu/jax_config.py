@@ -24,9 +24,9 @@ from __future__ import annotations
 # OBS / ACTION (the locked contract — imported from config.constants at use site;
 # duplicated here only as a readable reference, asserted equal in jax_env).
 # ---------------------------------------------------------------------
-OBS_SIZE: int = 541                 # == config.constants.OBS_TOTAL_SIZE (v1.10.0: +15 hugging-pressure block)
+OBS_SIZE: int = 553                 # == config.constants.OBS_TOTAL_SIZE (v1.11.0: +12 dual-BB interaction block)
 N_ACTIONS: int = 4                  # HOLD, BUY, SELL, CLOSE
-N_STATIC_OBS: int = 483             # precomputed per-bar blocks (see jax_static_features); +15 hug in v1.10.0
+N_STATIC_OBS: int = 495             # precomputed per-bar blocks (see jax_static_features); +12 bb_interactions v1.11.0
 N_DYNAMIC_OBS: int = 58             # account/sizing/recent (40) + trade_risk (14) + consistency (4, v1.8.0)
 
 # ---------------------------------------------------------------------

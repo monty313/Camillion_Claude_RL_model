@@ -40,7 +40,8 @@ def test_direction_tracks_the_trend():
 
 
 def test_block_in_contract():
-    assert OC.BLOCK_SLICES["hug_pressure"] == slice(C.OBS_TOTAL_SIZE - 15, C.OBS_TOTAL_SIZE)
+    sl = OC.BLOCK_SLICES["hug_pressure"]                  # appended at v1.10.0 (bb_interactions appended after)
+    assert sl == slice(526, 541) and sl.stop - sl.start == 15
     assert OC.BLOCK_NAMES["hug_pressure"] == list(H.HUG_PRESSURE_NAMES)
 
 

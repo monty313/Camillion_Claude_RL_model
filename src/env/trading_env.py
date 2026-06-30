@@ -40,6 +40,7 @@ from src.observation import builder as OB
 from src.observation import trade_risk as TR
 from src.observation.momentum_scores import compute_momentum_scores
 from src.observation.hug_pressure import compute_hug_pressure
+from src.observation.bb_interactions import compute_bb_interactions
 from src.indicators.bollinger import bollinger
 
 
@@ -218,6 +219,8 @@ class TradingEnv:
         self.momentum_matrix = compute_momentum_scores(self.ind, self.close)
         # v1.10.0: SHIFTED-SMA HUGGING-PRESSURE (15, across 5m/15m/1h from the 1m High/Low) -- STATIC.
         self.hug_pressure_matrix = compute_hug_pressure(self.ohlc_matrix, self.time_ns)
+        # v1.11.0: DUAL-BB INTERACTIONS (12: squeeze/expansion + cross-TF cascade + BB-extreme MR) -- STATIC.
+        self.bb_interactions_matrix = compute_bb_interactions(self.ind, self.close)
         self._precompute_cross_asset()
         self._precompute_recent_context()
         self._derive_band_refs()
@@ -303,7 +306,9 @@ class TradingEnv:
                           # v1.9.0: momentum-perception scores (9) -- static obs block
                           "momentum_matrix",
                           # v1.10.0: shifted-SMA hugging-pressure scores (15) -- static obs block
-                          "hug_pressure_matrix")
+                          "hug_pressure_matrix",
+                          # v1.11.0: dual-BB interaction scores (12) -- static obs block
+                          "bb_interactions_matrix")
 
     def export_precomputed(self) -> dict:
         """Return {name: ndarray} for the cache (the expensive precompute output, read-only)."""
@@ -564,6 +569,7 @@ class TradingEnv:
             "consistency": WL.consistency_features(0, 0, self._days_elapsed),
             "momentum": self.momentum_matrix[i],   # v1.9.0: 9 momentum-perception scores (static)
             "hug_pressure": self.hug_pressure_matrix[i],   # v1.10.0: 15 hugging-pressure scores (static)
+            "bb_interactions": self.bb_interactions_matrix[i],   # v1.11.0: 12 dual-BB interaction scores (static)
         })
 
     def _portfolio_block(self):

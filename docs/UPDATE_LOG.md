@@ -3,6 +3,31 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] v1.11.0 `bb_interactions` block (12) — ONLY the dual-BB logic the obs didn't already have
+- **I (Issue):** A "hierarchical dual-BB" briefing proposed a large cross-TF Bollinger feature block + 6 reward
+  terms. Honest audit: ~70% already existed (multi-TF agreement → momentum.alignment + hug; band position →
+  momentum.location; band-stack → trade_risk; raw bb20/bb200 → indicator block). Operator: "add any logic we
+  DON'T have, but don't duplicate anything. that was a good catch." -> add only the new logic, NO new reward
+  shaping (the reward is already heavy; the Stage 6 proof harness gates further spend).
+- **R (Rule):** Obs-contract bump (v1.10.0 541 → **v1.11.0 553**, APPENDED → indices 0..540 unchanged; a
+  v1.10.0 policy retrains). STATIC (market-only) → auto CPU↔JAX parity (no jnp twin). No FTMO numbers, no
+  reward change.
+- **A (Application):**
+  - `src/observation/bb_interactions.py` (NEW): `compute_bb_interactions(ind, close)` → (T, 12) leak-free
+    float32, three NEW logic families only — (1) BB-width squeeze/EXPANSION (fast20 width vs recent avg, 5m/
+    30m/4h + all-coiled flag); (2) BB-distance momentum CASCADE (fast band-distance roc over ~3 of that TF's
+    own bars, signed by the next higher TF's slow trend); (3) BB-extreme MEAN-REVERSION flags (price at a
+    higher-TF BB200 edge + the 5m fast band reverting inside); + a 5m-vs-4h fast-width vol ratio. tanh/flag
+    bounded. Roc lookback is TF-proportional (higher-TF signals are piecewise-constant on the 1m grid).
+  - `config/constants.py`: `OBS_BLOCK_BB_INTERACTIONS=12`, `OBS_TOTAL_SIZE=553`, v1.11.0; contract names.
+    `TradingEnv._precompute` builds `bb_interactions_matrix` (+ `_PRECOMPUTED_ATTRS` + `feature_cache`
+    fc-v4→fc-v5); both CPU envs place `"bb_interactions"`; `jax_static_features` place() (STATIC); `jax_config`
+    OBS_SIZE=553, N_STATIC_OBS=495.
+- **C (Conclusion):** The policy now perceives BB volatility-regime (squeeze→breakout), cross-TF momentum
+  ACCELERATION, and the fade-the-extreme setup — without re-encoding the agreement / band-position it already
+  had. Verified: full CPU suite + 15 JAX parity (single + portfolio + proof) green at 553; static ⇒ auto
+  parity. A forced-column test confirms the mean-reversion flag fires on the exact setup.
+
 ## [2026-06-30] "Shifted SMA Hugging Pressure" — Part B: the HEAVY reward (ride bonus + indices/metals miss-penalty)
 - **I (Issue):** Part A gave the bot the hug PERCEPTION; the operator wants it HEAVY in BEHAVIOUR too: "increase
   directional preference strongly when [3+] TFs agree, but do not hard-force trades if exhaustion/extension/

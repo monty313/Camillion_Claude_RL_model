@@ -481,6 +481,7 @@ class PortfolioEnv:
             # v1.10.0: 15 hugging-pressure scores. ZEROED once today's +2.5% goal is reached (operator: stop
             # observing the agent after the goal so it doesn't tempt a give-back). Re-armed next day.
             "hug_pressure": (self._HUG_ZERO if self._daily_target_reached else sub.hug_pressure_matrix[i]),
+            "bb_interactions": sub.bb_interactions_matrix[i],   # v1.11.0: 12 dual-BB interaction scores (static)
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----

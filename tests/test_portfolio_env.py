@@ -1,4 +1,4 @@
-# ONE bot, ONE pot, all symbols: the shared-pot PortfolioEnv. Obs stays 541; positions are
+# ONE bot, ONE pot, all symbols: the shared-pot PortfolioEnv. Obs stays 553; positions are
 # simultaneous in one account; FTMO breach is on the pot; it scales to any universe size.
 import numpy as np
 import pandas as pd
@@ -27,15 +27,15 @@ def _data(symbols, n=3000, seed=0):
 def test_portfolio_obs_is_still_479():
     env = PortfolioEnv(_data(["EURUSD", "US30"]), _reg)
     obs, _ = env.reset()
-    assert obs.shape == (541,) and np.all(np.isfinite(obs))
-    assert C.OBS_TOTAL_SIZE == 541                       # the locked obs is unchanged for the portfolio
+    assert obs.shape == (553,) and np.all(np.isfinite(obs))
+    assert C.OBS_TOTAL_SIZE == 553                       # the locked obs is unchanged for the portfolio
 
 
 def test_portfolio_scales_to_any_universe_without_changing_obs():
     for syms in (["EURUSD"], ["EURUSD", "US30"], ["EURUSD", "GBPUSD", "XAUUSD", "US30"]):
         env = PortfolioEnv(_data(syms), _reg)
         obs, _ = env.reset()
-        assert obs.shape == (541,)                       # identical regardless of how many symbols
+        assert obs.shape == (553,)                       # identical regardless of how many symbols
         assert env.symbols == syms
 
 

@@ -205,6 +205,14 @@ OBS_BLOCK_MOMENTUM: int = 9
 # indices 0..525 UNCHANGED; new indices 526..540. DELIBERATE bump (operator 2026-06-30): a v1.9.0 policy
 # retrains. The HEAVY action prior + indices/metals miss-penalty live in the reward (portfolio_env), not here. ---
 OBS_BLOCK_HUG_PRESSURE: int = 15
+# --- v1.11.0: DUAL-BB INTERACTION block (12 floats). Only the dual-Bollinger logic the obs did NOT already
+# have (operator 2026-06-30: "add any logic we don't have, but don't duplicate"): BB-width squeeze/expansion
+# (3 TFs + all-coiled flag), BB-distance momentum CASCADE (signed cross-TF acceleration, 3), BB-extreme
+# MEAN-REVERSION flags (price at a higher-TF BB200 edge + fast band reverting, 4), and a 5m-vs-4h vol ratio.
+# Multi-TF agreement / band position / weighted trend were ALREADY covered (momentum + hug + trade_risk), so
+# they are NOT re-encoded here. STATIC (market-only) -> static obs tensor, byte-identical into JAX (auto
+# parity). APPENDED -> obs indices 0..540 UNCHANGED; new 541..552. NO reward change (perception only). ---
+OBS_BLOCK_BB_INTERACTIONS: int = 12
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -227,9 +235,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("consistency",      OBS_BLOCK_CONSISTENCY),  # v1.8.0 (appended -> 0..512 indices unchanged)
     ("momentum",         OBS_BLOCK_MOMENTUM),     # v1.9.0 (appended -> 0..516 indices unchanged)
     ("hug_pressure",     OBS_BLOCK_HUG_PRESSURE), # v1.10.0 (appended -> 0..525 indices unchanged)
+    ("bb_interactions",  OBS_BLOCK_BB_INTERACTIONS),  # v1.11.0 (appended -> 0..540 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 541 (v1.10.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 553 (v1.11.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.10.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.11.0"

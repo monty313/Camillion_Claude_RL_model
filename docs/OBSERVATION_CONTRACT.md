@@ -1,4 +1,4 @@
-# OBSERVATION CONTRACT — v1.10.0  (541 float32)
+# OBSERVATION CONTRACT — v1.11.0  (553 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
@@ -12,9 +12,12 @@
 > → v1.9.0 (526): appended the 9-float `momentum` block — momentum-PERCEPTION scores (one per the
 > operator's momentum decision tree), so the policy learns the PRINCIPLE of momentum, not hard-coded CCI
 > rules (see `JORDAN_PRINCIPLES.md`)
-> → **v1.10.0 (541): appended the 15-float `hug_pressure` block — the operator's "Shifted SMA Hugging
-> Pressure" agent (heavy): shifted-SMA(2)-on-High/Low envelope hug across 5m/15m/1h (15m & 1h resampled).**
-> Appended blocks leave indices 0..(prev-1) unchanged (a v1.9.0 policy must retrain — shape changed).
+> → v1.10.0 (541): appended the 15-float `hug_pressure` block — the operator's "Shifted SMA Hugging
+> Pressure" agent (heavy): shifted-SMA(2)-on-High/Low envelope hug across 5m/15m/1h (15m & 1h resampled)
+> → **v1.11.0 (553): appended the 12-float `bb_interactions` block — only the dual-Bollinger logic the obs
+> did NOT already have (BB-width squeeze/expansion, BB-distance cross-TF momentum cascade, BB-extreme
+> mean-reversion flags); multi-TF agreement / band position / trend strength were already covered.**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.10.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -43,7 +46,9 @@
 
 | 19 | `hug_pressure` | 15 | **v1.10.0**: the operator's "Shifted SMA Hugging Pressure" agent (HEAVY). Across **5m / 15m / 1h**, a fast `SMA(2)` of High and Low **shifted forward 1 bar** forms an envelope; price that keeps HUGGING one side (never touching the opposite band) for consecutive bars = sustained directional pressure; **3+ (all) TFs agreeing = strong continuation**. Per-TF (×3): `hug_{tf}_side` (±1 bull/bear hug), `hug_{tf}_count` (consecutive no-opposite-touch bars / 20), `hug_{tf}_respect` (current bar still on side). Aggregate (×6): `hug_agree_bull`, `hug_agree_bear`, `hug_net_pressure` (signed, count-weighted), `hug_strength` (0..1), `hug_continuation_3plus` (all 3 TFs agree), `hug_dominant_side` (±1). **15m & 1h are a RESAMPLED side-channel from the 1m High/Low** (NOT new full obs timeframes — engine still runs 1m/5m/30m/4h/1d). **STATIC** (market-only, per-bar) → computed once in `src/observation/hug_pressure.py` from the OHLC aux, lifted byte-identical into the JAX env (auto parity; no jnp twin) — **EXCEPT** the PortfolioEnv zeroes this whole block once today's **+2.5% goal is reached** (operator: stop observing the agent after the goal so it can't tempt a give-back). The HEAVY action prior (`hug_pressure_bonus`) + indices/metals miss-penalty (`hug_miss_penalty`) live in the reward (`portfolio_env` / `jax_portfolio_env`), also muted after the goal. |
 
-**Total = 541.**
+| 20 | `bb_interactions` | 12 | **v1.11.0**: engineered DUAL-Bollinger (20 & 200) interactions — but **only the logic the obs didn't already have** (operator: "add any logic we don't have, don't duplicate"). Multi-TF agreement (→ `momentum.alignment` + `hug`), band position (→ `momentum.location`), band-stack (→ `trade_risk`), and the raw bands themselves are NOT re-encoded. **New:** (1) **BB-width squeeze/expansion** — fast(20) band width vs its own recent avg, per 5m/30m/4h + an all-coiled flag (`bbw_expansion_*`, `bbw_squeeze_all`); (2) **BB-distance momentum cascade** — fast band-distance acceleration signed by the next higher TF's slow trend (`bb_cascade_5m_30m`, `bb_cascade_30m_4h`, `bb_cascade_net`); (3) **BB-extreme mean-reversion flags** — price at a higher-TF BB200 edge AND the 5m fast band reverting inside (`bb_mr_long/short_30m/4h`); + a 5m-vs-4h fast-width vol ratio. **STATIC** (market-only) → computed in `src/observation/bb_interactions.py` from the cached bb20/bb200 columns, lifted byte-identical into the JAX env (auto parity). **No reward change** (perception only). |
+
+**Total = 553.**
 
 > **The trade-risk block is where the BB hard stop + risk-based sizing + band-stack/re-entry bonuses live.**
 > The 1m+5m BB(10,1) bands it needs are NOT in the 220-indicator cache (BB periods there are 20 & 200 only);
