@@ -25,7 +25,7 @@ def test_shape_names_bounds():
     nm = H.HUG_PRESSURE_NAMES
     for s in ("hug_5m_side", "hug_15m_side", "hug_1h_side", "hug_net_pressure", "hug_dominant_side"):
         c = m[:, nm.index(s)]; assert c.min() >= -1 - 1e-6 and c.max() <= 1 + 1e-6, s
-    for s in ("hug_5m_count", "hug_agree_bull", "hug_agree_bear", "hug_strength", "hug_continuation_2plus"):
+    for s in ("hug_5m_count", "hug_agree_bull", "hug_agree_bear", "hug_strength", "hug_continuation_3plus"):
         c = m[:, nm.index(s)]; assert c.min() >= -1e-6 and c.max() <= 1 + 1e-6, s
 
 

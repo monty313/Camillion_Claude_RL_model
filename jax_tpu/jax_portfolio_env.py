@@ -27,6 +27,16 @@ import jax.numpy as jnp
 from jax_tpu import jax_ftmo, jax_obs_blocks
 from jax_tpu.jax_static_features import BLOCK_RANGES, DYNAMIC_BLOCKS
 from src.strategies.alpha_pack import CONVICTION_ALIGN_CAP
+from src.observation.hug_pressure import (IDX_DOMINANT_SIDE as _HUG_DOM, IDX_CONTINUATION_3PLUS as _HUG_CONT3,
+                                          HUG_EXH_THR, HUG_DECAY_THR, HUG_LOC_THR)
+from src.observation.momentum_scores import (IDX_EXHAUSTION as _MOM_EXH, IDX_LOCATION as _MOM_LOC,
+                                             IDX_DECAY as _MOM_DEC)
+from config.asset_specs import asset_class as _asset_class
+
+# v1.10.0 hugging-pressure reward: absolute obs indices of the hug + momentum fields it reads (block base + idx)
+_HUG_BASE = BLOCK_RANGES["hug_pressure"][0]
+_HUG_W = BLOCK_RANGES["hug_pressure"][1] - _HUG_BASE      # 15
+_MOM_BASE = BLOCK_RANGES["momentum"][0]
 
 _HOLD, _BUY, _SELL, _CLOSE = 0, 1, 2, 3
 _CONV_CAP = float(CONVICTION_ALIGN_CAP)   # conviction reward saturates at this many aligned signals
@@ -69,6 +79,8 @@ class PortfolioParams(NamedTuple):
     reentry_bonus: float
     conviction_bonus: float      # >=2 of the 3 strong-setup alphas confirmed the entry + won (PnL-capped)
     open_gate: float             # 1.0 -> block a NEW open when the 5m is flat (both CCIs in +/-50)
+    hug_pressure_bonus: float    # v1.10.0: per-step bonus for riding a >=3-TF shifted-SMA hug (aligned)
+    hug_miss_penalty: float      # v1.10.0: per-step penalty for sitting out a CLEAN hug on an INDEX/METAL
 
 
 class PortfolioDeviceStatic(NamedTuple):
@@ -87,6 +99,7 @@ class PortfolioDeviceStatic(NamedTuple):
     value_per_point: jnp.ndarray# (N,)
     typical_range: jnp.ndarray  # (N,)
     cost_frac: jnp.ndarray      # (N,)
+    is_index_metal: jnp.ndarray # (N,) — 1.0 if the symbol is an INDEX or METAL (v1.10.0 hug miss-penalty target)
     # v1.7.0 trade-risk per-bar refs (per symbol)
     atr1m: jnp.ndarray          # (N, T)
     bb200_1m_up: jnp.ndarray    # (N, T)
@@ -149,12 +162,17 @@ class PortfolioState(NamedTuple):
     day_locked: jnp.ndarray
     day_progress_hwm: jnp.ndarray
     day_had_exposure: jnp.ndarray
+    daily_target_reached: jnp.ndarray   # v1.10.0: 1.0 once today hit +2.5% -> mute hug penalty/bonus + obs
     daily_target_frac: jnp.ndarray
     trailing_dd_frac: jnp.ndarray
 
 
 def make_portfolio_device_static(psd) -> PortfolioDeviceStatic:
     j = jnp.asarray
+    # v1.10.0: per-symbol INDEX/METAL flag (the hug miss-penalty only targets these). Inferred from the symbol
+    # (SPECS override, else roots) -> 1:1 with PortfolioEnv._is_index_metal.
+    is_index_metal = jnp.asarray(
+        [1.0 if _asset_class(s) in ("index", "metal") else 0.0 for s in psd.symbols], dtype=jnp.float32)
     return PortfolioDeviceStatic(
         static_obs=j(psd.static_obs), close=j(psd.close), is_new_day=j(psd.is_new_day),
         ref_move=j(psd.ref_move), week_avg=j(psd.week_avg), prev_day=j(psd.prev_day),
@@ -162,7 +180,7 @@ def make_portfolio_device_static(psd) -> PortfolioDeviceStatic:
         open_gate_blocked=j(psd.open_gate_blocked),
         alpha_matrix=j(psd.alpha_matrix), occupancy=j(psd.occupancy),
         position_size=j(psd.position_size), value_per_point=j(psd.value_per_point),
-        typical_range=j(psd.typical_range), cost_frac=j(psd.cost_frac),
+        typical_range=j(psd.typical_range), cost_frac=j(psd.cost_frac), is_index_metal=is_index_metal,
         atr1m=j(psd.atr1m), bb200_1m_up=j(psd.bb200_1m_up), bb200_1m_lo=j(psd.bb200_1m_lo),
         bb200_5m_up=j(psd.bb200_5m_up), bb200_5m_lo=j(psd.bb200_5m_lo),
         bb10_1m_up=j(psd.bb10_1m_up), bb10_1m_lo=j(psd.bb10_1m_lo),
@@ -178,6 +196,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
                      target_seek_weight=3.0, idle_day_penalty=0.02, dd_proximity_coef=2.0,
                      bb_stop_enabled=0.0, risk_based=0.0, risk_frac=0.0,
                      band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0, open_gate=0.0,
+                     hug_pressure_bonus=0.0, hug_miss_penalty=0.0,
                      max_bars=None) -> PortfolioParams:
     """Build PortfolioParams from a PortfolioStaticData + the FTMO/alpha knobs (defaults = FTMOConfig)."""
     return PortfolioParams(
@@ -195,7 +214,8 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         idle_day_penalty=float(idle_day_penalty), dd_proximity_coef=float(dd_proximity_coef),
         bb_stop_enabled=float(bb_stop_enabled), risk_based=float(risk_based), risk_frac=float(risk_frac),
         band_stack_bonus=float(band_stack_bonus), reentry_bonus=float(reentry_bonus),
-        conviction_bonus=float(conviction_bonus), open_gate=float(open_gate))
+        conviction_bonus=float(conviction_bonus), open_gate=float(open_gate),
+        hug_pressure_bonus=float(hug_pressure_bonus), hug_miss_penalty=float(hug_miss_penalty))
 
 
 def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, end,
@@ -228,7 +248,7 @@ def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, en
         phase2_active=jnp.float32(0.0), phase2_peak=z, day_locked=jnp.float32(0.0),
         # day_progress_hwm is derived from equity (money dtype) each step -> init in the MONEY dtype so the
         # lax.scan training carry stays dtype-stable under x64 too (float32 on TPU is unchanged).
-        day_progress_hwm=z, day_had_exposure=jnp.float32(0.0),
+        day_progress_hwm=z, day_had_exposure=jnp.float32(0.0), daily_target_reached=jnp.float32(0.0),
         daily_target_frac=jnp.float32(daily_target_frac), trailing_dd_frac=jnp.float32(trailing_dd_frac))
 
 
@@ -288,6 +308,9 @@ def _dynamic_obs(s: PortfolioState, static: PortfolioDeviceStatic, params: Portf
 
 def _assemble_obs(s: PortfolioState, static: PortfolioDeviceStatic, params: PortfolioParams, j, t):
     obs = static.static_obs[j, t].astype(jnp.float32)
+    # v1.10.0: ZERO the hugging-pressure block once today's +2.5% goal is reached (operator: stop observing the
+    # agent after the goal so it can't tempt a give-back). 1:1 with PortfolioEnv._obs.
+    obs = obs.at[_HUG_BASE:_HUG_BASE + _HUG_W].multiply(1.0 - s.daily_target_reached.astype(jnp.float32))
     blocks = _dynamic_obs(s, static, params, j, t)
     for name in DYNAMIC_BLOCKS:
         a, b = _SL[name]
@@ -456,6 +479,24 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     wall = s.trailing_dd_frac
     dd_frac = jnp.maximum(0.0, (epi_peak - equity) / epi_peak)
     reward = reward - params.dd_proximity_coef * jnp.where(wall > 0.0, jnp.minimum(dd_frac / wall, 1.0), 0.0) ** 2
+    # DAILY GOAL REACHED (operator 2026-06-30): once today hits +2.5%, latch a flag -> mutes the hug agent
+    # (reward below + obs in _assemble_obs). Reset at midnight. 1:1 with PortfolioEnv._daily_target_reached.
+    target_amt_h = s.daily_target_frac * start
+    daily_target_reached = jnp.maximum(
+        s.daily_target_reached, (equity - s.day_start_balance >= target_amt_h).astype(jnp.float32))
+    # HUGGING-PRESSURE (v1.10.0; operator's heavy momentum agent): ride a >=3-TF shifted-SMA hug (current
+    # symbol j); penalise sitting out a CLEAN one on an INDEX/METAL. "Clean" = ALL 3 TFs agree AND momentum is
+    # NOT exhausted / extended-in-direction / decaying. MUTED once today's goal is reached. 1:1 with CPU.
+    o_jt = static.static_obs[j, t]
+    dom = o_jt[_HUG_BASE + _HUG_DOM]; cont3 = o_jt[_HUG_BASE + _HUG_CONT3]; loc = o_jt[_MOM_BASE + _MOM_LOC]
+    conflict = ((o_jt[_MOM_BASE + _MOM_EXH] > HUG_EXH_THR) | (o_jt[_MOM_BASE + _MOM_DEC] > HUG_DECAY_THR)
+                | ((jnp.abs(loc) > HUG_LOC_THR) & ((loc > 0) == (dom > 0)) & (dom != 0.0)))
+    clean = ((cont3 > 0.5) & (dom != 0.0) & (~conflict)).astype(reward.dtype)
+    hug_active = clean * (1.0 - daily_target_reached.astype(reward.dtype))   # muted after the daily goal
+    aligned = (position[j] == dom).astype(reward.dtype)
+    is_im = (static.is_index_metal[j] > 0.5).astype(reward.dtype)
+    reward = reward + params.hug_pressure_bonus * hug_active * aligned                       # RIDE the hug
+    reward = reward - params.hug_miss_penalty * hug_active * (1.0 - aligned) * is_im          # sat out index/metal
     # ANTI-HIDE: track whether the bot was EXPOSED (held any position) at any point today.
     exposed_now = (jnp.sum(jnp.abs(position)) > 0.0).astype(jnp.float32)
     day_had_exposure = jnp.maximum(s.day_had_exposure, exposed_now)
@@ -483,6 +524,7 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
         return jnp.where(new_day > 0.5, val, cur)
     day_progress_hwm = _rst(0.0, day_progress_hwm)            # new day -> reset the seek high-water mark
     day_had_exposure = _rst(exposed_now, day_had_exposure)    # new day -> re-seed from carried position
+    daily_target_reached = _rst(jnp.float32(0.0), daily_target_reached)   # new day -> un-mute the hug agent
     day_start_balance = _rst(balance, s.day_start_balance)
     day_peak = _rst(equity, day_peak)
     daily_realized = _rst(jnp.zeros_like(daily_realized), daily_realized)
@@ -600,6 +642,7 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
         days_elapsed=days_elapsed, daily_pass_streak=daily_pass_streak, days_won=days_won,
         phase2_active=phase2_active, phase2_peak=phase2_peak, day_locked=day_locked,
         day_progress_hwm=day_progress_hwm, day_had_exposure=day_had_exposure,
+        daily_target_reached=daily_target_reached,
         daily_target_frac=s.daily_target_frac, trailing_dd_frac=s.trailing_dd_frac)
     obs = _assemble_obs(ns, static, params, j_new, t_new)
     return ns, obs, reward, terminated, truncated

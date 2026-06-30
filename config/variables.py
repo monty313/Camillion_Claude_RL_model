@@ -116,6 +116,11 @@ FTMO_PASS_BONUS: float = 1.0               # the +10% CHALLENGE pass terminal bo
 FTMO_CONVICTION_BONUS: float = 0.0         # ceiling for the >=2-confirm conviction bonus (e.g. 0.1; PnL-capped)
 FTMO_BAND_STACK_BONUS: float = 0.0         # bonus for a band-stacked entry that closes in profit (e.g. 0.005)
 FTMO_REENTRY_BONUS: float = 0.0            # nudge for a with-trend re-entry that pays off (e.g. 0.003)
+# v1.10.0 HUGGING-PRESSURE (operator's heavy "Shifted SMA Hugging Pressure" agent). PER-STEP, HEAVY by default.
+# hug_pressure_bonus: ride a >=2-TF shifted-SMA hug (aligned continuation). hug_miss_penalty: sit out a CLEAN
+# one on an INDEX/METAL (the stick is 2x the carrot). Gated off when exhaustion/extension/decay conflict.
+FTMO_HUG_PRESSURE_BONUS: float = 0.01      # per-step bonus for riding a >=2-TF hug (very heavy; tune down if needed)
+FTMO_HUG_MISS_PENALTY: float = 0.02        # per-step penalty for sitting out a clean index/metal hug (very heavy)
 
 # --- NY-session reward bonuses (DELIBERATE reward shaping for the ORB index strategy, operator
 # decision). The bot earns a bonus for BANKING (closing in profit) during the most-liquid New York

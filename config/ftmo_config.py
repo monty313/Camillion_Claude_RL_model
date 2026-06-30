@@ -72,6 +72,12 @@ class FTMOConfig:
     # conviction_bonus (operator 2026-06-29): PnL-capped nudge when >=2 of the 3 strong-setup alphas confirmed
     # the trade's direction at entry AND it closes in profit (day net up). Reads the alpha slots; no precompute.
     conviction_bonus: float = 0.0
+    # v1.10.0 HUGGING-PRESSURE reward (operator's heavy momentum agent). hug_pressure_bonus: per-step reward for
+    # RIDING a >=2-TF shifted-SMA hug (aligned + continuation, no exhaustion/extension/decay conflict).
+    # hug_miss_penalty: heavier per-step penalty for sitting out a CLEAN >=2-TF hug on an INDEX/METAL. HEAVY by
+    # default per the operator (and tunable from the DIAGNOSIS line). Set 0.0 to disable a side.
+    hug_pressure_bonus: float = 0.0
+    hug_miss_penalty: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -115,6 +121,8 @@ def load_ftmo_config() -> FTMOConfig:
         band_stack_bonus=getattr(V, "FTMO_BAND_STACK_BONUS", 0.0),
         reentry_bonus=getattr(V, "FTMO_REENTRY_BONUS", 0.0),
         conviction_bonus=getattr(V, "FTMO_CONVICTION_BONUS", 0.0),
+        hug_pressure_bonus=getattr(V, "FTMO_HUG_PRESSURE_BONUS", 0.0),
+        hug_miss_penalty=getattr(V, "FTMO_HUG_MISS_PENALTY", 0.0),
     )
 
 

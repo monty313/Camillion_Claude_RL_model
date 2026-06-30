@@ -32,7 +32,8 @@ def test_shape_names_and_bounds():
 
 
 def test_block_is_in_the_517plus_contract():
-    assert OC.BLOCK_SLICES["momentum"] == slice(C.OBS_TOTAL_SIZE - 9, C.OBS_TOTAL_SIZE)
+    sl = OC.BLOCK_SLICES["momentum"]                       # momentum is appended at v1.9.0 (then hug at v1.10.0)
+    assert sl == slice(517, 526) and sl.stop - sl.start == 9
     assert OC.BLOCK_NAMES["momentum"] == list(M.MOMENTUM_NAMES)
 
 

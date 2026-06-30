@@ -31,7 +31,7 @@ def _reg():
     r = AlphaRegistry(); register_all(r); return r
 
 
-def _symbol_data(symbols, n_bars=4000, seed=21, drift=0.0):
+def _symbol_data(symbols, n_bars=4000, seed=21, drift=0.0, with_aux=False):
     rng = np.random.default_rng(seed)
     t0 = pd.Timestamp("2024-03-04 00:00:00").value
     time_ns = (t0 + np.arange(n_bars, dtype=np.int64) * 60_000_000_000).astype(np.int64)
@@ -40,7 +40,13 @@ def _symbol_data(symbols, n_bars=4000, seed=21, drift=0.0):
         steps = rng.normal(drift, 1e-4, n_bars)
         close = (1.10 + 0.2 * k) + np.cumsum(steps).astype(np.float64)
         ind = rng.normal(0, 1.0, (n_bars, 220)).astype(np.float32)
-        out[s] = (ind, close, time_ns)
+        if with_aux:                                   # real 1m High/Low -> the hug block is NON-zero
+            aux = np.zeros((n_bars, 32), np.float32)
+            aux[:, 1] = close + 1e-3                    # 1m__high
+            aux[:, 2] = close - 1e-3                    # 1m__low
+            out[s] = (ind, close, time_ns, aux)
+        else:
+            out[s] = (ind, close, time_ns)
     return out
 
 
@@ -51,11 +57,16 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     bb_stop = bool(b.get("bb_stop", False))
     risk_pct = b.get("risk_pct", None)
     open_gate = bool(b.get("open_gate", False))
-    if "band_bonus" in b or "reentry_bonus" in b or "conviction_bonus" in b:
+    if any(k in b for k in ("band_bonus", "reentry_bonus", "conviction_bonus", "hug_bonus", "hug_miss")):
         import dataclasses
         cfg = dataclasses.replace(cfg, band_stack_bonus=float(b.get("band_bonus", 0.0)),
                                   reentry_bonus=float(b.get("reentry_bonus", 0.0)),
-                                  conviction_bonus=float(b.get("conviction_bonus", 0.0)))
+                                  conviction_bonus=float(b.get("conviction_bonus", 0.0)),
+                                  hug_pressure_bonus=float(b.get("hug_bonus", 0.0)),
+                                  hug_miss_penalty=float(b.get("hug_miss", 0.0)))
+    if "daily_target_pct" in b:                        # test-only: lower the goal so the +2.5% MUTE path fires
+        import dataclasses
+        cfg = dataclasses.replace(cfg, daily_target_pct=float(b["daily_target_pct"]))
     if sym_data is None:
         sym_data = _symbol_data(symbols, seed=seed)
     subs = build_portfolio_subs(sym_data, _reg, cfg=cfg, warmup=50, progress=False)
@@ -81,7 +92,8 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         bb_stop_enabled=1.0 if bb_stop else 0.0, risk_based=1.0 if risk_pct is not None else 0.0,
         risk_frac=(float(risk_pct) / 100.0) if risk_pct is not None else 0.0,
         band_stack_bonus=cfg.band_stack_bonus, reentry_bonus=cfg.reentry_bonus,
-        conviction_bonus=cfg.conviction_bonus, open_gate=1.0 if open_gate else 0.0)
+        conviction_bonus=cfg.conviction_bonus, open_gate=1.0 if open_gate else 0.0,
+        hug_pressure_bonus=cfg.hug_pressure_bonus, hug_miss_penalty=cfg.hug_miss_penalty)
 
     cpu_obs, _ = env.reset()
     state = JPE.init_state(static, params, start=env.warmup, end=env.T - 1,
@@ -150,6 +162,24 @@ def test_portfolio_parity_trade_risk_behaviors_on():
     mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts, behaviors=behaviors)
     print(f"\n[portfolio trade-risk behaviors ON] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
     assert mo < ATOL_OBS and mr < ATOL_REW, f"behaviors-on parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
+
+
+def test_portfolio_parity_hug_pressure_on():
+    """v1.10.0: with the HEAVY hugging-pressure reward ON (ride bonus + indices/metals miss-penalty) on
+    INDEX + METAL symbols (US30, XAUUSD) fed real 1m High/Low (aux) on a trend, the JAX env must STILL match
+    the CPU PortfolioEnv bar-for-bar (541 obs + reward) — including the >=3-TF hug gate, the conflict carve-out,
+    and the post-+2.5%-goal MUTING (no penalty + zeroed hug obs). Random actions -> alignment varies so BOTH
+    the ride-bonus and the miss-penalty paths fire."""
+    syms = ["US30", "XAUUSD"]                                   # index + metal -> miss-penalty applies to both
+    sym_data = _symbol_data(syms, seed=5, drift=1e-3, with_aux=True)   # steep uptrend -> hug fires + +2.5% reached
+    # flat FIRST (sit out a clean index/metal hug -> MISS-PENALTY), then BUY-heavy (aligned -> RIDE bonus, and
+    # equity crosses +2.5% -> the daily-goal MUTE). All three hug paths exercised under parity.
+    acts = np.where(np.arange(6000) < 1500, 0, np.where(np.arange(6000) % 7 < 5, 1, 0))
+    behaviors = {"hug_bonus": 0.01, "hug_miss": 0.02, "daily_target_pct": 0.1}   # tiny goal -> MUTE path fires
+    mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts, behaviors=behaviors)
+    print(f"\n[portfolio HUG-PRESSURE on] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
+    assert mo < ATOL_OBS and mr < ATOL_REW, f"hug-on parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
+    assert ev["banked"], "expected the +2.5% goal to be reached (exercises the hug MUTE path)"
 
 
 def test_portfolio_parity_breach():

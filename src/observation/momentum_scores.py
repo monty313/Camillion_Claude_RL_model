@@ -42,6 +42,12 @@ MOMENTUM_NAMES: tuple[str, ...] = (
 )
 
 
+# indices WITHIN the momentum block (used by the hug-pressure reward to detect exhaustion/extension/decay conflict)
+IDX_EXHAUSTION: int = MOMENTUM_NAMES.index("mom_exhaustion")   # 4
+IDX_LOCATION: int = MOMENTUM_NAMES.index("mom_location")       # 5
+IDX_DECAY: int = MOMENTUM_NAMES.index("mom_decay")             # 8
+
+
 def _col(name: str):
     try:
         return ALL_INDICATOR_COLUMNS.index(name)

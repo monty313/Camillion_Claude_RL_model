@@ -3,6 +3,32 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] "Shifted SMA Hugging Pressure" — Part B: the HEAVY reward (ride bonus + indices/metals miss-penalty)
+- **I (Issue):** Part A gave the bot the hug PERCEPTION; the operator wants it HEAVY in BEHAVIOUR too: "increase
+  directional preference strongly when [3+] TFs agree, but do not hard-force trades if exhaustion/extension/
+  decay conflict; if the bot doesn't get in a trade on an indice or metal it gets a penalty." Plus two
+  follow-ups: (1) make it **3+ TFs** (all of 5m/15m/1h), not 2+; (2) once the **+2.5% daily goal** is reached,
+  **no penalty AND stop observing the agent** (zero its obs) so it doesn't tempt a give-back.
+- **R (Rule):** Reward/behaviour + a per-day obs MUTE only — no contract/shape change (still v1.10.0 / 541).
+  Default-ON, HEAVY (operator chose "full heavy"). CPU ↔ JAX bar-for-bar (incl. the mute + obs-mask).
+- **A (Application):**
+  - `hug_pressure.py`: `hug_continuation_2plus` → `hug_continuation_3plus` (ALL 3 TFs agree); index constants +
+    shared reward thresholds (`HUG_EXH_THR/HUG_DECAY_THR/HUG_LOC_THR`) for the conflict carve-out.
+  - `portfolio_env.py`: per-step, current symbol — `+hug_pressure_bonus` for RIDING a clean >=3-TF hug
+    (aligned), `-hug_miss_penalty` for sitting out a clean one on an INDEX/METAL (`_is_index_metal` from
+    `asset_class`). "Clean" = all-3 agree AND not exhausted/extended-in-direction/decaying. New
+    `_daily_target_reached` flag: once today hits +2.5%, the hug reward is MUTED and `_obs` zeroes the hug
+    block; re-armed at midnight.
+  - `jax_portfolio_env.py`: mirrors it branchlessly — `PortfolioParams += hug_pressure_bonus/hug_miss_penalty`,
+    `PortfolioDeviceStatic += is_index_metal` (from `asset_class`), `PortfolioState += daily_target_reached`,
+    reward reads the hug+momentum fields out of `static_obs[j,t]`, `_assemble_obs` zeroes the hug block when
+    the flag is set. `config/variables.py` + `ftmo_config.py`: `FTMO_HUG_PRESSURE_BONUS=0.01`,
+    `FTMO_HUG_MISS_PENALTY=0.02` (HEAVY; per-step; tunable). Notebook Step 8b passes both.
+- **C (Conclusion):** The bot is now strongly pulled to TRADE clean multi-TF momentum continuation on indices/
+  metals (and to RIDE it), but never hard-forced into exhausted/extended/decaying moves — and once the day is
+  won it stops chasing entirely. Verified: full CPU suite + 15 JAX parity (incl. a hug-ON test on US30/XAUUSD
+  with aux exercising ride bonus + miss-penalty + the +2.5% mute) — max|obs|≈3.6e-7, max|reward|≈2.3e-7.
+
 ## [2026-06-30] "Shifted SMA Hugging Pressure" agent — Part A: v1.10.0 `hug_pressure` obs block (15, CPU+TPU)
 - **I (Issue):** Operator's heavy momentum agent (the green/red shifted-MA-on-High/Low envelope on the US30 M5
   chart): across 5m/15m/1h, a fast SMA(2) of High & Low shifted forward 1 bar forms an envelope; price hugging

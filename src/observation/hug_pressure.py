@@ -3,7 +3,7 @@
 # WHY  Operator's "Shifted SMA Hugging Pressure" agent (the green/red shifted-MA-on-High/Low envelope on the
 #      US30 M5 chart). A HEAVY momentum-continuation sense: across 5m / 15m / 1h, a fast SMA(2) of High and Low
 #      shifted forward 1 bar forms an envelope; price that keeps HUGGING one side (never touching the opposite
-#      band) for consecutive bars = sustained directional pressure. 2+ timeframes agreeing = strong
+#      band) for consecutive bars = sustained directional pressure. 3+ (all) timeframes agreeing = strong
 #      continuation. The policy SEES this (heavy obs block) and is REWARDED for trading with it (heavy prior +
 #      an indices/metals miss-penalty live in portfolio_env, not here).
 # WHERE src/observation/hug_pressure.py
@@ -43,9 +43,20 @@ HUG_PRESSURE_NAMES: tuple[str, ...] = (
     "hug_agree_bear",        # # of TFs bear-hugging / 3
     "hug_net_pressure",      # signed, weighted by hug counts (-1..1)
     "hug_strength",          # combined 0..1 heavy score
-    "hug_continuation_2plus",# 1.0 if >=2 TFs agree on a side (the strong-continuation condition)
+    "hug_continuation_3plus",# 1.0 if >=3 TFs agree on a side (ALL of 5m/15m/1h = the strong-continuation condition)
     "hug_dominant_side",     # +1 / -1 / 0 net side across TFs
 )
+
+# indices WITHIN the hug block, read by the heavy reward (portfolio_env / jax_portfolio_env).
+IDX_CONTINUATION_3PLUS: int = HUG_PRESSURE_NAMES.index("hug_continuation_3plus")   # 13
+IDX_DOMINANT_SIDE: int = HUG_PRESSURE_NAMES.index("hug_dominant_side")             # 14
+
+# A >=2-TF hug continuation is "CLEAN" (worth strongly pushing into) UNLESS the momentum block says the move is
+# already exhausted / extended in the SAME direction / decaying -> then we DON'T hard-force (no miss-penalty).
+# Shared by CPU + JAX so the reward is identical. (See momentum_scores.IDX_EXHAUSTION/IDX_LOCATION/IDX_DECAY.)
+HUG_EXH_THR: float = 0.5
+HUG_DECAY_THR: float = 0.5
+HUG_LOC_THR: float = 0.8
 
 _EPS = 1e-9
 _H1 = OHLC_COLUMNS.index("1m__high")
@@ -103,10 +114,10 @@ def compute_hug_pressure(ohlc_matrix, time_ns) -> np.ndarray:
     agree_bear = (sides < 0).sum(axis=1) / 3.0
     net_pressure = np.clip((sides * counts).sum(axis=1) / 3.0, -1.0, 1.0)
     dominant = np.sign(sides.sum(axis=1))
-    cont2 = (((sides > 0).sum(axis=1) >= 2) | ((sides < 0).sum(axis=1) >= 2)).astype(np.float64)
+    cont3 = (((sides > 0).sum(axis=1) >= 3) | ((sides < 0).sum(axis=1) >= 3)).astype(np.float64)  # ALL 3 TFs agree
     strength = np.clip(0.5 * np.maximum(agree_bull, agree_bear) + 0.5 * np.abs(net_pressure), 0.0, 1.0)
 
     per_tf_cols = np.concatenate(per_tf, axis=1)           # (T, 9): side/count/respect x 3 TFs
-    agg = np.stack([agree_bull, agree_bear, net_pressure, strength, cont2, dominant], axis=1)  # (T, 6)
+    agg = np.stack([agree_bull, agree_bear, net_pressure, strength, cont3, dominant], axis=1)  # (T, 6)
     out = np.concatenate([per_tf_cols, agg], axis=1)       # (T, 15)
     return np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)

@@ -49,6 +49,10 @@ from src.observation import builder as OB
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
 from src.observation import trade_risk as TR
+from src.observation.hug_pressure import (IDX_DOMINANT_SIDE as _HUG_DOM, IDX_CONTINUATION_3PLUS as _HUG_CONT3,
+                                          HUG_EXH_THR, HUG_DECAY_THR, HUG_LOC_THR)
+from src.observation.momentum_scores import (IDX_EXHAUSTION as _MOM_EXH, IDX_LOCATION as _MOM_LOC,
+                                             IDX_DECAY as _MOM_DEC)
 from src.strategies.alpha_pack import CONVICTION_ALIGN_CAP
 from src.env.trading_env import TradingEnv
 
@@ -200,6 +204,12 @@ class PortfolioEnv:
         # CONVICTION_SLOTS) confirmed the trade direction at entry AND it closes in profit (day net up).
         self._conviction_bonus = float(getattr(self.cfg, "conviction_bonus", 0.0))
         self._conviction_cap = float(CONVICTION_ALIGN_CAP)
+        # v1.10.0 HUGGING-PRESSURE reward (operator's heavy momentum agent): per-step bonus for RIDING a >=2-TF
+        # shifted-SMA hug (continuation), and a heavier MISS-PENALTY for sitting out a CLEAN one on an
+        # INDEX/METAL. Both gated to NOT hard-force when exhaustion/extension/decay conflict (momentum block).
+        self._hug_bonus = float(getattr(self.cfg, "hug_pressure_bonus", 0.0))
+        self._hug_miss_pen = float(getattr(self.cfg, "hug_miss_penalty", 0.0))
+        self._HUG_ZERO = np.zeros(C.OBS_BLOCK_HUG_PRESSURE, dtype=np.float32)   # muted hug obs after the daily goal
         # one TradingEnv per symbol -> its PRECOMPUTED per-symbol arrays (we never call its step). These can
         # be PRE-BUILT and SHARED across vec workers (read-only after precompute), so the heavy precompute
         # runs ONCE for all workers instead of once each -- see build_portfolio_subs().
@@ -220,6 +230,9 @@ class PortfolioEnv:
                 raise ValueError("all symbols must be time-aligned (same length / timestamps)")
         self.T = int(T)
         self.warmup = int(warmup)
+        # v1.10.0: which symbols are an INDEX or METAL (the hug miss-penalty only applies to these momentum
+        # instruments, per the operator). Inferred from the symbol (SPECS override, else roots).
+        self._is_index_metal = {s: 1.0 if A.asset_class(s) in ("index", "metal") else 0.0 for s in self.symbols}
         # Per-worker EPISODE DIVERSITY: with random_window, each reset() starts at a RANDOM bar and
         # runs `window` bars. Vectorised workers get DIFFERENT seeds -> they explore DIFFERENT stretches
         # of history instead of replaying the same trajectory (no diversity = wasted parallel envs).
@@ -256,6 +269,7 @@ class PortfolioEnv:
         self._reset_phase2()                                   # per-day two-phase state on the shared pot
         self._day_progress_hwm = 0.0                           # high-water mark of progress toward +2.5% today (seek reward)
         self._day_had_exposure = False                         # did the bot hold ANY position today? (anti-hide)
+        self._daily_target_reached = False                     # v1.10.0: hit +2.5% today? -> mute hug penalty + obs
         self._daily_pass_streak = 0                            # consecutive WON days (ended >= +2.5%) -> consistency
         self._days_won = 0                                     # cumulative WON days this episode (v1.8.0 consistency obs)
         self._entry_agreed = {}                                # per-open: did the entry agree with >=50% firing alphas?
@@ -294,6 +308,7 @@ class PortfolioEnv:
         self._reset_phase2()
         self._day_progress_hwm = 0.0
         self._day_had_exposure = False
+        self._daily_target_reached = False
         self._daily_pass_streak = 0
         self._days_won = 0
         self._entry_agreed = {}
@@ -463,7 +478,9 @@ class PortfolioEnv:
             "consistency": WL.consistency_features(            # v1.8.0: multi-day FTMO standing (won-day streak)
                 self._daily_pass_streak, self._days_won, self._days_elapsed),
             "momentum": sub.momentum_matrix[i],                # v1.9.0: 9 momentum-perception scores (static)
-            "hug_pressure": sub.hug_pressure_matrix[i],        # v1.10.0: 15 hugging-pressure scores (static)
+            # v1.10.0: 15 hugging-pressure scores. ZEROED once today's +2.5% goal is reached (operator: stop
+            # observing the agent after the goal so it doesn't tempt a give-back). Re-armed next day.
+            "hug_pressure": (self._HUG_ZERO if self._daily_target_reached else sub.hug_pressure_matrix[i]),
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----
@@ -634,6 +651,30 @@ class PortfolioEnv:
             wall = self.cfg.trailing_drawdown_pct / 100.0
             dd_frac = max(0.0, (peak - self.acc.equity) / peak) if peak else 0.0
             reward -= self._dd_coef * (min(dd_frac / wall, 1.0) if wall > 0 else 0.0) ** 2
+        # DAILY GOAL REACHED (operator 2026-06-30): once the pot hits +2.5% today, MUTE the hug agent entirely
+        # (no penalty, no bonus) AND zero its observation (in _obs) so it can't tempt a give-back -> "stop
+        # observing it so it doesn't mess up the thinking." Persists until midnight; re-armed next day.
+        d0h = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
+        if (self.acc.equity - d0h) >= (self.cfg.daily_target_pct / 100.0 * self.acc.starting_balance):
+            self._daily_target_reached = True
+        # HUGGING-PRESSURE (v1.10.0; operator's heavy momentum agent): for the CURRENT symbol at bar t, reward
+        # RIDING a >=3-TF shifted-SMA hug (dominant side, continuation) and PENALISE sitting out a CLEAN one on
+        # an INDEX/METAL. "Clean" = ALL 3 TFs agree AND momentum is NOT exhausted / extended-in-direction /
+        # decaying (the carve-out that prevents hard-forcing). MUTED once today's +2.5% goal is reached.
+        if (self._hug_bonus > 0.0 or self._hug_miss_pen > 0.0) and not self._daily_target_reached:
+            hp = sub.hug_pressure_matrix[t]; mm = sub.momentum_matrix[t]
+            dom = float(hp[_HUG_DOM])                                  # +1 / -1 / 0  (net hug side across TFs)
+            cont3 = float(hp[_HUG_CONT3])                            # 1.0 if ALL 3 TFs agree
+            loc = float(mm[_MOM_LOC])
+            conflict = (mm[_MOM_EXH] > HUG_EXH_THR or mm[_MOM_DEC] > HUG_DECAY_THR
+                        or (abs(loc) > HUG_LOC_THR and (loc > 0) == (dom > 0) and dom != 0.0))
+            clean = (cont3 > 0.5) and (dom != 0.0) and (not conflict)
+            if clean:
+                aligned = (self.position[sym] == dom)
+                if aligned and self._hug_bonus > 0.0:
+                    reward += self._hug_bonus                          # RIDE the continuation (heavy prior)
+                elif (not aligned) and self._hug_miss_pen > 0.0 and self._is_index_metal[sym]:
+                    reward -= self._hug_miss_pen                       # sat out a clean index/metal momentum
 
         terminated = False
         truncated = False
@@ -663,6 +704,7 @@ class PortfolioEnv:
                 self.acc.reset_day()
                 self._reset_phase2()                           # new day -> clear the day-lock / phase-2
                 self._day_progress_hwm = 0.0                   # new day -> reset the seek high-water mark
+                self._daily_target_reached = False             # new day -> hug penalty/obs un-muted again
                 # re-seed exposure for the NEW day from the carried position (holding across midnight = exposed)
                 self._day_had_exposure = any(self.position[s] != 0 for s in self.symbols)
                 self._cur_date = self._dates[self.t]
