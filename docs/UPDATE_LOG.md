@@ -3,6 +3,29 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] Stage 6 PROOF HARNESS: prove the policy learned the PRINCIPLE, not the recipe
+- **I (Issue):** A principle-learning critique (correct): parity + smoke tests prove the PLUMBING, not that the
+  bot learned momentum as a transferable idea. We moved from hard-coded RULES to hard-coded CONCEPTS (the 9
+  momentum scores) — the policy could still overfit MY formulas. There was zero measurement of this. Operator
+  chose the EVIDENCE-DRIVEN path: build the measuring stick BEFORE long training, let it gate any heavier
+  machinery (auxiliary heads / preference model).
+- **R (Rule):** No obs/reward/contract change — pure eval tooling on top of the existing held-out eval
+  (`jax_eval.evaluate` / `evaluate_won_day_streak`). Momentum-block ablation/perturbation edit the STATIC obs
+  tensor + rebuild the device-static; the rollout is untouched. `compute_momentum_scores` gained TUNABLE
+  kwargs (defaults reproduce v1.9.0 byte-for-byte — parity re-confirmed green).
+- **A (Application):**
+  - `jax_tpu/jax_proof.py` (NEW): `evaluate_ablation` (mean-impute a block, measure the dependence vs a control
+    block), `evaluate_perturbation` (rebuild momentum under a different recipe via `PERTURB_RECIPES`; small Δ =
+    principle, big Δ = recipe-memorization), `evaluate_holdout` (train-slice vs held-out-tail gap),
+    `counterfactual_probe` (sweep one feature → action-probability shift), `run_proof_report` (verdict table).
+  - `src/observation/momentum_scores.py`: parameterized (strength_level, exhaustion_span, tradeability_scale,
+    bias_atr_scale, structure_win, persistence_win, decay_win) so perturbation can change the recipe.
+  - `jax_tpu/tests/test_proof_harness.py` (NEW): ablation mean-imputes, perturbation changes the recipe,
+    holdout runs, counterfactual returns a valid distribution; eval runs end-to-end (7/7 green).
+- **C (Conclusion):** We can now turn "the plumbing works" into a measured answer to "did it learn the
+  principle?" — and only invest in auxiliary heads / a preference model if the numbers show memorization. Next:
+  baseline train, then read the proof report. Defaults byte-identical → Stage 1 parity re-confirmed.
+
 ## [2026-06-30] Momentum as a PRINCIPLE: v1.9.0 `momentum` perception block (9 scores, CPU + TPU)
 - **I (Issue):** The operator decomposed "momentum" into a decision tree of learnable sub-problems
   (is anything happening → which way → how strong → right spot → still alive) and insisted the bot learn the

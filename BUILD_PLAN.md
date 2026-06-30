@@ -53,16 +53,19 @@ survive → bias → entry quality → persistence/decay → adaptive selectivit
 - [ ] Train across multiple instruments / sessions / volatility regimes
 - [ ] **Randomize feature windows/thresholds slightly during training** so the bot can't anchor on one recipe
 
-### ⬜ Stage 6 — PROVE it learned a principle (THE MISSING PIECE — build the measuring stick EARLY)
-This is what tells us "Jordan" vs "refined heuristic machine." Cheap to build; it **drives every later spend**.
-- [ ] **Ablation:** zero-out the 9 momentum features at eval — graceful degradation = good; collapse = it only
-      learned dependence on my formulas
-- [ ] **Parameter perturbation:** shift CCI/MA lengths, band widths — does it still seek the same *kind* of
-      state? (principle) or fall apart? (recipe matching)
-- [ ] **Instrument / session / regime holdout:** train on some, test on others — does the style transfer?
-- [ ] **Counterfactual:** widen spread / weaken alignment / make the entry late / flip the HTF — do the
-      action preferences shift the right way?
-- [ ] **(Heavy, only if needed)** style-fidelity ranking against scripted-Jordan demonstrations
+### 🟡 Stage 6 — PROVE it learned a principle (HARNESS BUILT — `jax_tpu/jax_proof.py`)
+The measuring stick. Tells us "Jordan" vs "refined heuristic machine." **Built before training so it drives the
+spend.** Mechanics tested green (7/7); the *numbers* come after a baseline policy exists.
+- [x] **Ablation** — mean-impute the 9 momentum features at eval; compare the drop vs a control block
+      (`evaluate_ablation`). Outsized collapse = the policy only learned dependence on my formulas.
+- [x] **Parameter perturbation** — rebuild the momentum block with a *different recipe* (CCI level / windows)
+      and re-eval (`evaluate_perturbation` + `PERTURB_RECIPES`). Small Δ = principle; big Δ = recipe-matching.
+- [x] **Holdout** — train-slice vs held-out-tail pass-rate gap (`evaluate_holdout`); symbol/regime holdout via
+      a held-out symbol-subset psd.
+- [x] **Counterfactual** — sweep ONE feature (e.g. `alignment` −1→+1), watch the BUY/SELL preference shift
+      (`counterfactual_probe`). Right-direction shift = causal understanding.
+- [x] **One-call report** — `run_proof_report(...)` prints the verdict table + the read.
+- [ ] **(Heavy, only if the report demands it)** style-fidelity ranking vs scripted-Jordan demonstrations
 
 ### 🔭 EVIDENCE-GATED upgrades (build ONLY if Stage 6 shows the simple version fails)
 - [ ] **Outcome-based auxiliary heads** — predict the *future* (did the move persist? was the excursion good?),

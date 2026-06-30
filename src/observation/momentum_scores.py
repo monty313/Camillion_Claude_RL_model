@@ -56,11 +56,15 @@ _I = {n: _col(n) for n in (
     "5m__bb20_dev1.0_upper", "5m__bb20_dev1.0_middle")}
 
 
-def compute_momentum_scores(ind, close, time_ns=None) -> np.ndarray:
+def compute_momentum_scores(ind, close, time_ns=None, *, strength_level=160.0, exhaustion_span=120.0,
+                            tradeability_scale=100.0, bias_atr_scale=5.0,
+                            structure_win=120, persistence_win=30, decay_win=20) -> np.ndarray:
     """(T, 9) float32 momentum scores from the cached indicators + close. Leak-free; precompute-only.
 
     Windows/levels (CCI 50/100/160 ladder, range/persistence/decay lookbacks) are TUNABLE starting points --
-    the policy LEARNS the weighting; these only have to expose the right signal."""
+    the policy LEARNS the weighting; these only have to expose the right signal. The keyword knobs exist so the
+    PROOF HARNESS (Stage 6, `jax_tpu/jax_proof.py`) can PERTURB the recipe and test whether the policy learned
+    the PRINCIPLE (survives a different recipe) or just memorized THIS one. Defaults reproduce v1.9.0 exactly."""
     ind = np.asarray(ind, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64).ravel()
     T = close.shape[0]
@@ -81,19 +85,19 @@ def compute_momentum_scores(ind, close, time_ns=None) -> np.ndarray:
 
     # node 1 — tradeability: weighted multi-TF momentum magnitude (fast 5m + slower 30m/4h). 0 = dead/chop.
     # nz EACH input so a not-yet-warm higher TF (NaN) contributes 0 instead of poisoning the whole score.
-    tradeability = np.clip(0.5 * np.abs(nz(c5)) / 100.0 + 0.3 * np.abs(nz(c30)) / 100.0
-                           + 0.2 * np.abs(nz(c4h)) / 100.0, 0, 1)
+    tradeability = np.clip(0.5 * np.abs(nz(c5)) / tradeability_scale + 0.3 * np.abs(nz(c30)) / tradeability_scale
+                           + 0.2 * np.abs(nz(c4h)) / tradeability_scale, 0, 1)
 
     # node 2 — bias: higher-TF direction = how far price is above/below the 30m & 4h SMA200, in ATR units.
     d30 = nz((close - sma30) / (atr_s + _EPS)); d4h = nz((close - sma4h) / (atr_s + _EPS))
-    bias = np.clip((d30 + d4h) / 2.0 / 5.0, -1, 1)
+    bias = np.clip((d30 + d4h) / 2.0 / bias_atr_scale, -1, 1)
 
     # node 3 — alignment: net agreement of the CCI(30) direction across 5m / 30m / 4h.
     alignment = (np.sign(nz(c5)) + np.sign(nz(c30)) + np.sign(nz(c4h))) / 3.0
 
     # node 4 — strength (graded ladder, |5m CCI30| 0->160 = 0->1) and exhaustion (only beyond ~160 lights up).
-    strength = np.clip(np.abs(c5) / 160.0, 0, 1)
-    exhaustion = np.clip((np.abs(c5) - 160.0) / 120.0, 0, 1)
+    strength = np.clip(np.abs(c5) / strength_level, 0, 1)
+    exhaustion = np.clip((np.abs(c5) - strength_level) / exhaustion_span, 0, 1)
 
     # node 4 — location: 5m band position (extension vs pullback). +1 ~ riding the upper band (extended up),
     # -1 ~ lower band. The policy learns "with-trend + pulled back (location toward 0/opposite) = cheap entry."
@@ -102,17 +106,16 @@ def compute_momentum_scores(ind, close, time_ns=None) -> np.ndarray:
 
     cser = pd.Series(close)
     # node 4 — structure: where price sits in its recent range (0 = at lows, 1 = at highs -> near a breakout).
-    win = 120
-    rmin = cser.rolling(win, min_periods=2).min().to_numpy()
-    rmax = cser.rolling(win, min_periods=2).max().to_numpy()
+    rmin = cser.rolling(structure_win, min_periods=2).min().to_numpy()
+    rmax = cser.rolling(structure_win, min_periods=2).max().to_numpy()
     structure = np.clip(nz((close - rmin) / (rmax - rmin + _EPS)), 0, 1)
 
     # node 5 — persistence: how one-directional recent price has been (|mean sign of close changes| over ~30).
     sgn = np.sign(np.diff(close, prepend=close[0]))
-    persistence = np.clip(np.abs(pd.Series(sgn).rolling(30, min_periods=2).mean().to_numpy()), 0, 1)
+    persistence = np.clip(np.abs(pd.Series(sgn).rolling(persistence_win, min_periods=2).mean().to_numpy()), 0, 1)
 
     # node 6 — decay: 5m CCI rolled back from its recent peak -> momentum dying (1 = fully reverted to flat).
-    peak = pd.Series(np.abs(c5)).rolling(20, min_periods=2).max().to_numpy()
+    peak = pd.Series(np.abs(c5)).rolling(decay_win, min_periods=2).max().to_numpy()
     decay = np.clip(1.0 - np.abs(c5) / (peak + _EPS), 0, 1)
 
     out = np.stack([tradeability, bias, alignment, strength, exhaustion,
