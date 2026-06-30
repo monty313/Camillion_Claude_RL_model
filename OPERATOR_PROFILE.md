@@ -247,3 +247,38 @@ sizes up; comfortable doing nothing until momentum is clearly there.
 
 > When this table is filled, each row is a concrete change to a reward weight, an alpha, an obs block, or a
 > rail — applied, verified bar-for-bar (CPU↔JAX), and trained. That's how we keep the bot calibrated to you.
+
+---
+
+## Round 2 — answers (Jordan's momentum spec, draft; thresholds are LEARNED not hard-coded)
+
+> Operator directive: **the bot must LEARN these PRINCIPLES, not obey the literal numbers.** The values below
+> are starting points / sanity checks for what the policy should discover; only the iron rules become rails.
+
+- **Momentum = CCI alignment (fast CCI30 + slow CCI100, multi-TF) + directional structure (HH/HL on 5m) +
+  staying on the trend side of the 5m BB(10,1).** Primary read: CCI(30)/CCI(100) on 5m; 15m & 30m as the
+  "bigger engine" context; 1h mainly for levels.
+- **CCI ladder (per TF, |CCI| in the trend direction):** <50 = no-trade chop (RAIL); 50–100 = starter trend
+  (ok if a higher TF is stronger); 100–160 = sweet-spot (preferred entries); >160 = extreme/blow-off (tradeable
+  early, but take profit / don't chase late).
+- **Entry (2-TF baseline, long):** price > 15m 200 SMA AND 15m CCI(30)&(100) > +50 AND 5m CCI(30) > +100 &
+  CCI(100) > +50 AND 5m closes above nearest 1h high AND breakout candle is a real thrust (range ≥ ~1.2× the
+  20-bar avg, body ≥ ~60% of range) AND spread ≤ thin. Shorts mirror.
+- **Breakout candle size matters** — a marginal poke through ≠ a thrust bar.
+- **Momentum dying (stop adding / exit):** 5m CCI(30) falls back inside ±50 after being >100; OR 5m structure
+  flips (first counter-trend swing); OR price closes back through the opposite 5m band/midline.
+- **After a loss:** require a THIRD timeframe (30m, the "big engine") to agree — stricter confluence until the
+  next net winner on that symbol/direction. Never increase size after a loss.
+- **Setup 2 (no 1h breakout):** HTF momentum (15m+30m CCI up) + a 5m impulse leg (CCI30 > 100) + a shallow
+  pullback to the 5m lower band (CCI30 stays > 0) + a bullish rejection candle → enter. Shorts mirror.
+- **Profit:** ~50% off at T1 (opposite 5m band / ~1R), rest to T2 (next 1h level / ~2R); breakeven after ~1R;
+  full exit on T2, momentum-death (after ≥1R), or session end / spread widening.
+- **Stop:** nearest 5m swing (low/high, N=2–3 bars each side) sized to 0.1–0.2% equity; use the 1h level only
+  if it's tighter and still respects the risk cap.
+- **Good day:** NO profit cap — keeps pressing momentum under the −4% daily-equity rail (leans "pure Jordan,"
+  not the strict +2.5% auto-bank — a design decision to resolve).
+- **Correlation:** no explicit cap today; control is 0.1–0.2%/trade + the −4% daily stop. (Engineer may add a
+  total-open-risk guardrail.)
+- **News:** not yet decided — choose block-around-news vs trade-through.
+- **Timeframes:** Jordan thinks in 15m (200 SMA) + 1h (structure); the engine has 1m/5m/30m/4h/1d. Add 15m/1h
+  for an exact replica, OR teach the PRINCIPLE across existing TFs (recommended) + add a STRUCTURE sense.
