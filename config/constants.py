@@ -195,6 +195,16 @@ OBS_BLOCK_CONSISTENCY: int = 4
 # obs tensor, lifted byte-identical into the JAX env (auto parity). APPENDED -> obs indices 0..516 UNCHANGED;
 # new indices 517..525. DELIBERATE contract bump (operator 2026-06-30): a v1.8.0 policy must retrain. ---
 OBS_BLOCK_MOMENTUM: int = 9
+# --- v1.10.0: SHIFTED-SMA HUGGING-PRESSURE block (15 floats). The operator's "Shifted SMA Hugging Pressure"
+# agent (heavy). Across 5m / 15m / 1h, a fast SMA(2) of High & Low shifted forward 1 bar forms an envelope;
+# price that keeps HUGGING one side (never touching the opposite band) for consecutive bars = sustained
+# directional pressure; 2+ timeframes agreeing = strong continuation. Per-TF [side, hug_count, respecting] x3
+# (9) + aggregate [agree_bull, agree_bear, net_pressure, strength, continuation_2plus, dominant_side] (6). 15m
+# & 1h are a RESAMPLED side-channel from the 1m High/Low (NOT new full obs timeframes). STATIC (market-only) ->
+# placed in the static obs tensor, lifted byte-identical into the JAX env (auto parity). APPENDED -> obs
+# indices 0..525 UNCHANGED; new indices 526..540. DELIBERATE bump (operator 2026-06-30): a v1.9.0 policy
+# retrains. The HEAVY action prior + indices/metals miss-penalty live in the reward (portfolio_env), not here. ---
+OBS_BLOCK_HUG_PRESSURE: int = 15
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -216,9 +226,10 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("trade_risk",       OBS_BLOCK_TRADE_RISK),   # v1.7.0 (appended -> 0..498 indices unchanged)
     ("consistency",      OBS_BLOCK_CONSISTENCY),  # v1.8.0 (appended -> 0..512 indices unchanged)
     ("momentum",         OBS_BLOCK_MOMENTUM),     # v1.9.0 (appended -> 0..516 indices unchanged)
+    ("hug_pressure",     OBS_BLOCK_HUG_PRESSURE), # v1.10.0 (appended -> 0..525 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 526 (v1.9.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 541 (v1.10.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.9.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.10.0"

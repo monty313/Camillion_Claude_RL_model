@@ -39,6 +39,7 @@ from src.risk import breach_detector as BD
 from src.observation import builder as OB
 from src.observation import trade_risk as TR
 from src.observation.momentum_scores import compute_momentum_scores
+from src.observation.hug_pressure import compute_hug_pressure
 from src.indicators.bollinger import bollinger
 
 
@@ -215,6 +216,8 @@ class TradingEnv:
         # v1.9.0: MOMENTUM-PERCEPTION scores (9, one per the operator's momentum decision tree) -- STATIC
         # per-bar features the policy LEARNS to act on (principle, not hard-coded CCI rules).
         self.momentum_matrix = compute_momentum_scores(self.ind, self.close)
+        # v1.10.0: SHIFTED-SMA HUGGING-PRESSURE (15, across 5m/15m/1h from the 1m High/Low) -- STATIC.
+        self.hug_pressure_matrix = compute_hug_pressure(self.ohlc_matrix, self.time_ns)
         self._precompute_cross_asset()
         self._precompute_recent_context()
         self._derive_band_refs()
@@ -298,7 +301,9 @@ class TradingEnv:
                           # v1.7.0: 1m+5m Bollinger(10,1) bands (trade-risk block + BB hard stop)
                           "bb10_1m_up", "bb10_1m_lo", "bb10_5m_up", "bb10_5m_lo",
                           # v1.9.0: momentum-perception scores (9) -- static obs block
-                          "momentum_matrix")
+                          "momentum_matrix",
+                          # v1.10.0: shifted-SMA hugging-pressure scores (15) -- static obs block
+                          "hug_pressure_matrix")
 
     def export_precomputed(self) -> dict:
         """Return {name: ndarray} for the cache (the expensive precompute output, read-only)."""
@@ -558,6 +563,7 @@ class TradingEnv:
             # (only days_elapsed is real). The shared-pot PortfolioEnv fills these for real.
             "consistency": WL.consistency_features(0, 0, self._days_elapsed),
             "momentum": self.momentum_matrix[i],   # v1.9.0: 9 momentum-perception scores (static)
+            "hug_pressure": self.hug_pressure_matrix[i],   # v1.10.0: 15 hugging-pressure scores (static)
         })
 
     def _portfolio_block(self):

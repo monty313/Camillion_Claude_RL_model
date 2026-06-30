@@ -48,5 +48,5 @@ def test_regime_pulse_wiring_slots_and_479():
     s2 = reg_pull(reg)                         # -> slot 2
     assert (s0, s1, s2) == (0, 1, 2)
     env = TradingEnv(ind, close, t, reg, warmup=210); o, _ = env.reset()
-    assert o.shape == (526,)                                   # contract unchanged
+    assert o.shape == (541,)                                   # contract unchanged
     assert o[OC.BLOCK_SLICES["alpha_mask"]][s1] == 1.0 and o[OC.BLOCK_SLICES["alpha_mask"]][s2] == 1.0           # both slots occupied (mask)

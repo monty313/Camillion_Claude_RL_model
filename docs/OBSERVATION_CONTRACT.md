@@ -1,4 +1,4 @@
-# OBSERVATION CONTRACT — v1.9.0  (526 float32)
+# OBSERVATION CONTRACT — v1.10.0  (541 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
@@ -9,10 +9,12 @@
 > `recent_context`) → v1.6.0 (499: 20-float raw `ohlc` block) → v1.7.0 (513: 14-float `trade_risk` block)
 > → v1.8.0 (517): appended the 4-float `consistency` block (the bot's multi-day FTMO standing / won-day
 > streak, so it can VALUE and PROTECT the streak with the stretched discount horizon)
-> → **v1.9.0 (526): appended the 9-float `momentum` block — momentum-PERCEPTION scores (one per the
+> → v1.9.0 (526): appended the 9-float `momentum` block — momentum-PERCEPTION scores (one per the
 > operator's momentum decision tree), so the policy learns the PRINCIPLE of momentum, not hard-coded CCI
-> rules (see `JORDAN_PRINCIPLES.md`).**
-> Appended blocks leave indices 0..(prev-1) unchanged (a v1.8.0 policy must retrain — shape changed).
+> rules (see `JORDAN_PRINCIPLES.md`)
+> → **v1.10.0 (541): appended the 15-float `hug_pressure` block — the operator's "Shifted SMA Hugging
+> Pressure" agent (heavy): shifted-SMA(2)-on-High/Low envelope hug across 5m/15m/1h (15m & 1h resampled).**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.9.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -39,7 +41,9 @@
 
 | 18 | `momentum` | 9 | **v1.9.0**: momentum-PERCEPTION scores — the operator's "momentum" decomposed into learnable sub-problems (a decision tree), one per-bar SCORE each, so the policy CONSUMES momentum (it doesn't reinvent it from raw indicators) and learns the PRINCIPLE, not a hard CCI threshold (see `JORDAN_PRINCIPLES.md`). `mom_tradeability` (is momentum present? graded 0..1), `mom_bias` (higher-TF direction, ±1), `mom_alignment` (do 5m/30m/4h agree? ±1), `mom_strength` (graded |CCI| ladder 0..1), `mom_exhaustion` (blow-off risk past ~160), `mom_location` (extension vs pullback = 5m band position, ±1), `mom_structure` (position in the recent range → near a breakout, 0..1), `mom_persistence` (recent follow-through, 0..1), `mom_decay` (momentum dying = CCI rolled back from its peak, 0..1). **STATIC** (market-only, per-bar) → computed once in `src/observation/momentum_scores.py`, lifted byte-identical into the JAX env (auto parity; no jnp twin). Levels/windows are TUNABLE — the policy learns the weighting. |
 
-**Total = 526.**
+| 19 | `hug_pressure` | 15 | **v1.10.0**: the operator's "Shifted SMA Hugging Pressure" agent (HEAVY). Across **5m / 15m / 1h**, a fast `SMA(2)` of High and Low **shifted forward 1 bar** forms an envelope; price that keeps HUGGING one side (never touching the opposite band) for consecutive bars = sustained directional pressure; **2+ TFs agreeing = strong continuation**. Per-TF (×3): `hug_{tf}_side` (±1 bull/bear hug), `hug_{tf}_count` (consecutive no-opposite-touch bars / 20), `hug_{tf}_respect` (current bar still on side). Aggregate (×6): `hug_agree_bull`, `hug_agree_bear`, `hug_net_pressure` (signed, count-weighted), `hug_strength` (0..1), `hug_continuation_2plus` (≥2 TFs agree), `hug_dominant_side` (±1). **15m & 1h are a RESAMPLED side-channel from the 1m High/Low** (NOT new full obs timeframes — engine still runs 1m/5m/30m/4h/1d). **STATIC** (market-only, per-bar) → computed once in `src/observation/hug_pressure.py` from the OHLC aux, lifted byte-identical into the JAX env (auto parity; no jnp twin). The HEAVY action prior + indices/metals miss-penalty live in the reward (`portfolio_env`), not here. |
+
+**Total = 541.**
 
 > **The trade-risk block is where the BB hard stop + risk-based sizing + band-stack/re-entry bonuses live.**
 > The 1m+5m BB(10,1) bands it needs are NOT in the 220-indicator cache (BB periods there are 20 & 200 only);

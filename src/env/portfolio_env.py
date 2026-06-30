@@ -463,6 +463,7 @@ class PortfolioEnv:
             "consistency": WL.consistency_features(            # v1.8.0: multi-day FTMO standing (won-day streak)
                 self._daily_pass_streak, self._days_won, self._days_elapsed),
             "momentum": sub.momentum_matrix[i],                # v1.9.0: 9 momentum-perception scores (static)
+            "hug_pressure": sub.hug_pressure_matrix[i],        # v1.10.0: 15 hugging-pressure scores (static)
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----

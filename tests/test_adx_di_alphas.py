@@ -1,6 +1,6 @@
 # ADX-DI alignment alphas (slots 16/17) + the v1.7.0 OHLC observation block + the DI side-channel.
 # Locks: the -DI vs +DI agreement logic, slot wiring, that DI feeds the alphas via aux (not the obs),
-# that the raw OHLC block is present + leak-free, and that the obs shape is 526.
+# that the raw OHLC block is present + leak-free, and that the obs shape is 541.
 import numpy as np
 import pandas as pd
 from config import constants as C
@@ -57,13 +57,13 @@ def _env(df, aux=True, warmup=300):
     return TradingEnv(ind, df["close"].values.astype("float32"), t, reg, warmup=warmup, aux=a), reg
 
 
-def test_slots_16_17_wired_and_obs_526():
+def test_slots_16_17_wired_and_obs_541():
     reg = AlphaRegistry(); register_all(reg)
     names = [s.name if s else None for s in reg._slots]
     assert names[16] == "adx_di_align_5m_30m" and names[17] == "adx_di_align_30m_4h"
     env, _ = _env(_df())
     o, _ = env.reset()
-    assert o.shape == (526,) and np.all(np.isfinite(o))
+    assert o.shape == (541,) and np.all(np.isfinite(o))
     assert o[OC.BLOCK_SLICES["alpha_mask"]][16] == 1.0 and o[OC.BLOCK_SLICES["alpha_mask"]][17] == 1.0
 
 
@@ -95,7 +95,7 @@ def test_ohlc_block_present_and_matches_aux():
 def test_obs_without_aux_has_zero_ohlc_but_valid_shape():
     env, _ = _env(_df(), aux=False)
     o, _ = env.reset()
-    assert o.shape == (526,) and np.all(np.isfinite(o))
+    assert o.shape == (541,) and np.all(np.isfinite(o))
     assert np.all(o[OC.BLOCK_SLICES["ohlc"]] == 0.0)   # no aux -> OHLC block is zeros (still valid)
 
 

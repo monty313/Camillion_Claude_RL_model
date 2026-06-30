@@ -108,9 +108,9 @@ def test_from_disk_worker_builds_env_via_cache():
     # 4-tuple per symbol (with aux) -- EXACTLY what the worker loads -> the cache the parent saves HITS.
     sd = align_symbol_data({s: (*load_cache(dcache, s), load_aux(dcache, s)) for s in syms})
     build_portfolio_subs(sd, _reg, progress=False, feature_cache_dir=fcache)   # parent populates the cache
-    # the worker rebuilds purely from disk -> must be a cache HIT and a valid 526 obs
+    # the worker rebuilds purely from disk -> must be a cache HIT and a valid 541 obs
     env = make_portfolio_gym_env_from_disk(dcache, syms, feature_cache_dir=fcache, warmup=0)
     obs, _ = env.reset()
-    assert obs.shape == (526,) and np.all(np.isfinite(obs))
+    assert obs.shape == (541,) and np.all(np.isfinite(obs))
     ind, close, tns, aux = sd["EURUSD"]
     assert FC.load(fcache, "EURUSD", ind, close, tns, _reg(), aux=aux) is not None   # cache populated + fingerprint matches

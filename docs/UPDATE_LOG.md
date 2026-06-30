@@ -3,6 +3,29 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] "Shifted SMA Hugging Pressure" agent — Part A: v1.10.0 `hug_pressure` obs block (15, CPU+TPU)
+- **I (Issue):** Operator's heavy momentum agent (the green/red shifted-MA-on-High/Low envelope on the US30 M5
+  chart): across 5m/15m/1h, a fast SMA(2) of High & Low shifted forward 1 bar forms an envelope; price hugging
+  one side (never touching the opposite band) for consecutive bars = sustained pressure; 2+ TFs agreeing =
+  strong continuation. The bot couldn't SEE this. Operator: "add this agent, make it very very heavy."
+- **R (Rule):** Obs-contract bump (v1.9.0 526 → **v1.10.0 541**, APPENDED → indices 0..525 unchanged; a v1.9.0
+  policy retrains). Adds 15m & 1h as a contained RESAMPLED side-channel from the 1m High/Low (NOT new full obs
+  timeframes — engine still runs 1m/5m/30m/4h/1d; this reverses the earlier "not yet" per operator request via
+  AskUserQuestion). STATIC (market-only) → auto CPU↔JAX parity (no jnp twin). No FTMO numbers touched. The
+  HEAVY reward (prior bonus + indices/metals miss-penalty) is Part B (portfolio_env), default-ON.
+- **A (Application):**
+  - `src/observation/hug_pressure.py` (NEW): `compute_hug_pressure(ohlc_matrix, time_ns)` → (T, 15) leak-free
+    float32. Per-TF [side, hug_count_norm, respecting] ×3 + aggregate [agree_bull, agree_bear, net_pressure,
+    strength, continuation_2plus, dominant_side]. Resample (pandas) is precompute-only; leak-free (envelope
+    shift(1) + last-CLOSED tf-bar alignment). No-OHLC env → neutral zeros.
+  - `config/constants.py`: `OBS_BLOCK_HUG_PRESSURE=15`, `OBS_TOTAL_SIZE=541`, version v1.10.0;
+    `observation_contract` names. `TradingEnv._precompute` builds `hug_pressure_matrix` (+ `_PRECOMPUTED_ATTRS`
+    + `feature_cache` fc-v3→fc-v4); both CPU envs place `"hug_pressure"`; `jax_static_features` place() (STATIC);
+    `jax_config` OBS_SIZE=541, N_STATIC_OBS=483.
+- **C (Conclusion):** The policy now PERCEIVES the multi-TF shifted-SMA hug as a first-class momentum-
+  continuation signal. Verified: 34 CPU (incl. hug bounds/leak-free/trend-direction) + 14 JAX (single +
+  portfolio parity + proof harness) green at 541; static block ⇒ auto parity. Part B (the heavy reward) next.
+
 ## [2026-06-30] Stage 6 PROOF HARNESS: prove the policy learned the PRINCIPLE, not the recipe
 - **I (Issue):** A principle-learning critique (correct): parity + smoke tests prove the PLUMBING, not that the
   bot learned momentum as a transferable idea. We moved from hard-coded RULES to hard-coded CONCEPTS (the 9
