@@ -3,6 +3,26 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] Super-scalper Stage 2a: env TP/SL BRACKET model + risk-clamped lot (CPU; default-OFF)
+- **I (Issue):** The multi-head actor (direction + TP + SL + lot) needs the ENV to actually execute brackets
+  and size the lot — the env had no TP/SL concept and a fixed-rail size. Operator requirements: TP/SL prices
+  LOCKED at entry (no trailing); lot HARD-CLAMPED so open risk (lot x SL price-distance) <= 1% of CURRENT
+  equity, enforced after the head output, clipped silently + logged; isolated fed-values test now; log every
+  bracket open/close with tp_pct/sl_pct/rr/lot_raw/lot_used/clamped/session_active/alignment_at_entry.
+- **R (Rule):** Default-OFF -> existing discrete behavior + CPU↔JAX parity UNCHANGED (verified). No obs/contract
+  change. `step()` gained optional `tp01/sl01/lot01` in [0,1] (ignored unless `bracket_enabled`). Bounds are
+  named constants in `config/constants.py` (TP/SL_MIN/MAX_PCT, LOT_MIN/MAX_MULT, MAX_TRADE_RISK_PCT). JAX
+  mirror + bracket-ON parity = Stage 2b.
+- **A (Application):** `src/env/portfolio_env.py`: `bracket_enabled` flag; on a new open the env maps the [0,1]
+  heads -> bounded TP/SL prices (locked) + lot = `lot_mult*base` clamped to the 1%-risk cap; `_apply_brackets()`
+  (mirrors `_apply_bb_hard_stop`) closes at the LOCKED level on an intrabar 1m high/low touch (SL checked first;
+  entry bar skipped); `_bracket_log` records every open/close with the required fields. Clears the bracket on a
+  manual close. `config/constants.py`: the action-bound constants (NOT obs shape).
+- **C (Conclusion):** The env can now execute the actor's TP/SL/lot decisions with a hard 1%-risk rail, fully
+  testable before the policy exists. Verified: `tests/test_brackets.py` (TP exits at locked TP, SL at locked SL,
+  the lot clamp caps risk at 1% equity deterministically, default-OFF ignores the args) + full CPU suite + JAX
+  parity unchanged (brackets OFF). NEXT: Stage 2b (JAX bracket mirror + bracket-ON parity), then Stage 3/4.
+
 ## [2026-06-30] Super-scalper Stage 1: v1.12.0 `scalp_momentum` block (4) + over-trading penalty (CPU+TPU)
 - **I (Issue):** The "super scalper" brief wants a multi-head TP/SL/lot actor (a from-scratch action-space
   rewrite — staged separately) plus a 1m entry layer + over-trading discipline + session/spread/news features.

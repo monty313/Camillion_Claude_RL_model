@@ -52,7 +52,12 @@ from src.observation import trade_risk as TR
 from src.observation.hug_pressure import (IDX_DOMINANT_SIDE as _HUG_DOM, IDX_CONTINUATION_3PLUS as _HUG_CONT3,
                                           HUG_EXH_THR, HUG_DECAY_THR, HUG_LOC_THR)
 from src.observation.momentum_scores import (IDX_EXHAUSTION as _MOM_EXH, IDX_LOCATION as _MOM_LOC,
-                                             IDX_DECAY as _MOM_DEC)
+                                             IDX_DECAY as _MOM_DEC, MOMENTUM_NAMES as _MOM_NAMES)
+from src.data.aux_features import OHLC_COLUMNS as _OHLC_COLS
+
+_MOM_ALIGN = _MOM_NAMES.index("mom_alignment")   # for the bracket-open log (alignment_score_at_entry)
+_OHLC_H1 = _OHLC_COLS.index("1m__high")          # current 1m bar high/low -> bracket TP/SL intrabar checks
+_OHLC_L1 = _OHLC_COLS.index("1m__low")
 from src.strategies.alpha_pack import CONVICTION_ALIGN_CAP
 from src.env.trading_env import TradingEnv
 
@@ -158,8 +163,13 @@ class PortfolioEnv:
                  window: int | None = None, random_window: bool = False, seed: int | None = None,
                  subs: dict | None = None, continue_after_pass: bool = False,
                  bb_stop_enabled: bool = False, risk_per_trade_pct: float | None = None,
-                 open_gate: bool = False):
+                 open_gate: bool = False, bracket_enabled: bool = False):
         self.cfg = cfg or load_active_config()
+        # v1.12.0 MULTI-HEAD ACTOR: when ON, step() accepts continuous tp01/sl01/lot01 in [0,1] -> the env maps
+        # them to bounded TP/SL prices (LOCKED at entry) + a risk-clamped lot. Default OFF -> step ignores them
+        # and behaves exactly as the discrete env (parity preserved). Every bracket open/close is logged.
+        self._bracket_on = bool(bracket_enabled)
+        self._bracket_log: list[dict] = []
         # breach cliff + pass bonus now default from the config (breach 0.2, pass 1.0); explicit args override.
         self.breach_penalty = float(breach_penalty if breach_penalty is not None
                                     else getattr(self.cfg, "breach_penalty", 1.0))
@@ -336,6 +346,10 @@ class PortfolioEnv:
         self._entry_band_short = {s: False for s in self.symbols}
         self._entry_reentry = {s: 0 for s in self.symbols}          # entered as a with-trend re-entry?
         self._entry_confirms = {s: 0 for s in self.symbols}         # # of the 3 strong-setup alphas confirming at entry
+        # v1.12.0 bracket: TP/SL prices LOCKED at entry (0.0 = no bracket). lot is held in _trade_size.
+        self._tp_price = {s: 0.0 for s in self.symbols}
+        self._sl_price = {s: 0.0 for s in self.symbols}
+        self._bracket_log = []                                      # fresh bracket open/close log per episode
 
     @staticmethod
     def _atr_at(sub, t: int) -> float:
@@ -442,6 +456,40 @@ class PortfolioEnv:
             self.position[s] = 0
         self._mark()
 
+    def _apply_brackets(self) -> None:
+        """v1.12.0 BRACKET EXIT: close any bracketed position whose bar RANGE touched its locked TP or SL,
+        realizing at the LEVEL price (not the close). SL is checked first (conservative: a bar that spans both
+        is treated as the stop). Skips the entry bar. Uses the current 1m bar's high/low. OFF unless
+        bracket_enabled. Mirrors _apply_bb_hard_stop (mechanical exit -> no shaping bonus)."""
+        if not self._bracket_on:
+            return
+        t = self.t
+        for s in self.symbols:
+            p = self.position[s]
+            if p == 0 or self._tp_price[s] == 0.0 or t <= self._entry_bar[s]:
+                continue
+            sub = self.subs[s]
+            hi = float(sub.ohlc_matrix[t][_OHLC_H1]); lo = float(sub.ohlc_matrix[t][_OHLC_L1])
+            tp = self._tp_price[s]; sl = self._sl_price[s]
+            level = None; hit = None
+            if p > 0:
+                if lo <= sl:   level, hit = sl, "SL"      # SL first (a bar spanning both = stopped)
+                elif hi >= tp: level, hit = tp, "TP"
+            else:
+                if hi >= sl:   level, hit = sl, "SL"
+                elif lo <= tp: level, hit = tp, "TP"
+            if level is None:
+                continue
+            ts = self._trade_size[s]
+            realized = p * (level - self.entry[s]) * ts - sub.cost_frac * level * ts
+            self.th.record_close(self.acc, realized, bar_index=t)
+            self._last_close_bar[s] = int(t); self._last_close_dir[s] = int(p); self._last_exit_px[s] = float(level)
+            self.position[s] = 0
+            self._tp_price[s] = 0.0; self._sl_price[s] = 0.0
+            self._bracket_log.append({"event": "close", "symbol": s, "bar": int(t), "hit": hit,
+                                      "level": float(level), "pnl": float(realized)})
+        self._mark()
+
     def _set_aggregates(self):
         pos = self.position
         S = max(1, len(self.symbols))
@@ -489,7 +537,9 @@ class PortfolioEnv:
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----
-    def step(self, action: int):
+    def step(self, action: int, tp01: float = 0.0, sl01: float = 0.0, lot01: float = 0.0):
+        # tp01/sl01/lot01 are the continuous heads in [0,1]; USED only when bracket_enabled AND a new BUY/SELL
+        # opens this step. Default 0 -> ignored (discrete-env behaviour + parity preserved).
         sym, sub = self._cur()
         t = self.t
         eq_before = self.acc.equity
@@ -514,6 +564,7 @@ class PortfolioEnv:
                 self._last_close_bar[sym] = int(t)                      # v1.7.0 re-entry context
                 self._last_close_dir[sym] = int(old_dir)
                 self._last_exit_px[sym] = float(sub.close[t])
+                self._tp_price[sym] = 0.0; self._sl_price[sym] = 0.0    # v1.12.0: clear the bracket on a manual close
                 # SHAPING bonuses (paid only on a profitable close with the DAY net up; capped at the trade PnL):
                 #   alpha USE+BEAT (cfg.alpha_*), band-stack ENTER bonus (cfg.band_stack_bonus), re-entry nudge.
                 day0 = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance
@@ -547,17 +598,39 @@ class PortfolioEnv:
                 self._entry_agreed.pop(sym, None); self._entry_alpha_dir.pop(sym, None)
             self.position[sym] = target
             if target != 0:
-                self.entry[sym] = float(sub.close[t])
-                # v1.7.0 RISK-BASED sizing (gated): size so a BB(10,1) stop-out loses ~risk_per_trade_pct% of
-                # the pot, capped at the configured size. OFF (risk_per_trade_pct None) -> trade_size == base.
+                entry_px = float(sub.close[t])
+                self.entry[sym] = entry_px
                 base = float(sub.position_size)
-                sb = float(sub.bb10_1m_lo[t] if target > 0 else sub.bb10_1m_up[t])   # the hard-stop band at entry
-                ts = base
-                if self._risk_pct is not None and np.isfinite(sb):
-                    dist = abs(float(sub.close[t]) - sb)
-                    if dist > 1e-12:
-                        risk_dollars = self.cfg.starting_balance * (self._risk_pct / 100.0)
-                        ts = min(base, risk_dollars / dist)
+                sb = float(sub.bb10_1m_lo[t] if target > 0 else sub.bb10_1m_up[t])  # BB(10,1) band (trade-risk obs)
+                if self._bracket_on:
+                    # v1.12.0 BRACKET: map the [0,1] heads -> bounded TP/SL distances, LOCK the prices at entry
+                    # (no trailing), size the lot, then HARD-CLAMP it so open risk (lot x SL price-distance)
+                    # never exceeds MAX_TRADE_RISK_PCT of CURRENT equity. The agent's raw lot is clipped silently.
+                    tp_pct = C.TP_MIN_PCT + min(max(float(tp01), 0.0), 1.0) * (C.TP_MAX_PCT - C.TP_MIN_PCT)
+                    sl_pct = C.SL_MIN_PCT + min(max(float(sl01), 0.0), 1.0) * (C.SL_MAX_PCT - C.SL_MIN_PCT)
+                    self._tp_price[sym] = entry_px * (1.0 + target * tp_pct)
+                    self._sl_price[sym] = entry_px * (1.0 - target * sl_pct)
+                    lot_mult = C.LOT_MIN_MULT + min(max(float(lot01), 0.0), 1.0) * (C.LOT_MAX_MULT - C.LOT_MIN_MULT)
+                    lot_raw = lot_mult * base
+                    risk_per_unit = sl_pct * entry_px                       # price distance to SL (trade_size = $/price)
+                    max_by_risk = (C.MAX_TRADE_RISK_PCT / 100.0 * self.acc.equity) / max(risk_per_unit, 1e-12)
+                    ts = min(lot_raw, max_by_risk)
+                    clamped = bool(ts < lot_raw - 1e-12)
+                    self._bracket_log.append({
+                        "event": "open", "symbol": sym, "bar": int(t), "dir": int(target),
+                        "tp_pct": tp_pct, "sl_pct": sl_pct, "rr": tp_pct / max(sl_pct, 1e-12),
+                        "lot_raw": float(lot_raw), "lot_used": float(ts), "clamped": clamped,
+                        "session_active": int(sub.time_feats[t][4] > 0.5 or sub.time_feats[t][5] > 0.5),
+                        "alignment_score_at_entry": float(sub.momentum_matrix[t][_MOM_ALIGN])})
+                else:
+                    # v1.7.0 RISK-BASED sizing (gated): size so a BB(10,1) stop-out loses ~risk_per_trade_pct% of
+                    # the pot, capped at the configured size. OFF (risk_per_trade_pct None) -> trade_size == base.
+                    ts = base
+                    if self._risk_pct is not None and np.isfinite(sb):
+                        dist = abs(entry_px - sb)
+                        if dist > 1e-12:
+                            risk_dollars = self.cfg.starting_balance * (self._risk_pct / 100.0)
+                            ts = min(base, risk_dollars / dist)
                 self._trade_size[sym] = ts
                 ecost = sub.cost_frac * sub.close[t] * ts
                 self.acc.balance -= ecost
@@ -600,6 +673,7 @@ class PortfolioEnv:
             self.t = min(t + 1, self.T - 1)
             bar_advanced = True
         self._mark()
+        self._apply_brackets()                                 # v1.12.0: intrabar TP/SL bracket exits (no-op if OFF)
         self._update_excursions()                              # v1.7.0: track each open trade's MFE/MAE (ATR)
         if any(self.position[s] != 0 for s in self.symbols):   # anti-hide: was the bot exposed today?
             self._day_had_exposure = True

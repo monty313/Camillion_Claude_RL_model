@@ -123,6 +123,19 @@ ACTION_CLOSE: int = 3
 ACTIONS: tuple[str, ...] = ("HOLD", "BUY", "SELL", "CLOSE")
 N_ACTIONS: int = len(ACTIONS)
 
+# --- v1.12.0 MULTI-HEAD ACTOR: continuous TP / SL / lot heads (the super-scalper) ---
+# The policy outputs the discrete direction head + 3 CONTINUOUS heads, each a sigmoid in [0,1] that the ENV
+# maps to a bounded range here (defined ONCE; never inline). TP/SL are LOCKED at entry (no trailing). The lot
+# is hard-clamped so open risk (lot_size x SL price-distance) never exceeds MAX_TRADE_RISK_PCT of equity.
+# These are ACTION bounds, NOT obs shape -> they do NOT bump the observation contract.
+TP_MIN_PCT: float = 0.0005      # take-profit distance from entry, as a fraction of price (min 0.05%)
+TP_MAX_PCT: float = 0.02        #                                                          (max 2.0%)
+SL_MIN_PCT: float = 0.0005      # stop-loss distance from entry (min 0.05%)
+SL_MAX_PCT: float = 0.01        #                              (max 1.0%)
+LOT_MIN_MULT: float = 0.1       # lot size as a multiple of the symbol's calibrated base size (min)
+LOT_MAX_MULT: float = 3.0       #                                                              (max)
+MAX_TRADE_RISK_PCT: float = 1.0 # HARD clamp: open risk (lot x SL-distance) <= this % of current equity
+
 # --- Signal memory depth (last N bars of net signal balance) ---
 SIGNAL_MEMORY_LAGS: int = 5
 
