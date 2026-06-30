@@ -145,9 +145,96 @@ _Answers:_
 
 ---
 
-## Part C — synthesized profile  *(paste Perplexity's output here, or your own write-up)*
+## Part C — synthesized profile  *(round 1, via Perplexity — Setup 2 was truncated; momentum logic pending Round 2)*
 
-_(to fill)_
+**Jordan — high-frequency intraday momentum scalper.** Targets ~+2.5–3.5% good days; hard −4% daily *equity*
+drawdown stop (open P&L counts). 0.1–0.2% risk/trade off a stop; 30+ trades/day. Trades only thin-spread,
+high-liquidity windows (London, NY, the London–NY overlap, the 9:30 NY cash open). Instrument-agnostic — any
+symbol that passes spread + momentum filters.
+
+**Decision process (per session):**
+1. **Risk gate** — equity vs prior day + open P&L; if day drawdown ≤ −4% → stop (no new entries). Set
+   per-trade risk to 0.1–0.2% of equity (size = risk$ ÷ stop distance).
+2. **Time & spread gate** — only thin-spread, high-liquidity sessions; reject symbols whose spread exceeds the
+   "thin" threshold.
+3. **Symbol scan** — broad universe (FX, indices, maybe crypto CFDs); keep those with tight spreads + clear
+   directional momentum on ≥2 timeframes.
+4. **Trend filter** — **15m 200 SMA**: price above → longs only; below → shorts only. No counter-trend.
+5. **1h structure** — mark nearest 1h swing high/low; longs focus on breakouts above the 1h high, shorts below
+   the 1h low.
+6. **Momentum alignment** — baseline ≥2 aligned timeframes (15m + 5m, same direction as the 15m SMA filter);
+   **after a loss, upgrade to 3** (1h + 15m + 5m). Low-momentum days → shift to lower TFs (5m/30m) + low-spread
+   indices, still requiring clear momentum.
+7. **A+ setup (NY-open 1h breakout)** — near 9:30 NY: a **5m candle that fully closes beyond the nearest 1h
+   level** in the allowed direction, with the 15m 200 SMA confirming. Primary trigger.
+8. **Entry refinement — 5m BB(10,1):** uptrend (longs) → buy small pullbacks toward/through the **lower** band;
+   downtrend (shorts) → sell pullbacks toward/through the **upper** band; entries must coincide with continued
+   multi-TF momentum.
+9. **Execution** — stop sized so risk = 0.1–0.2% equity; market/limit per the pullback rule; expect 30+/day.
+10. **Management** — keep adding in the trend direction while the 15m SMA bias holds, momentum stays aligned,
+    and day drawdown is above −4%; take partials as price reaches the opposite Bollinger envelope / next 1h
+    structure; move stop to breakeven after ~1R on fast moves.
+11. **Daily shutdown** — at −4% day drawdown, stop new trades, manage/close only. Does **not** cap upside on
+    good days — keeps trading momentum while setups exist.
+
+**Hard rules:** 0.1–0.2% risk/trade (equity-based); −4% daily hard stop; 15m-200-SMA direction only (no
+counter-trend); ≥2 aligned TFs (3 after a loss); all primary setups reference the nearest 1h high/low;
+thin-spread sessions only; **after a loss, do NOT add size — tighten criteria (more TFs)**; after a win, risk
+stays fixed (no "house money").
+
+**Setups:** (1) **NY-open 1h breakout trend scalper** — as above (5m close beyond 1h level + 15m SMA bias + 5m
+BB(10,1) pullback). (2) **General multi-TF momentum scalps** — London/NY, tight spreads, 15m trending vs 200
+SMA, 1h+5m(+30m) momentum aligned with the 15m bias; **[Round-1 text truncated at the 5m/30m BB(10,1) entry —
+to be completed in Round 2].**
+
+**Exits/risk:** stop below recent 5m swing low / slightly beyond the breached 1h level (more conservative of the
+two), sized to 0.1–0.2%; partials toward the opposite BB envelope / next 1h structure; breakeven after ~1R.
+
+**Psychology:** disciplined, fixed-risk, momentum-only; after losses he *tightens* (more confirmation), never
+sizes up; comfortable doing nothing until momentum is clearly there.
+
+> **Open question the profile does NOT yet answer (the important one): what *exactly* is "momentum/thrust" —
+> which indicator(s), which periods, what values, per timeframe? → Round 2 below.**
+
+---
+
+## Round 2 — follow-up questions (MOMENTUM is the priority)
+
+> Answer in exact indicators + values per timeframe wherever you can — that's what becomes the alphas.
+
+### A. Momentum — the core (please be precise)
+1. When you read "momentum / thrust," what are you literally looking at — an **oscillator** (CCI? RSI? MACD?),
+   the **slope** of the 200 SMA, **candle size/body**, **structure** (higher highs/higher lows), or a combo?
+2. We know on the **5m** you use **CCI** (you block when 5m CCI(30) & CCI(100) are both inside ±50). Do you read
+   CCI the *same way* on 15m / 30m / 1h? Same periods (30 & 100)? Or a different tool on the higher TFs?
+3. The **CCI ladder** — map it: |CCI| < 50 = ? (you said: no trade); 50–100 = ?; 100–160 = ?; > 160 = ?. Which
+   band is the **minimum to ENTER**, and does it differ by timeframe?
+4. Write the **"2 timeframes aligned" long condition as literal ANDs**, e.g.: "price > 15m 200 SMA **AND** 15m
+   CCI(30) > ___ **AND** 5m CCI(30) > ___ **AND** 5m close above the 1h high." Give the real numbers.
+5. Does the **breakout candle's SIZE** matter — is a 5m close *barely* beyond the 1h level as good as a big
+   thrust candle, or do you need a minimum range/body?
+6. How do you know momentum is **DYING** (stop adding / exit)? CCI rolling back under a level (which?), price
+   closing back inside the 5m band, a timeframe flipping, candles shrinking?
+7. After a loss → **"3 timeframes."** Which third TF (1h?), and how long does the stricter rule stay on — the
+   next trade only, until your next win, or the rest of the day?
+
+### B. Exits & management
+8. **Finish Setup 2** (it cut off): the exact entry trigger for a general momentum scalp with no 1h breakout.
+9. **Profit-taking, exactly:** how much do you take off and where (opposite 5m band? a fixed R like 1R/2R? next
+   1h level?), and what makes you FULLY close?
+10. **Stop:** below the 5m swing low *or* the 1h level — which, and how many bars define that swing low?
+
+### C. Risk / portfolio / day
+11. **Good day:** you don't cap upside — but the bot banks +2.5% and protects the day to win 40 in a row. Do
+    you keep pressing past +2.5%, or ease off / protect once solidly green? (Decides the +2.5% auto-bank.)
+12. **Correlation:** with 30+ trades on a shared account, do you cap how many positions at once, or how many in
+    the same direction / correlated instruments (e.g., long four dollar-pairs at the same time)?
+13. **News:** do you avoid entering right around high-impact releases (NFP, FOMC, CPI)?
+
+### D. Timeframes (a calibration decision)
+14. Your edge leans on the **15-minute** (200 SMA) and **1-hour** (structure), but the bot only carries 1m / 5m
+    / 30m / 4h / 1d. How essential are the *exact* 15m and 1h? Can 5m + 30m stand in — or do we **add 15m and
+    1h** as real timeframes (a bigger build, worth it if they're core to you)?
 
 ---
 
