@@ -38,6 +38,14 @@ _HUG_BASE = BLOCK_RANGES["hug_pressure"][0]
 _HUG_W = BLOCK_RANGES["hug_pressure"][1] - _HUG_BASE      # 15
 _MOM_BASE = BLOCK_RANGES["momentum"][0]
 
+# v1.12.0 bracket model: action bounds (from constants) + the 1m high/low indices inside the OHLC obs block.
+from config.constants import (TP_MIN_PCT as _TP_MIN, TP_MAX_PCT as _TP_MAX, SL_MIN_PCT as _SL_MIN,
+                              SL_MAX_PCT as _SL_MAX, LOT_MIN_MULT as _LOT_MIN, LOT_MAX_MULT as _LOT_MAX,
+                              MAX_TRADE_RISK_PCT as _MAX_RISK)
+from src.data.aux_features import OHLC_COLUMNS as _OHLC_COLS
+_OHLC_HI = BLOCK_RANGES["ohlc"][0] + _OHLC_COLS.index("1m__high")   # intrabar high/low for bracket TP/SL checks
+_OHLC_LO = BLOCK_RANGES["ohlc"][0] + _OHLC_COLS.index("1m__low")
+
 _HOLD, _BUY, _SELL, _CLOSE = 0, 1, 2, 3
 _CONV_CAP = float(CONVICTION_ALIGN_CAP)   # conviction reward saturates at this many aligned signals
 _SL = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
@@ -83,6 +91,7 @@ class PortfolioParams(NamedTuple):
     hug_miss_penalty: float      # v1.10.0: per-step penalty for sitting out a CLEAN hug on an INDEX/METAL
     overtrade_soft_cap: float    # v1.12.0: trades/day before the over-trading penalty kicks in
     overtrade_penalty: float     # v1.12.0: discrete penalty per NEW open once at/over the cap
+    bracket_enabled: float       # v1.12.0: 1.0 -> TP/SL/lot heads active (bracket orders); 0.0 -> discrete env
 
 
 class PortfolioDeviceStatic(NamedTuple):
@@ -165,6 +174,8 @@ class PortfolioState(NamedTuple):
     day_progress_hwm: jnp.ndarray
     day_had_exposure: jnp.ndarray
     daily_target_reached: jnp.ndarray   # v1.10.0: 1.0 once today hit +2.5% -> mute hug penalty/bonus + obs
+    tp_price: jnp.ndarray               # v1.12.0: per-symbol LOCKED take-profit price (0.0 = no bracket)
+    sl_price: jnp.ndarray               # v1.12.0: per-symbol LOCKED stop-loss price (0.0 = no bracket)
     daily_target_frac: jnp.ndarray
     trailing_dd_frac: jnp.ndarray
 
@@ -199,7 +210,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
                      bb_stop_enabled=0.0, risk_based=0.0, risk_frac=0.0,
                      band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0, open_gate=0.0,
                      hug_pressure_bonus=0.0, hug_miss_penalty=0.0,
-                     overtrade_soft_cap=15.0, overtrade_penalty=0.0,
+                     overtrade_soft_cap=15.0, overtrade_penalty=0.0, bracket_enabled=0.0,
                      max_bars=None) -> PortfolioParams:
     """Build PortfolioParams from a PortfolioStaticData + the FTMO/alpha knobs (defaults = FTMOConfig)."""
     return PortfolioParams(
@@ -219,7 +230,8 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         band_stack_bonus=float(band_stack_bonus), reentry_bonus=float(reentry_bonus),
         conviction_bonus=float(conviction_bonus), open_gate=float(open_gate),
         hug_pressure_bonus=float(hug_pressure_bonus), hug_miss_penalty=float(hug_miss_penalty),
-        overtrade_soft_cap=float(overtrade_soft_cap), overtrade_penalty=float(overtrade_penalty))
+        overtrade_soft_cap=float(overtrade_soft_cap), overtrade_penalty=float(overtrade_penalty),
+        bracket_enabled=float(bracket_enabled))
 
 
 def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, end,
@@ -253,6 +265,7 @@ def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, en
         # day_progress_hwm is derived from equity (money dtype) each step -> init in the MONEY dtype so the
         # lax.scan training carry stays dtype-stable under x64 too (float32 on TPU is unchanged).
         day_progress_hwm=z, day_had_exposure=jnp.float32(0.0), daily_target_reached=jnp.float32(0.0),
+        tp_price=jnp.zeros((N,), bal.dtype), sl_price=jnp.zeros((N,), bal.dtype),
         daily_target_frac=jnp.float32(daily_target_frac), trailing_dd_frac=jnp.float32(trailing_dd_frac))
 
 
@@ -326,8 +339,10 @@ def reset_obs(s: PortfolioState, static: PortfolioDeviceStatic, params: Portfoli
     return _assemble_obs(s, static, params, s.j, s.t)
 
 
-def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, params: PortfolioParams):
-    """One branchless step (decides symbol j). 1:1 with src/env/portfolio_env.py step()."""
+def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
+                   static: PortfolioDeviceStatic, params: PortfolioParams):
+    """One branchless step (decides symbol j). 1:1 with src/env/portfolio_env.py step(). tp01/sl01/lot01 are
+    the continuous heads in [0,1], used only when params.bracket_enabled AND a new BUY/SELL opens."""
     N = params.N
     t = s.t; j = s.j
     eq_before = s.equity
@@ -403,7 +418,23 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     risk_dollars = start * params.risk_frac
     ts_risk = jnp.where((params.risk_based > 0.5) & jnp.isfinite(sb) & (dist > 1e-12),
                         jnp.minimum(base_j, risk_dollars / jnp.maximum(dist, 1e-12)), base_j)
-    ts_new = jnp.where(open_mask > 0.5, ts_risk, ts_old)            # only an OPEN changes the size
+    # v1.12.0 BRACKET sizing: map [0,1] heads -> bounded TP/SL distances + lot, HARD-CLAMP the lot so open risk
+    # (lot x SL price-distance) <= MAX_TRADE_RISK_PCT of CURRENT equity (eq_before = pre-step equity, 1:1 CPU).
+    tp_pct = _TP_MIN + jnp.clip(tp01, 0.0, 1.0) * (_TP_MAX - _TP_MIN)
+    sl_pct = _SL_MIN + jnp.clip(sl01, 0.0, 1.0) * (_SL_MAX - _SL_MIN)
+    lot_mult = _LOT_MIN + jnp.clip(lot01, 0.0, 1.0) * (_LOT_MAX - _LOT_MIN)
+    lot_raw = lot_mult * base_j
+    max_by_risk = (_MAX_RISK / 100.0 * eq_before) / jnp.maximum(sl_pct * close_jt, 1e-12)
+    ts_bracket = jnp.minimum(lot_raw, max_by_risk)
+    use_bracket = params.bracket_enabled
+    ts_open = jnp.where(use_bracket > 0.5, ts_bracket, ts_risk)     # the size for THIS open
+    ts_new = jnp.where(open_mask > 0.5, ts_open, ts_old)           # only an OPEN changes the size
+    # locked TP/SL prices on the open leg (bracket only); cleared on a close leg (then maybe re-set by the open)
+    set_bracket = (open_mask > 0.5) & (use_bracket > 0.5)
+    tp_after_close = jnp.where(close_mask > 0.5, 0.0, s.tp_price[j])
+    sl_after_close = jnp.where(close_mask > 0.5, 0.0, s.sl_price[j])
+    tp_j = jnp.where(set_bracket, close_jt * (1.0 + target * tp_pct), tp_after_close)
+    sl_j = jnp.where(set_bracket, close_jt * (1.0 - target * sl_pct), sl_after_close)
     ecost = cost_j * close_jt * ts_new
     balance = balance - ecost * open_mask
     daily_realized = daily_realized - ecost * open_mask
@@ -456,6 +487,8 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     entry_band_short = s.entry_band_short.at[j].set(entry_band_short_j)
     entry_reentry = s.entry_reentry.at[j].set(entry_reentry_j)
     entry_confirms = s.entry_confirms.at[j].set(entry_confirms_j)
+    tp_price = s.tp_price.at[j].set(tp_j.astype(s.tp_price.dtype))   # v1.12.0 locked bracket prices
+    sl_price = s.sl_price.at[j].set(sl_j.astype(s.sl_price.dtype))
 
     # --- advance cursor: next symbol; wrap -> advance the bar ---
     j2 = j + 1
@@ -466,6 +499,40 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
     # --- mark the pot at the (possibly advanced) bar (uses each trade's ACTUAL risk-based size) ---
     close_col = static.close[:, t_new]
     unreal = jnp.sum(position * (close_col - entry) * trade_size)
+    equity = balance + unreal
+    # --- v1.12.0 BRACKET EXITS (branchless, all symbols): close at the LOCKED level on an intrabar 1m high/low
+    # touch (SL checked first; skip the entry bar). Uses the 1m high/low from the OHLC obs block. BEFORE the
+    # reward (the realized level PnL is part of this step's reward), then re-mark. 1:1 with _apply_brackets. ---
+    bgate = params.bracket_enabled
+    for sidx in range(N):
+        p = position[sidx]; tp = tp_price[sidx]; sl = sl_price[sidx]
+        hi = static.static_obs[sidx, t_new, _OHLC_HI]; lo = static.static_obs[sidx, t_new, _OHLC_LO]
+        long_sl = (p > 0.0) & (lo <= sl); short_sl = (p < 0.0) & (hi >= sl)
+        long_tp = (p > 0.0) & (hi >= tp) & (~long_sl); short_tp = (p < 0.0) & (lo <= tp) & (~short_sl)
+        hit_sl = long_sl | short_sl; hit_tp = long_tp | short_tp
+        level = jnp.where(hit_sl, sl, jnp.where(hit_tp, tp, 0.0))
+        do_b = bgate * ((tp != 0.0) & (p != 0.0)).astype(close_col.dtype) \
+            * (t_new > entry_bar[sidx]).astype(close_col.dtype) * (hit_sl | hit_tp).astype(close_col.dtype)
+        ts_b = trade_size[sidx]
+        r_b = p * (level - entry[sidx]) * ts_b - static.cost_frac[sidx] * level * ts_b
+        balance = balance + r_b * do_b
+        daily_realized = daily_realized + r_b * do_b
+        episode_realized = episode_realized + r_b * do_b
+        w = ((r_b > 0.0) & (do_b > 0.5)).astype(jnp.float32)
+        l = ((r_b <= 0.0) & (do_b > 0.5)).astype(jnp.float32)
+        daily_trades = daily_trades + do_b.astype(jnp.float32)
+        episode_trades = episode_trades + do_b.astype(jnp.float32)
+        daily_wins = daily_wins + w; episode_wins = episode_wins + w
+        daily_losses = daily_losses + l; episode_losses = episode_losses + l
+        daily_consec = jnp.where(do_b > 0.5, jnp.where(w > 0.5, 0.0, daily_consec + 1.0), daily_consec)
+        episode_consec = jnp.where(do_b > 0.5, jnp.where(w > 0.5, 0.0, episode_consec + 1.0), episode_consec)
+        last_close_bar = last_close_bar.at[sidx].set(jnp.where(do_b > 0.5, t_new, last_close_bar[sidx]))
+        last_close_dir = last_close_dir.at[sidx].set(jnp.where(do_b > 0.5, p, last_close_dir[sidx]))
+        last_exit_px = last_exit_px.at[sidx].set(jnp.where(do_b > 0.5, level, last_exit_px[sidx]))
+        position = position.at[sidx].set(jnp.where(do_b > 0.5, jnp.zeros_like(p), p))
+        tp_price = tp_price.at[sidx].set(jnp.where(do_b > 0.5, jnp.zeros_like(tp), tp))
+        sl_price = sl_price.at[sidx].set(jnp.where(do_b > 0.5, jnp.zeros_like(sl), sl))
+    unreal = jnp.sum(position * (close_col - entry) * trade_size)   # re-mark after the bracket exits
     equity = balance + unreal
     day_peak = jnp.maximum(day_peak, equity)
     epi_peak = jnp.maximum(epi_peak, equity)
@@ -650,7 +717,7 @@ def step_portfolio(s: PortfolioState, action, static: PortfolioDeviceStatic, par
         days_elapsed=days_elapsed, daily_pass_streak=daily_pass_streak, days_won=days_won,
         phase2_active=phase2_active, phase2_peak=phase2_peak, day_locked=day_locked,
         day_progress_hwm=day_progress_hwm, day_had_exposure=day_had_exposure,
-        daily_target_reached=daily_target_reached,
+        daily_target_reached=daily_target_reached, tp_price=tp_price, sl_price=sl_price,
         daily_target_frac=s.daily_target_frac, trailing_dd_frac=s.trailing_dd_frac)
     obs = _assemble_obs(ns, static, params, j_new, t_new)
     return ns, obs, reward, terminated, truncated

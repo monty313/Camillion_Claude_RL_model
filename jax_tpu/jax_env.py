@@ -249,9 +249,12 @@ def reset_obs(s: EnvState, static: DeviceStatic, params: EnvParams) -> jnp.ndarr
     return _assemble_obs(s, static, params, s.ptr)
 
 
-def step_env(s: EnvState, action, static: DeviceStatic, params: EnvParams):
+def step_env(s: EnvState, action, tp01, sl01, lot01, static: DeviceStatic, params: EnvParams):
     """One branchless step. Returns (new_state, obs, reward, terminated, truncated).
-    Mirrors src/env/trading_env.py step() exactly (see that file's numbered comments)."""
+    Mirrors src/env/trading_env.py step() exactly (see that file's numbered comments). tp01/sl01/lot01 (the
+    bracket heads) are ACCEPTED for a uniform action signature but IGNORED -- the single-symbol env has no
+    bracket model (matching its CPU TradingEnv)."""
+    del tp01, sl01, lot01
     t = s.ptr
     a = jnp.asarray(action, jnp.int32)
     equity_before = s.equity

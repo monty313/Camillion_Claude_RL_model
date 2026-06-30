@@ -115,10 +115,10 @@ if _ARG:
         jx = np.asarray(env_mod.reset_obs(state, static, params))
         mo = float(np.max(np.abs(jx - cpu_obs))); mr = 0.0
         assert mo < otol, f"reset obs diff {mo}"
-        step = jax.jit(env_mod.step, static_argnums=(3,))
+        step = jax.jit(env_mod.step, static_argnums=(6,))   # +tp01/sl01/lot01 bracket heads (v1.12.0)
         for k, a in enumerate(actions):
             cpu_obs, cr, ct, ctr, _ = env.step(int(a))
-            state, jo, jr, jt, jtr = step(state, int(a), static, params)
+            state, jo, jr, jt, jtr = step(state, int(a), 0.0, 0.0, 0.0, static, params)
             jo = np.asarray(jo); jr = float(jr)
             mo = max(mo, float(np.max(np.abs(jo - cpu_obs)))); mr = max(mr, abs(jr - cr))
             assert mo < otol, f"step {k} obs diff {mo} (a={a})"
@@ -191,15 +191,15 @@ if _ARG:
         dtf = jnp.full((n,), 0.025); trf = jnp.full((n,), 0.04)
         st_b = jax.vmap(JE.init_state, in_axes=(None, None, 0, 0, 0, 0))(static, params, starts, ends, dtf, trf)
         st_s = JE.init_state(static, params, sd.warmup, sd.T - 1, 0.025, 0.04)
-        step_b = jax.jit(jax.vmap(JE.step_env, in_axes=(0, 0, None, None)), static_argnums=(3,))
-        step_s = jax.jit(JE.step_env, static_argnums=(3,))
+        step_b = jax.jit(jax.vmap(JE.step_env, in_axes=(0, 0, 0, 0, 0, None, None)), static_argnums=(6,))
+        step_s = jax.jit(JE.step_env, static_argnums=(6,))
         rng = np.random.default_rng(3); worst = 0.0
         # drive all batch envs with the SAME action as the scalar env -> must stay identical
         for k in range(60):
             a = int(rng.integers(0, 4))
-            acts = jnp.full((n,), a, jnp.int32)
-            st_b, ob, rb, tb, ub = step_b(st_b, acts, static, params)
-            st_s, os_, rs, ts, us = step_s(st_s, a, static, params)
+            acts = jnp.full((n,), a, jnp.int32); zb = jnp.zeros((n,), jnp.float32)
+            st_b, ob, rb, tb, ub = step_b(st_b, acts, zb, zb, zb, static, params)
+            st_s, os_, rs, ts, us = step_s(st_s, a, 0.0, 0.0, 0.0, static, params)
             worst = max(worst, float(jnp.max(jnp.abs(ob - os_[None]))), float(jnp.max(jnp.abs(rb - rs))))
         assert worst < 1e-9, f"vmap vs scalar diverged by {worst}"
         return f"vmap(16) vs scalar identical over 60 steps: max diff={worst:.2e}"
@@ -344,12 +344,12 @@ if _ARG:
         from jax_tpu import export_to_pytorch as EXP
         out = os.path.join(d, "p.onnx"); EXP.convert(d, "best_policy", out)
         # gather REAL rollout obs (not random) and compare ONNX vs JAX logits
-        step = jax.jit(JE.step_env, static_argnums=(3,))
+        step = jax.jit(JE.step_env, static_argnums=(6,))
         state = JE.init_state(static, params, sd.warmup, sd.T - 1, 0.025, 0.04)
         obs = [np.asarray(JE.reset_obs(state, static, params))]
         rng = np.random.default_rng(0)
         for _ in range(200):
-            state, o, *_ = step(state, int(rng.integers(0, 4)), static, params)
+            state, o, *_ = step(state, int(rng.integers(0, 4)), 0.0, 0.0, 0.0, static, params)
             obs.append(np.asarray(o))
         O = np.stack(obs).astype(np.float32)
         import onnxruntime as ort

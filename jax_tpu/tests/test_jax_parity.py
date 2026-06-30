@@ -213,14 +213,14 @@ def _run_parity(symbol, position_size, n_steps=900, seed=7):
     np.testing.assert_allclose(jax_obs, cpu_obs, atol=ATOL_OBS,
                                err_msg=f"[{symbol}] RESET obs mismatch")
 
-    step_jit = jax.jit(JE.step_env, static_argnums=(3,))
+    step_jit = jax.jit(JE.step_env, static_argnums=(6,))   # static = arg 5 after +tp01/sl01/lot01 (v1.12.0)
     rng = np.random.default_rng(123)
     actions = rng.integers(0, 4, size=n_steps)
     max_abs_obs = 0.0
     max_abs_rew = 0.0
     for k, a in enumerate(actions):
-        cpu_obs, cpu_r, cpu_term, cpu_trunc, _ = env.step(int(a))
-        state, jx_obs, jx_r, jx_term, jx_trunc = step_jit(state, int(a), static, params)
+        cpu_obs, cpu_r, cpu_term, cpu_trunc, _ = env.step(int(a))   # single env: no brackets
+        state, jx_obs, jx_r, jx_term, jx_trunc = step_jit(state, int(a), 0.0, 0.0, 0.0, static, params)
         jx_obs = np.asarray(jx_obs); jx_r = float(jx_r)
         max_abs_obs = max(max_abs_obs, float(np.max(np.abs(jx_obs - cpu_obs))))
         max_abs_rew = max(max_abs_rew, abs(jx_r - cpu_r))
@@ -275,10 +275,10 @@ def test_step_parity_open_gate():
     cpu_obs, _ = env.reset()
     state = JE.init_state(static, params, sd.warmup, sd.T - 1, cfg.daily_target_pct / 100, cfg.trailing_drawdown_pct / 100)
     np.testing.assert_allclose(np.asarray(JE.reset_obs(state, static, params)), cpu_obs, atol=ATOL_OBS)
-    step = jax.jit(JE.step_env, static_argnums=(3,))
+    step = jax.jit(JE.step_env, static_argnums=(6,))
     for k, a in enumerate(np.random.default_rng(5).integers(0, 4, 900)):
         cpu_obs, cr, ct, ctr, _ = env.step(int(a))
-        state, jo, jr, jt, jtr = step(state, int(a), static, params)
+        state, jo, jr, jt, jtr = step(state, int(a), 0.0, 0.0, 0.0, static, params)
         np.testing.assert_allclose(np.asarray(jo), cpu_obs, atol=ATOL_OBS, err_msg=f"open_gate step {k} (a={a})")
         assert abs(float(jr) - cr) < ATOL_REW, f"open_gate step {k} reward"
         if ct or ctr:

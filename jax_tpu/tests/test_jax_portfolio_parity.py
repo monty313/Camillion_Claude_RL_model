@@ -57,6 +57,8 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     bb_stop = bool(b.get("bb_stop", False))
     risk_pct = b.get("risk_pct", None)
     open_gate = bool(b.get("open_gate", False))
+    bracket_on = bool(b.get("bracket", False))                 # v1.12.0: TP/SL/lot bracket model ON
+    tp01, sl01, lot01 = float(b.get("tp01", 0.0)), float(b.get("sl01", 0.0)), float(b.get("lot01", 0.0))
     if any(k in b for k in ("band_bonus", "reentry_bonus", "conviction_bonus", "hug_bonus", "hug_miss")):
         import dataclasses
         cfg = dataclasses.replace(cfg, band_stack_bonus=float(b.get("band_bonus", 0.0)),
@@ -71,7 +73,8 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         sym_data = _symbol_data(symbols, seed=seed)
     subs = build_portfolio_subs(sym_data, _reg, cfg=cfg, warmup=50, progress=False)
     env = PortfolioEnv(subs=subs, cfg=cfg, warmup=50, continue_after_pass=continue_after_pass,
-                       bb_stop_enabled=bb_stop, risk_per_trade_pct=risk_pct, open_gate=open_gate)
+                       bb_stop_enabled=bb_stop, risk_per_trade_pct=risk_pct, open_gate=open_gate,
+                       bracket_enabled=bracket_on)
 
     psd = JSF.build_portfolio_static(subs)
     static = JPE.make_portfolio_device_static(psd)
@@ -94,7 +97,8 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         band_stack_bonus=cfg.band_stack_bonus, reentry_bonus=cfg.reentry_bonus,
         conviction_bonus=cfg.conviction_bonus, open_gate=1.0 if open_gate else 0.0,
         hug_pressure_bonus=cfg.hug_pressure_bonus, hug_miss_penalty=cfg.hug_miss_penalty,
-        overtrade_soft_cap=cfg.overtrade_soft_cap, overtrade_penalty=cfg.overtrade_penalty)
+        overtrade_soft_cap=cfg.overtrade_soft_cap, overtrade_penalty=cfg.overtrade_penalty,
+        bracket_enabled=1.0 if bracket_on else 0.0)
 
     cpu_obs, _ = env.reset()
     state = JPE.init_state(static, params, start=env.warmup, end=env.T - 1,
@@ -103,15 +107,15 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     jx_obs = np.asarray(JPE.reset_obs(state, static, params))
     np.testing.assert_allclose(jx_obs, cpu_obs, atol=ATOL_OBS, err_msg="RESET obs mismatch")
 
-    step = jax.jit(JPE.step_portfolio, static_argnums=(3,))
+    step = jax.jit(JPE.step_portfolio, static_argnums=(6,))   # static = arg 5 after +tp01/sl01/lot01
     if actions is None:
         actions = np.random.default_rng(7).integers(0, 4, size=n_steps)
     mo = mr = 0.0
     events = {"banked": False, "won_day": False, "breach": False}  # alpha-shaping is proven by the reward atol
     prev_streak = 0
     for k, a in enumerate(actions):
-        cpu_obs, cpu_r, cpu_term, cpu_trunc, info = env.step(int(a))
-        state, jx_obs, jx_r, jx_term, jx_trunc = step(state, int(a), static, params)
+        cpu_obs, cpu_r, cpu_term, cpu_trunc, info = env.step(int(a), tp01, sl01, lot01)
+        state, jx_obs, jx_r, jx_term, jx_trunc = step(state, int(a), tp01, sl01, lot01, static, params)
         jx_obs = np.asarray(jx_obs); jx_r = float(jx_r)
         mo = max(mo, float(np.max(np.abs(jx_obs - cpu_obs)))); mr = max(mr, abs(jx_r - cpu_r))
         np.testing.assert_allclose(jx_obs, cpu_obs, atol=ATOL_OBS,
@@ -126,6 +130,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         events["breach"] |= bool(cpu_term and not env.acc.episode_passed)
         if cpu_term or cpu_trunc:
             break
+    events["bracket_closed"] = sum(1 for e in getattr(env, "_bracket_log", []) if e["event"] == "close")
     return mo, mr, events
 
 
@@ -181,6 +186,23 @@ def test_portfolio_parity_hug_pressure_on():
     print(f"\n[portfolio HUG-PRESSURE on] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
     assert mo < ATOL_OBS and mr < ATOL_REW, f"hug-on parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
     assert ev["banked"], "expected the +2.5% goal to be reached (exercises the hug MUTE path)"
+
+
+def test_portfolio_parity_brackets_on():
+    """v1.12.0 Stage 2b: with the TP/SL/lot BRACKET model ON (fed fixed tp01/sl01/lot01), on a trend that makes
+    the brackets actually FIRE, the JAX env must match the CPU PortfolioEnv bar-for-bar (557 obs + reward) --
+    the locked TP/SL prices, the intrabar high/low exit at the LEVEL, the 1%-risk lot clamp, and the trade
+    tallies. This is THE Stage-2b gate (CPU <-> JAX bracket execution to ~1e-7)."""
+    syms = ["US30", "XAUUSD"]                                   # index + metal, with real 1m high/low
+    sym_data = _symbol_data(syms, seed=7, drift=2e-4, with_aux=True)   # uptrend -> the close reaches the TP level
+    # BUY for 2 steps every 120, HOLD the rest: a position opens, HOLDS long enough for the close to drift up to
+    # its locked TP (~55 bars at this drift) -> the bracket FIRES; then flat until the next BUY. Many TP cycles.
+    acts = np.where(np.arange(7000) % 120 < 2, 1, 0)
+    behaviors = {"bracket": True, "tp01": 0.5, "sl01": 0.5, "lot01": 0.3}
+    mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts, behaviors=behaviors)
+    print(f"\n[portfolio BRACKETS on] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
+    assert mo < ATOL_OBS and mr < ATOL_REW, f"bracket parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
+    assert ev["bracket_closed"] > 0, "brackets never fired — test is vacuous (raise drift / lower tp01)"
 
 
 def test_portfolio_parity_breach():

@@ -60,7 +60,7 @@ def _run_windows(net_params, norm, starts, env_params, static, ends_dtf_trf, win
     active0 = jnp.ones((M,), jnp.float32)
     passed0 = jnp.zeros((M,), jnp.float32)
 
-    step_v = jax.vmap(env.step, in_axes=(0, 0, None, None))
+    step_v = jax.vmap(env.step, in_axes=(0, 0, 0, 0, 0, None, None))   # +tp01/sl01/lot01 bracket heads (v1.12.0)
 
     def body(carry, _):
         state, obs, active, passed = carry
@@ -70,7 +70,8 @@ def _run_windows(net_params, norm, starts, env_params, static, ends_dtf_trf, win
             nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
             logits, _ = model.apply(net_params, nobs)
             actions = jnp.argmax(logits, axis=-1).astype(jnp.int32)   # the trained policy (deterministic)
-        state, obs, _r, term, trunc = step_v(state, actions, static, env_params)
+        zb = jnp.zeros_like(actions, jnp.float32)                # bracket heads (Stage 3 fills these)
+        state, obs, _r, term, trunc = step_v(state, actions, zb, zb, zb, static, env_params)
         done = jnp.maximum(term, trunc)
         newly_done = active * done
         # a window PASSES only if it reached +10% AND never breached (the FTMO contract). episode_passed
@@ -96,7 +97,7 @@ def _won_day_walk(net_params, norm, starts, env_params, static, ends_dtf_trf, wa
     model = PPO.CamillionPolicy()
     init_v = jax.vmap(env.init_state, in_axes=(None, None, 0, 0, 0, 0))
     reset_v = jax.vmap(env.reset_obs, in_axes=(0, None, None))
-    step_v = jax.vmap(env.step, in_axes=(0, 0, None, None))
+    step_v = jax.vmap(env.step, in_axes=(0, 0, 0, 0, 0, None, None))   # +tp01/sl01/lot01 bracket heads (v1.12.0)
     state = init_v(static, env_params, starts, ends, dtf, trf)
     obs0 = reset_v(state, static, env_params)
     M = starts.shape[0]
@@ -114,7 +115,8 @@ def _won_day_walk(net_params, norm, starts, env_params, static, ends_dtf_trf, wa
         actions = jnp.where(dead > 0.5, jnp.int32(3), raw)                 # 3 = CLOSE (flatten + stay out)
         amix = amix + jnp.sum(jax.nn.one_hot(raw, 4), axis=0)             # count the policy's INTENT (not forced closes)
         sexp = sexp + jnp.sum((jnp.abs(state.position) > 0.0).astype(jnp.float32), axis=0)  # per-symbol exposure
-        state, obs, _r, term, trunc = step_v(state, actions, static, env_params)
+        zb = jnp.zeros_like(actions, jnp.float32)                          # bracket heads (Stage 3 fills these)
+        state, obs, _r, term, trunc = step_v(state, actions, zb, zb, zb, static, env_params)
         maxstreak = jnp.maximum(maxstreak, state.daily_pass_streak)        # longest won-day run so far
         dead = jnp.maximum(dead, term)                                    # a breach -> done for the day
         crossed = (state.days_elapsed > prev_days).astype(jnp.float32)    # a NEW day started this step

@@ -83,7 +83,7 @@ def _reset_split(trunc, term_only, fresh_s, fresh_o, restart_s, restart_o, cont_
 def make_train_iter(static, params, warmup, train_end, window, env=JE):
     """Build the pmapped one-iteration function (rollout + GAE + PPO epochs). `env` is the env
     module (jax_env for single-symbol, jax_portfolio_env for the shared pot)."""
-    step_v = jax.vmap(env.step, in_axes=(0, 0, None, None))
+    step_v = jax.vmap(env.step, in_axes=(0, 0, 0, 0, 0, None, None))   # +tp01/sl01/lot01 bracket heads (v1.12.0)
     model = PPO.CamillionPolicy()
     optimizer = PPO.make_optimizer()
     n_per_core = JC.N_ENVS_PER_CORE
@@ -100,7 +100,10 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
             logits, value = model.apply(net_params, nobs)
             actions = jax.random.categorical(ak, logits)
             logp = jnp.take_along_axis(jax.nn.log_softmax(logits), actions[:, None], axis=-1)[:, 0]
-            nstate, nobs2, reward, term, trunc = step_v(state, actions.astype(jnp.int32), static, params)
+            # v1.12.0: bracket heads threaded through the rollout. Stage 3 fills these from the policy's
+            # continuous tp/sl/lot heads; until then they are zeros (brackets contribute nothing when OFF).
+            zb = jnp.zeros_like(actions, jnp.float32)
+            nstate, nobs2, reward, term, trunc = step_v(state, actions.astype(jnp.int32), zb, zb, zb, static, params)
             done = jnp.maximum(term, trunc)
             key, rk = jax.random.split(key)
             # FAIL -> START OVER and KEEP GOING: a breach restarts a fresh account at the current bar (continue

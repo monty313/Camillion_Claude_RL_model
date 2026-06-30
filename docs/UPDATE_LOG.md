@@ -3,6 +3,31 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] Super-scalper Stage 2b: JAX bracket execution + bracket-ON parity + action threading
+- **I (Issue):** Mirror Stage 2a's CPU bracket model in the branchless JAX env, prove CPU↔JAX bracket parity to
+  ~1e-7, and thread the new action tuple (direction, tp, sl, lot) through the trainer AND eval — no dangling
+  fields. Requirements: branchless (no Python conditionals in the hot loop); intrabar TP/SL from the aux
+  high/low already in the OHLC obs block.
+- **R (Rule):** Default-OFF (`params.bracket_enabled=0`) -> existing parity UNCHANGED. The env `step` signature
+  gained `tp01/sl01/lot01` (in [0,1]); to keep a UNIFORM action path, `step_env` (single) also accepts + ignores
+  them (no brackets, matching its CPU `TradingEnv`). No obs/contract change.
+- **A (Application):**
+  - `jax_portfolio_env.py`: `PortfolioParams += bracket_enabled`; `PortfolioState += tp_price/sl_price` (locked);
+    on the open leg, branchless map of the [0,1] heads -> bounded locked TP/SL prices + lot clamped to the
+    1%-equity risk cap (uses `eq_before` = pre-step equity, 1:1 CPU); a per-symbol unrolled BRACKET-EXIT loop
+    (modeled on the BB hard stop) closes at the LOCKED level on an intrabar high/low touch (SL first; entry bar
+    skipped), realizing into balance + the full trade tallies, BEFORE the reward, then re-marks. High/low read
+    from `static_obs[sidx, t_new, OHLC_base + 1/2]`.
+  - `jax_env.step_env`: accepts + ignores the 3 bracket args (uniform signature). Threaded through
+    `jax_trainer` rollout + both `jax_eval` rollouts (zeros until Stage 3 fills them from the policy heads) and
+    every parity test / deep_test caller (static_argnums (3,)->(6,) = `params`).
+  - `test_jax_portfolio_parity.py`: bracket-ON parity test on US30/XAUUSD (aux high/low) — BUY-then-hold so the
+    close drifts up to its locked TP and the bracket FIRES; asserts `bracket_closed > 0` (non-vacuous).
+- **C (Conclusion):** The TPU env executes TP/SL/lot brackets identically to the CPU env, and the action tuple
+  flows through the whole training/eval pipeline. Verified: bracket-ON parity **max|obs|=1.19e-7,
+  max|reward|=3.5e-18 with 63 bracket exits fired**; vmap-consistency + the make_train_iter rollout (threaded)
+  compile + run; full CPU suite green. NEXT: Stage 3 (policy tp/sl/lot heads + mixed-action PPO).
+
 ## [2026-06-30] Super-scalper Stage 2a: env TP/SL BRACKET model + risk-clamped lot (CPU; default-OFF)
 - **I (Issue):** The multi-head actor (direction + TP + SL + lot) needs the ENV to actually execute brackets
   and size the lot — the env had no TP/SL concept and a fixed-rail size. Operator requirements: TP/SL prices
