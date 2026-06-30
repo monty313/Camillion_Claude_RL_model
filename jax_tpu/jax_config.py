@@ -114,3 +114,18 @@ CHECKPOINT_EVERY: int = 25                            # lightweight crash-safe s
                                                       # progress also saved at EVERY eval and on interrupt (Ctrl-C / disconnect)
 SEED: int = 42
 EVAL_SEED: int = 999                                  # fixed seed -> reproducible eval windows
+
+
+# --- v1.12.0 Stage 4: freeze/unlock curriculum (driven by config/constants.ACTOR_CURRICULUM_STAGE) ---
+from config import constants as _C   # noqa: E402
+FROZEN_CONT: tuple = (_C.FROZEN_TP01, _C.FROZEN_SL01, _C.FROZEN_LOT01)   # value a FROZEN head feeds the env
+
+
+def curriculum_head_mask(stage: int | None = None) -> tuple:
+    """(tp, sl, lot) LIVE=1 / FROZEN=0 for the actor curriculum. stage<=1 freeze all; 2 unlock lot; 3 unlock all."""
+    s = _C.ACTOR_CURRICULUM_STAGE if stage is None else stage
+    if s <= 1:
+        return (0.0, 0.0, 0.0)
+    if s == 2:
+        return (0.0, 0.0, 1.0)
+    return (1.0, 1.0, 1.0)

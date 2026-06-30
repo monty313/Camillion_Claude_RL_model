@@ -25,6 +25,17 @@ from jax_tpu import jax_env as JE
 from jax_tpu import jax_ppo as PPO
 from jax_tpu import jax_config as JC
 
+# v1.12.0 Stage 4: eval drives the brackets from the policy's continuous head MEANS (deterministic), routed
+# through the same freeze/unlock curriculum as training.
+_HEAD_MASK = jnp.asarray(JC.curriculum_head_mask(), jnp.float32)
+_FROZEN_CONT = jnp.asarray(JC.FROZEN_CONT, jnp.float32)
+
+
+def _eval_brackets(cont_mean):
+    """Deterministic bracket heads at eval: LIVE heads use the mean, FROZEN heads use their default. (B,3)."""
+    cu = _HEAD_MASK * cont_mean + (1.0 - _HEAD_MASK) * _FROZEN_CONT
+    return cu[:, 0], cu[:, 1], cu[:, 2]
+
 
 def _longest_run(passed: np.ndarray) -> int:
     """Longest run of consecutive 1s in an ordered 0/1 array (the 'N in a row' metric)."""
@@ -66,12 +77,13 @@ def _run_windows(net_params, norm, starts, env_params, static, ends_dtf_trf, win
         state, obs, active, passed = carry
         if consensus:
             actions = _consensus_actions(state, static)          # follow-the-alphas baseline
+            cm = jnp.zeros((state.equity.shape[0], JC.N_CONT_ACTIONS), jnp.float32)   # consensus -> no brackets
         else:
             nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
-            logits, _, _, _ = model.apply(net_params, nobs)
+            logits, _, cm, _ = model.apply(net_params, nobs)
             actions = jnp.argmax(logits, axis=-1).astype(jnp.int32)   # the trained policy (deterministic)
-        zb = jnp.zeros_like(actions, jnp.float32)                # bracket heads (Stage 3 fills these)
-        state, obs, _r, term, trunc = step_v(state, actions, zb, zb, zb, static, env_params)
+        tp01, sl01, lot01 = _eval_brackets(cm)
+        state, obs, _r, term, trunc = step_v(state, actions, tp01, sl01, lot01, static, env_params)
         done = jnp.maximum(term, trunc)
         newly_done = active * done
         # a window PASSES only if it reached +10% AND never breached (the FTMO contract). episode_passed
@@ -107,7 +119,7 @@ def _won_day_walk(net_params, norm, starts, env_params, static, ends_dtf_trf, wa
         state, obs, maxstreak, amix, sexp, dead = carry
         prev_days = state.days_elapsed
         nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
-        logits, _, _, _ = model.apply(net_params, nobs)
+        logits, _, cm, _ = model.apply(net_params, nobs)
         raw = jnp.argmax(logits, axis=-1).astype(jnp.int32)
         # FAIL -> STOP TRADING FOR THE DAY: while "dead" (breached today) force CLOSE so the bot is FLAT and
         # OUT until the next day, then it restarts fresh (operator: "stops trading for that day, restarts the
@@ -115,8 +127,8 @@ def _won_day_walk(net_params, norm, starts, env_params, static, ends_dtf_trf, wa
         actions = jnp.where(dead > 0.5, jnp.int32(3), raw)                 # 3 = CLOSE (flatten + stay out)
         amix = amix + jnp.sum(jax.nn.one_hot(raw, 4), axis=0)             # count the policy's INTENT (not forced closes)
         sexp = sexp + jnp.sum((jnp.abs(state.position) > 0.0).astype(jnp.float32), axis=0)  # per-symbol exposure
-        zb = jnp.zeros_like(actions, jnp.float32)                          # bracket heads (Stage 3 fills these)
-        state, obs, _r, term, trunc = step_v(state, actions, zb, zb, zb, static, env_params)
+        tp01, sl01, lot01 = _eval_brackets(cm)                             # bracket heads (deterministic means)
+        state, obs, _r, term, trunc = step_v(state, actions, tp01, sl01, lot01, static, env_params)
         maxstreak = jnp.maximum(maxstreak, state.daily_pass_streak)        # longest won-day run so far
         dead = jnp.maximum(dead, term)                                    # a breach -> done for the day
         crossed = (state.days_elapsed > prev_days).astype(jnp.float32)    # a NEW day started this step

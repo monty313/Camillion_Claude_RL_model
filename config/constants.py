@@ -136,6 +136,28 @@ LOT_MIN_MULT: float = 0.1       # lot size as a multiple of the symbol's calibra
 LOT_MAX_MULT: float = 3.0       #                                                              (max)
 MAX_TRADE_RISK_PCT: float = 1.0 # HARD clamp: open risk (lot x SL-distance) <= this % of current equity
 
+# --- v1.12.0 Stage 4: FREEZE/UNLOCK CURRICULUM (a CONFIG FLAG, not hardcoded in the trainer) ---
+# Which continuous heads are LIVE (sampled + trained). A FROZEN head uses its FROZEN_* default value and gets
+# no gradient (PPO head-mask). Flip ACTOR_CURRICULUM_STAGE -> the rollout + PPO change with NO code edits.
+#   stage 1 = direction only (freeze tp/sl/lot, fixed 1:1 R:R + base lot)  -> learn WHEN to trade
+#   stage 2 = unlock lot      (tp/sl still frozen)                          -> learn conviction sizing
+#   stage 3 = unlock all      (tp/sl/lot live)                             -> discover the R:R per state
+ACTOR_CURRICULUM_STAGE: int = 3
+# the value a FROZEN head feeds the env (in [0,1]); chosen so the env maps them to ~1:1 R:R (tp_pct==sl_pct
+# ~=0.5%) and ~1x base lot. (tp01->tp_pct, sl01->sl_pct, lot01->lot_mult, via TP/SL/LOT_* above.)
+FROZEN_TP01: float = 0.231      # -> tp_pct ~= 0.50%
+FROZEN_SL01: float = 0.474      # -> sl_pct ~= 0.50%  (=> 1:1)
+FROZEN_LOT01: float = 0.310     # -> lot_mult ~= 1.0x base
+
+# --- v1.12.0 Stage 4: R:R REWARD SHAPING scales (named here; NO magic numbers inline in the reward) ---
+# Applied when a BRACKET trade closes: reward the ratio self-discovery. rr = tp_pct / sl_pct.
+RR_BONUS_SCALE: float = 0.05    # winner: + log(1+rr) * this  (log dampens extreme ratios)
+RR_PENALTY_SCALE: float = 0.05  # loser with rr<1: - (1-rr) * this  (low-R:R loss hurts more)
+RR_TAX_SCALE: float = 0.10      # any rr<0.5: - (0.5-rr)/0.5 * this  (soft tax on very low R:R; not a hard floor)
+RR_SESSION_PENALTY: float = 0.10   # open OUTSIDE an active session -> - this (uses the session obs flag)
+RR_SPREAD_PENALTY: float = 0.0     # open on a wide spread -> penalty (0.0: no spread data feed yet -> inert)
+RR_FTMO_PROXIMITY_PENALTY: float = 0.0  # near the daily wall (handled by dd_proximity_coef; named, kept 0 here)
+
 # --- Signal memory depth (last N bars of net signal balance) ---
 SIGNAL_MEMORY_LAGS: int = 5
 

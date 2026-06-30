@@ -350,6 +350,8 @@ class PortfolioEnv:
         self._tp_price = {s: 0.0 for s in self.symbols}
         self._sl_price = {s: 0.0 for s in self.symbols}
         self._bracket_log = []                                      # fresh bracket open/close log per episode
+        self._bracket_open_info = {s: None for s in self.symbols}   # the open record, joined at close (R:R log)
+        self._bracket_shaping = 0.0                                 # R:R reward shaping accumulated THIS step
 
     @staticmethod
     def _atr_at(sub, t: int) -> float:
@@ -461,6 +463,7 @@ class PortfolioEnv:
         realizing at the LEVEL price (not the close). SL is checked first (conservative: a bar that spans both
         is treated as the stop). Skips the entry bar. Uses the current 1m bar's high/low. OFF unless
         bracket_enabled. Mirrors _apply_bb_hard_stop (mechanical exit -> no shaping bonus)."""
+        self._bracket_shaping = 0.0
         if not self._bracket_on:
             return
         t = self.t
@@ -481,13 +484,28 @@ class PortfolioEnv:
             if level is None:
                 continue
             ts = self._trade_size[s]
-            realized = p * (level - self.entry[s]) * ts - sub.cost_frac * level * ts
+            entry = self.entry[s]
+            realized = p * (level - entry) * ts - sub.cost_frac * level * ts
             self.th.record_close(self.acc, realized, bar_index=t)
             self._last_close_bar[s] = int(t); self._last_close_dir[s] = int(p); self._last_exit_px[s] = float(level)
             self.position[s] = 0
             self._tp_price[s] = 0.0; self._sl_price[s] = 0.0
-            self._bracket_log.append({"event": "close", "symbol": s, "bar": int(t), "hit": hit,
-                                      "level": float(level), "pnl": float(realized)})
+            # R:R REWARD (the ratio self-discovery; constants in config/constants -- no inline magic):
+            tp_pct = abs(tp / entry - 1.0); sl_pct = abs(1.0 - sl / entry); rr = tp_pct / max(sl_pct, 1e-12)
+            won = realized > 0.0
+            if won:
+                self._bracket_shaping += float(np.log1p(rr)) * C.RR_BONUS_SCALE          # winner: log-damped R:R bonus
+            elif rr < 1.0:
+                self._bracket_shaping -= (1.0 - rr) * C.RR_PENALTY_SCALE                 # low-R:R loser hurts more
+            if rr < 0.5:
+                self._bracket_shaping -= (0.5 - rr) / 0.5 * C.RR_TAX_SCALE               # soft tax on very low R:R
+            # PER-TRADE R:R LOG: the open record joined with won + pnl (the 10 fields the operator asked for).
+            oi = self._bracket_open_info.get(s) or {}
+            self._bracket_open_info[s] = None
+            self._bracket_log.append({**{k: oi.get(k) for k in (
+                "tp_pct", "sl_pct", "rr", "lot_raw", "lot_used", "clamped", "session_active",
+                "alignment_score_at_entry")}, "event": "close", "symbol": s, "bar": int(t), "hit": hit,
+                "level": float(level), "trade_won": bool(won), "pnl": float(realized)})
         self._mark()
 
     def _set_aggregates(self):
@@ -616,12 +634,16 @@ class PortfolioEnv:
                     max_by_risk = (C.MAX_TRADE_RISK_PCT / 100.0 * self.acc.equity) / max(risk_per_unit, 1e-12)
                     ts = min(lot_raw, max_by_risk)
                     clamped = bool(ts < lot_raw - 1e-12)
-                    self._bracket_log.append({
-                        "event": "open", "symbol": sym, "bar": int(t), "dir": int(target),
-                        "tp_pct": tp_pct, "sl_pct": sl_pct, "rr": tp_pct / max(sl_pct, 1e-12),
-                        "lot_raw": float(lot_raw), "lot_used": float(ts), "clamped": clamped,
-                        "session_active": int(sub.time_feats[t][4] > 0.5 or sub.time_feats[t][5] > 0.5),
-                        "alignment_score_at_entry": float(sub.momentum_matrix[t][_MOM_ALIGN])})
+                    session_active = int(sub.time_feats[t][4] > 0.5 or sub.time_feats[t][5] > 0.5)
+                    info = {"event": "open", "symbol": sym, "bar": int(t), "dir": int(target),
+                            "tp_pct": tp_pct, "sl_pct": sl_pct, "rr": tp_pct / max(sl_pct, 1e-12),
+                            "lot_raw": float(lot_raw), "lot_used": float(ts), "clamped": clamped,
+                            "session_active": session_active,
+                            "alignment_score_at_entry": float(sub.momentum_matrix[t][_MOM_ALIGN])}
+                    self._bracket_log.append(info)
+                    self._bracket_open_info[sym] = info                 # joined with won/pnl at close (R:R log)
+                    if session_active == 0:                             # R:R reward: opening OUTSIDE a session -> penalty
+                        alpha_shaping -= C.RR_SESSION_PENALTY
                 else:
                     # v1.7.0 RISK-BASED sizing (gated): size so a BB(10,1) stop-out loses ~risk_per_trade_pct% of
                     # the pot, capped at the configured size. OFF (risk_per_trade_pct None) -> trade_size == base.
@@ -718,6 +740,7 @@ class PortfolioEnv:
         # =================================================================================================
         reward = float((self.acc.equity - eq_before) / self.cfg.starting_balance) * self.reward_scale
         reward += alpha_shaping            # alpha-shaping (0 unless enabled AND an alpha consensus event fired)
+        reward += self._bracket_shaping    # v1.12.0 R:R reward (set in _apply_brackets; 0 if no bracket closed)
         # SEEK-THE-TARGET (dense): reward NEW progress toward today's +2.5% target (high-water-mark so it
         # can't be farmed by churning). Makes "move toward the day's target" the gradient -> the bot SEEKS
         # profit instead of hiding. Capped at the target (progress in [0,1]); total <= seek_w per won day.

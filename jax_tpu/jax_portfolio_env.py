@@ -45,6 +45,11 @@ from config.constants import (TP_MIN_PCT as _TP_MIN, TP_MAX_PCT as _TP_MAX, SL_M
 from src.data.aux_features import OHLC_COLUMNS as _OHLC_COLS
 _OHLC_HI = BLOCK_RANGES["ohlc"][0] + _OHLC_COLS.index("1m__high")   # intrabar high/low for bracket TP/SL checks
 _OHLC_LO = BLOCK_RANGES["ohlc"][0] + _OHLC_COLS.index("1m__low")
+# v1.12.0 Stage 4 R:R reward scales + the session-active obs flags (london/ny in the time block)
+from config.constants import (RR_BONUS_SCALE as _RR_BONUS, RR_PENALTY_SCALE as _RR_PEN,
+                              RR_TAX_SCALE as _RR_TAX, RR_SESSION_PENALTY as _RR_SESS)
+_TIME_LON = BLOCK_RANGES["time"][0] + 4
+_TIME_NY = BLOCK_RANGES["time"][0] + 5
 
 _HOLD, _BUY, _SELL, _CLOSE = 0, 1, 2, 3
 _CONV_CAP = float(CONVICTION_ALIGN_CAP)   # conviction reward saturates at this many aligned signals
@@ -446,6 +451,9 @@ def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
     # includes this step's close leg, matching CPU). 1:1 with PortfolioEnv.
     over_cap = (daily_trades >= params.overtrade_soft_cap).astype(jnp.float32)
     alpha_shaping = alpha_shaping - params.overtrade_penalty * open_mask * over_cap
+    # R:R reward: opening a BRACKET trade OUTSIDE an active session -> penalty (1:1 with CPU). session = london|ny.
+    sess = ((static.static_obs[j, t, _TIME_LON] > 0.5) | (static.static_obs[j, t, _TIME_NY] > 0.5)).astype(jnp.float32)
+    alpha_shaping = alpha_shaping - _RR_SESS * open_mask * use_bracket * (1.0 - sess)
     agreed_j = jnp.where(open_mask > 0.5, (agree >= 0.5).astype(jnp.float32), agreed_tmp)
     dir_j = jnp.where(open_mask > 0.5, net_dir, dir_tmp)
     entry_j_new = jnp.where(open_mask > 0.5, close_jt, entry_j)
@@ -504,6 +512,7 @@ def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
     # touch (SL checked first; skip the entry bar). Uses the 1m high/low from the OHLC obs block. BEFORE the
     # reward (the realized level PnL is part of this step's reward), then re-mark. 1:1 with _apply_brackets. ---
     bgate = params.bracket_enabled
+    bracket_shaping = 0.0                                    # accumulate the R:R reward over the bracket closes
     for sidx in range(N):
         p = position[sidx]; tp = tp_price[sidx]; sl = sl_price[sidx]
         hi = static.static_obs[sidx, t_new, _OHLC_HI]; lo = static.static_obs[sidx, t_new, _OHLC_LO]
@@ -515,6 +524,15 @@ def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
             * (t_new > entry_bar[sidx]).astype(close_col.dtype) * (hit_sl | hit_tp).astype(close_col.dtype)
         ts_b = trade_size[sidx]
         r_b = p * (level - entry[sidx]) * ts_b - static.cost_frac[sidx] * level * ts_b
+        # R:R REWARD (1:1 with CPU; constants only): rr from the LOCKED levels vs entry, won from realized PnL.
+        e_b = entry[sidx]
+        tp_pct = jnp.abs(tp / e_b - 1.0); sl_pct = jnp.abs(1.0 - sl / e_b)
+        rr = tp_pct / jnp.maximum(sl_pct, 1e-12)
+        won_b = (r_b > 0.0).astype(close_col.dtype)
+        rr_rew = (won_b * jnp.log1p(rr) * _RR_BONUS
+                  - (1.0 - won_b) * (rr < 1.0).astype(close_col.dtype) * (1.0 - rr) * _RR_PEN
+                  - (rr < 0.5).astype(close_col.dtype) * (0.5 - rr) / 0.5 * _RR_TAX)
+        bracket_shaping = bracket_shaping + do_b * rr_rew
         balance = balance + r_b * do_b
         daily_realized = daily_realized + r_b * do_b
         episode_realized = episode_realized + r_b * do_b
@@ -542,7 +560,7 @@ def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
     mfe_atr = jnp.where(in_pos, jnp.maximum(mfe_atr, exc), mfe_atr)
     mae_atr = jnp.where(in_pos, jnp.maximum(mae_atr, -exc), mae_atr)
 
-    reward = ((equity - eq_before) / start) * params.reward_scale + alpha_shaping
+    reward = ((equity - eq_before) / start) * params.reward_scale + alpha_shaping + bracket_shaping
 
     # SEEK-THE-TARGET (dense): reward NEW progress toward today's +2.5% target (high-water-mark so it can't
     # be farmed). Uses the pre-reset day_start (s.day_start_balance) + the just-marked equity. 1:1 with CPU.

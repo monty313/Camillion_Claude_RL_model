@@ -35,6 +35,10 @@ from jax_tpu import jax_config as JC
 from jax_tpu import jax_progress as PROG
 from src.training.env_fingerprint import env_fingerprint
 
+# v1.12.0 Stage 4: the actor freeze/unlock curriculum (config-driven; flips with ACTOR_CURRICULUM_STAGE).
+_HEAD_MASK = jnp.asarray(JC.curriculum_head_mask(), jnp.float32)   # (3,) tp/sl/lot LIVE=1 / FROZEN=0
+_FROZEN_CONT = jnp.asarray(JC.FROZEN_CONT, jnp.float32)            # value a FROZEN head feeds the env
+
 
 def _sample_starts_risk(key, n, warmup, train_end, window):
     """Random training-window starts + domain-randomized (daily_target, trailing_dd) per env."""
@@ -97,13 +101,16 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
             state, obs, key = carry
             key, ak = jax.random.split(key)
             nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
-            logits, value, _cm, _ls = model.apply(net_params, nobs)
-            actions = jax.random.categorical(ak, logits)
-            logp = jnp.take_along_axis(jax.nn.log_softmax(logits), actions[:, None], axis=-1)[:, 0]
-            # v1.12.0: bracket heads threaded through the rollout. Stage 3 fills these from the policy's
-            # continuous tp/sl/lot heads; until then they are zeros (brackets contribute nothing when OFF).
-            zb = jnp.zeros_like(actions, jnp.float32)
-            nstate, nobs2, reward, term, trunc = step_v(state, actions.astype(jnp.int32), zb, zb, zb, static, params)
+            logits, value, cont_mean, cont_log_std = model.apply(net_params, nobs)
+            # v1.12.0 Stage 4: sample the MIXED action (discrete + tp/sl/lot). The curriculum head-mask routes
+            # FROZEN heads to their fixed default (no learning) and LIVE heads to the policy's sample; the stored
+            # continuous log-prob is masked so frozen heads carry no gradient.
+            disc, cont, logp, _lc = PPO.sample_mixed(logits, cont_mean, cont_log_std, ak)
+            actions = disc.astype(jnp.int32)
+            cont_used = _HEAD_MASK * cont + (1.0 - _HEAD_MASK) * _FROZEN_CONT
+            _, logp_c, _ = PPO.mixed_logp_entropy(logits, cont_mean, cont_log_std, actions, cont, head_mask=_HEAD_MASK)
+            nstate, nobs2, reward, term, trunc = step_v(
+                state, actions, cont_used[:, 0], cont_used[:, 1], cont_used[:, 2], static, params)
             done = jnp.maximum(term, trunc)
             key, rk = jax.random.split(key)
             # FAIL -> START OVER and KEEP GOING: a breach restarts a fresh account at the current bar (continue
@@ -112,7 +119,7 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
             fresh_s, fresh_o = _fresh_states(rk, obs.shape[0], static, params, warmup, train_end, window, env)
             restart_s, restart_o = _restart_continue(nstate, static, params, env)
             nstate, nobs2 = _reset_split(trunc, term_only, fresh_s, fresh_o, restart_s, restart_o, nstate, nobs2)
-            trans = (obs, actions.astype(jnp.int32), logp, value, reward, done)
+            trans = (obs, actions, logp, cont, logp_c, value, reward, done)
             return (nstate, nobs2, key), trans
 
         (state, obs, key), trans = jax.lax.scan(body, (state, obs, key), None, length=n_steps)
@@ -123,11 +130,12 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
     @partial(jax.pmap, axis_name="i", static_broadcasted_argnums=())
     def train_iter(net_params, opt_state, norm, state, obs, key, ent_coef):
         state, obs, key, trans, last_value = rollout(net_params, norm, state, obs, key)
-        obs_t, act_t, logp_t, val_t, rew_t, done_t = trans
+        obs_t, act_t, logp_t, cont_t, logpc_t, val_t, rew_t, done_t = trans
         adv, ret = PPO.compute_gae(rew_t, val_t, done_t, last_value)
         # flatten (T, n) -> (T*n, ...)
         flat = lambda x: x.reshape((total,) + x.shape[2:])
         obs_f, act_f, logp_f = flat(obs_t), flat(act_t), flat(logp_t)
+        cont_f, logpc_f = flat(cont_t), flat(logpc_t)
         adv_f, ret_f = flat(adv), flat(ret)
         mask_f = jnp.ones((total,), jnp.float32)
 
@@ -139,9 +147,9 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
         def upd(carry, idx):
             net_params, opt_state = carry
             o = PPO.norm_apply(norm, obs_f[idx].astype(jnp.float32))
-            (loss, aux), grads = jax.value_and_grad(PPO.ppo_loss, has_aux=True)(
-                net_params, model.apply, o, act_f[idx], logp_f[idx],
-                adv_f[idx], ret_f[idx], mask_f[idx], ent_coef)
+            (loss, aux), grads = jax.value_and_grad(PPO.ppo_loss_mixed, has_aux=True)(
+                net_params, model.apply, o, act_f[idx], cont_f[idx], logp_f[idx], logpc_f[idx],
+                adv_f[idx], ret_f[idx], mask_f[idx], ent_coef, _HEAD_MASK)
             grads = jax.lax.pmean(grads, axis_name="i")
             updates, opt_state = optimizer.update(grads, opt_state, net_params)
             net_params = optax.apply_updates(net_params, updates)

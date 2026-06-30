@@ -3,6 +3,34 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] Super-scalper Stage 4: trainer/eval wiring + R:R reward + freeze/unlock curriculum + R:R log
+- **I (Issue):** Wire the policy's tp/sl/lot heads through the rollout + env + eval; add the R:R self-discovery
+  reward; the freeze/unlock curriculum as a CONFIG FLAG (not hardcoded); a per-trade R:R log; and the R:R
+  histogram tooling. Reward constants all named (no inline magic).
+- **R (Rule):** CPU↔JAX bar-for-bar (the R:R reward + session penalty are parity-verified). The actor stays
+  default-OFF (`bracket_enabled=0`) so the discrete trainer is unchanged; the curriculum stage flips with
+  `config.constants.ACTOR_CURRICULUM_STAGE` (no code edits).
+- **A (Application):**
+  - WIRING: `jax_trainer` rollout samples the MIXED action (`PPO.sample_mixed`), routes FROZEN heads to their
+    `FROZEN_*` default + LIVE heads to the sample (curriculum `_HEAD_MASK`), feeds tp/sl/lot to the env, stores
+    cont + open-masked logp, and the update uses `PPO.ppo_loss_mixed(head_mask)`. `jax_eval` drives the
+    brackets from the head MEANS (deterministic) through the same curriculum.
+  - CURRICULUM: `constants.ACTOR_CURRICULUM_STAGE` (1=freeze tp/sl/lot, 2=unlock lot, 3=unlock all) +
+    `FROZEN_TP01/SL01/LOT01` (~1:1 R:R + 1x lot); `jax_config.curriculum_head_mask()` / `FROZEN_CONT`.
+  - R:R REWARD (constants in `constants.py`, zero inline magic): at a bracket close, `+ log1p(rr)*RR_BONUS_SCALE`
+    on a winner, `-(1-rr)*RR_PENALTY_SCALE` on a low-R:R loser, `-(0.5-rr)/0.5*RR_TAX_SCALE` soft tax under 0.5;
+    `-RR_SESSION_PENALTY` for opening outside a session; `RR_SPREAD_PENALTY`/`RR_FTMO_PROXIMITY_PENALTY` named
+    but 0 (no spread feed; FTMO proximity already handled by dd_proximity_coef). Mirrored in the JAX bracket
+    exit loop (1:1).
+  - PER-TRADE R:R LOG: the open record (tp_pct/sl_pct/rr/lot_raw/lot_used/clamped/session_active/
+    alignment_score_at_entry) JOINED at close with trade_won + pnl. `src/analysis/rr_histogram.py` histograms
+    the chosen R:R (overall + per alignment quartile, win-rate, mean pnl).
+- **C (Conclusion):** The multi-head actor is fully wired, default-OFF, parity-clean, with the R:R reward
+  teaching the ratio and the curriculum/log/histogram ready. Verified: full CPU suite + JAX parity (incl.
+  bracket-ON with the R:R reward: max|obs|=1.19e-7, max|reward|=1.39e-17, 63 exits) + mixed-PPO unit tests +
+  rr-histogram/curriculum tests + the mixed-action trainer rollout compiles + runs. R:R histogram on the
+  fed-values data is in the commit message. The super-scalper build (Stages 1-4) is COMPLETE.
+
 ## [2026-06-30] Super-scalper Stage 3: multi-head policy (tp/sl/lot) + mixed-action PPO
 - **I (Issue):** The actor needs to OUTPUT the bracket: 3 continuous heads (tp/sl/lot) alongside the discrete
   direction head, with a real mixed-action PPO. Requirements: shared MLP trunk untouched; tp/sl heads only
