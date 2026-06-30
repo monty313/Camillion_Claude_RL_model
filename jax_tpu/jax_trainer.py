@@ -97,7 +97,7 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
             state, obs, key = carry
             key, ak = jax.random.split(key)
             nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
-            logits, value = model.apply(net_params, nobs)
+            logits, value, _cm, _ls = model.apply(net_params, nobs)
             actions = jax.random.categorical(ak, logits)
             logp = jnp.take_along_axis(jax.nn.log_softmax(logits), actions[:, None], axis=-1)[:, 0]
             # v1.12.0: bracket heads threaded through the rollout. Stage 3 fills these from the policy's
@@ -117,7 +117,7 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
 
         (state, obs, key), trans = jax.lax.scan(body, (state, obs, key), None, length=n_steps)
         nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
-        _, last_value = model.apply(net_params, nobs)
+        last_value = model.apply(net_params, nobs)[1]
         return state, obs, key, trans, last_value
 
     @partial(jax.pmap, axis_name="i", static_broadcasted_argnums=())

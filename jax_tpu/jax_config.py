@@ -26,6 +26,10 @@ from __future__ import annotations
 # ---------------------------------------------------------------------
 OBS_SIZE: int = 557                 # == config.constants.OBS_TOTAL_SIZE (v1.12.0: +4 1m scalp-momentum block)
 N_ACTIONS: int = 4                  # HOLD, BUY, SELL, CLOSE
+# v1.12.0 multi-head actor: 3 CONTINUOUS heads (tp, sl, lot) on the shared trunk, sampled as Gaussians and
+# clipped to [0,1] by the env. log-std is a learnable state-independent param (like SB3 continuous actions).
+N_CONT_ACTIONS: int = 3             # tp01, sl01, lot01
+CONT_LOG_STD_INIT: float = -0.5     # initial log-std for the continuous heads (std ~ 0.61)
 N_STATIC_OBS: int = 499             # precomputed per-bar blocks (see jax_static_features); +4 scalp_momentum v1.12.0
 N_DYNAMIC_OBS: int = 58             # account/sizing/recent (40) + trade_risk (14) + consistency (4, v1.8.0)
 

@@ -3,6 +3,30 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-06-30] Super-scalper Stage 3: multi-head policy (tp/sl/lot) + mixed-action PPO
+- **I (Issue):** The actor needs to OUTPUT the bracket: 3 continuous heads (tp/sl/lot) alongside the discrete
+  direction head, with a real mixed-action PPO. Requirements: shared MLP trunk untouched; tp/sl heads only
+  active + only in the loss on BUY/SELL (masked on HOLD/CLOSE); Gaussian log-prob/entropy/sampling JAX-native
+  (no NumPy in the JAX path); PPO clip applied to the continuous heads INDEPENDENTLY from the discrete head.
+- **R (Rule):** Policy + PPO math only (no env/reward change). The continuous heads stay DORMANT until Stage 4
+  wires them into the rollout + env (the discrete trainer is unchanged: `ppo_loss` ignores the new heads).
+- **A (Application):**
+  - `jax_ppo.CamillionPolicy`: the 3x256 tanh trunk is UNCHANGED; added `cont_mean` (3 heads) on the same trunk
+    `x` + a learnable state-independent `cont_log_std` param -> returns `(logits, value, cont_mean,
+    cont_log_std)`. `jax_config`: `N_CONT_ACTIONS=3`, `CONT_LOG_STD_INIT=-0.5`.
+  - JAX-native mixed-action math: `sample_mixed` (categorical direction + Gaussian tp/sl/lot via
+    `jax.random.normal`; `jax.scipy.stats.norm.logpdf`); `mixed_logp_entropy` (re-eval log-prob + entropy for
+    the PPO update; continuous log-prob/entropy OPEN-masked = counts only on BUY/SELL; optional `head_mask`
+    freezes heads for the curriculum); `ppo_loss_mixed` (discrete + continuous each get their OWN clipped
+    surrogate -> INDEPENDENT ratios; continuous surrogate open-masked; reports pg_disc / pg_cont).
+  - Updated every `model.apply` caller (rollout, eval x2/x1, proof) to the 4-output policy (heads ignored until
+    Stage 4). NOTE: ONNX export (`export_to_pytorch`) still emits the 2-output net -> update at deployment.
+- **C (Conclusion):** The policy can produce a full bracket action and the PPO objective handles the mixed
+  space correctly (independent clip, open-masking, JAX-native Gaussian). Verified: `test_mixed_ppo.py` (6/6:
+  4-head shapes, Gaussian correctness, HOLD/CLOSE masking, head-mask freeze, sample shapes+mask, independent
+  clip with pg_cont==0 on an all-HOLD batch); proof harness + trainer compile + run with the 4-output policy.
+  NEXT: Stage 4 (wire the heads into the rollout/env + R:R reward + freeze/unlock curriculum + R:R log).
+
 ## [2026-06-30] Super-scalper Stage 2b: JAX bracket execution + bracket-ON parity + action threading
 - **I (Issue):** Mirror Stage 2a's CPU bracket model in the branchless JAX env, prove CPU↔JAX bracket parity to
   ~1e-7, and thread the new action tuple (direction, tp, sl, lot) through the trainer AND eval — no dangling

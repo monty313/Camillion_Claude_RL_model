@@ -153,7 +153,7 @@ def counterfactual_probe(net_params, norm, base_obs, *, block="momentum", dim, s
     batch = np.tile(np.asarray(base_obs, np.float32).reshape(1, -1), (len(sweep), 1))
     batch[:, lo + dim] = sweep
     nob = PPO.norm_apply(norm, jnp.asarray(batch))
-    logits, _ = model.apply(net_params, nob)
+    logits, _, _, _ = model.apply(net_params, nob)
     probs = np.asarray(jax.nn.softmax(logits, axis=-1))
     feat = MOMENTUM_NAMES[dim] if block == "momentum" else f"{block}[{dim}]"
     return {"block": block, "dim": dim, "feature": feat, "sweep": sweep.tolist(),

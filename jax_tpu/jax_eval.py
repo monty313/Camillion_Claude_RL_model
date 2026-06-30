@@ -68,7 +68,7 @@ def _run_windows(net_params, norm, starts, env_params, static, ends_dtf_trf, win
             actions = _consensus_actions(state, static)          # follow-the-alphas baseline
         else:
             nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
-            logits, _ = model.apply(net_params, nobs)
+            logits, _, _, _ = model.apply(net_params, nobs)
             actions = jnp.argmax(logits, axis=-1).astype(jnp.int32)   # the trained policy (deterministic)
         zb = jnp.zeros_like(actions, jnp.float32)                # bracket heads (Stage 3 fills these)
         state, obs, _r, term, trunc = step_v(state, actions, zb, zb, zb, static, env_params)
@@ -107,7 +107,7 @@ def _won_day_walk(net_params, norm, starts, env_params, static, ends_dtf_trf, wa
         state, obs, maxstreak, amix, sexp, dead = carry
         prev_days = state.days_elapsed
         nobs = PPO.norm_apply(norm, obs.astype(jnp.float32))
-        logits, _ = model.apply(net_params, nobs)
+        logits, _, _, _ = model.apply(net_params, nobs)
         raw = jnp.argmax(logits, axis=-1).astype(jnp.int32)
         # FAIL -> STOP TRADING FOR THE DAY: while "dead" (breached today) force CLOSE so the bot is FLAT and
         # OUT until the next day, then it restarts fresh (operator: "stops trading for that day, restarts the
