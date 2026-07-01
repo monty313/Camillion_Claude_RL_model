@@ -8,35 +8,51 @@ indicators — all under **FTMO-style** challenge rules.
 > Mission: not to maximize PnL, but to **repeatedly pass FTMO-style challenges**
 > (2.5% daily target / 4% trailing wall). Evolved from the `Quantra` repo.
 
-## Status — Phase 0 (skeleton)
-Foundation only: configs, the locked observation contract, indicator registry +
-stubs, `BaseStrategy` + `StrategyRegistry` (64 fixed slots), the signal/observation
-builders, account + risk scaffolds, and the shape-contract tests. **No RL training,
-no UI yet** (those are Phases 1 and 2).
+## Status — JAX/TPU trainer + multi-head "super-scalper" actor
+The full pipeline is built and CPU↔JAX bar-for-bar parity-verified: a shared-pot **PortfolioEnv** (all symbols,
+one FTMO pot), an on-device **PPO trainer** (`jax_tpu/`), a rich **observation** (v1.12.0, **557** float32),
+and a **multi-head actor** that outputs direction + continuous **TP / SL / lot** (bracket orders with a hard
+1%-equity risk clamp), trained via a **freeze/unlock curriculum** and a self-discovering **R:R reward**.
+The bracket actor ships **default-OFF** (`bracket_enabled=0`) so the proven discrete bot is unchanged.
 
-## The observation (locked: 367 float32, contract `v1.1.0`)
-| Block | Size | What it is |
-|---|---|---|
-| indicators | 200 | raw values, 5 TFs x 40 (NOT normalized; TA-Lib optional) |
-| alpha_values | 64 | strategy outputs `+1/-1/0` (fixed slots) |
-| alpha_mask | 64 | occupancy: `1` assigned, `0` empty slot |
-| alpha_summary | 4 | buy% / sell% / active% / net% |
-| signal_memory | 5 | last-5-bar net signal balance |
-| signal_accuracy | 2 | rolling 1-bar / 3-bar accuracy (no leakage) |
-| account_daily | 7 | daily win%, pnl%, dd%, target%, risk%, trades%, streak% |
-| account_episode | 7 | episode win%, pnl%, dd%, target%, pass%, risk%, streak% |
-| time | 6 | time-of-day / day-of-week / session flags |
-| portfolio | 8 | open positions, exposure, unrealized pnl, equity/balance |
+## The observation (locked: **557** float32, contract `v1.12.0`)
+Raw indicators (220 = 44×5 TFs) + alpha values/mask/summary/memory/accuracy + account (daily/episode) + time +
+portfolio + alpha streak + sizing + cross-asset + recent-context + raw OHLC + trade-risk + consistency +
+**momentum**-perception + **hug-pressure** + **dual-BB interactions** + **1m scalp-momentum**. Blocks are
+**append-only** and version-bumped; adding strategies fills the 64 alpha slots without changing the shape.
+Full per-block table + version history: **`docs/OBSERVATION_CONTRACT.md`**.
 
-**Adding strategies fills slots — the shape never changes.** See
-`docs/OBSERVATION_CONTRACT.md`.
+## QUICKSTART — train the bot
+Training runs on a Colab **TPU** via **`jax_tpu/notebooks/Camillion_JAX_TPU_Train.ipynb`** (Steps 0→8b; Step 8c
+is the "prove it learned the principle" report). Two knobs select the mode:
+- **`bracket_enabled`** — a Step-8b `env_param_kwargs` value (`0`=discrete bot, `1`=TP/SL/lot bracket actor).
+- **`ACTOR_CURRICULUM_STAGE`** — in `config/constants.py` (`1`=freeze tp/sl/lot, `2`=unlock lot, `3`=unlock all).
+
+```text
+a) BASELINE (discrete actor — the proven path; recommended first run)
+   Run the notebook Steps 0→8b as shipped. bracket_enabled is unset -> 0. Read Step 8c (proof report).
+
+b) STAGE 1 CURRICULUM (learn WHEN to trade; tp/sl/lot FROZEN at ~1:1 R:R + 1x lot)
+   - config/constants.py:        ACTOR_CURRICULUM_STAGE = 1
+   - Step 8b env_param_kwargs:    add   bracket_enabled=1.0
+   Run 8b. Watch direction accuracy / win-rate stabilize (not PnL yet).
+
+c) FLIP TO STAGE 2, then 3   (nothing else changes — the flag drives the rollout + PPO)
+   - Stage 2 (unlock lot):   config/constants.py  ACTOR_CURRICULUM_STAGE = 2
+   - Stage 3 (unlock all):   config/constants.py  ACTOR_CURRICULUM_STAGE = 3
+   Keep bracket_enabled=1.0. After a real run, `src/analysis/rr_histogram.py` on the bracket log shows the
+   LEARNED R:R per alignment (conviction) quartile — the research output.
+```
+**Deploy (MT5/ONNX):** `jax_tpu/export_to_pytorch.py` emits ONNX with outputs
+`direction_logits[4], tp_pct[1], sl_pct[1], lot_mult[1]` (heads clipped+mapped to final units; the deployer
+applies the 1% lot clamp using live equity). ⚠️ The **MT5 EA (`.mq5`) is not in this repo** — its inference
+side must read these **4 outputs** (was 1 before v1.12.0), or it will silently break.
 
 ## Run the tests
 ```bash
-# with pytest (Colab):
-pip install pytest && pytest -q
-# or stdlib-only (no install):
-python tools/run_tests.py
+pytest -q                                    # full CPU suite (300 tests)
+JAX_ENABLE_X64=1 pytest -q jax_tpu/tests/    # CPU<->JAX parity gates
+python tools/run_tests.py                    # stdlib-only fallback (no install)
 ```
 
 ## Repo layout
@@ -44,8 +60,10 @@ python tools/run_tests.py
 `src/indicators` TA-Lib registry/stubs · `src/strategies` base + 64-slot registry ·
 `src/signals` summary / memory / accuracy · `src/observation` contract + builder ·
 `src/account` state + win/loss features · `src/risk` FTMO/FREE/breach ·
-`src/env` RL env (Phase 1) · `src/training` trainer (Phase 1) ·
-`src/jarvis` + `src/barbershop` UI/diagnostics (Phase 2) · `tests/` · `docs/`.
+`src/env` shared-pot PortfolioEnv (+ TP/SL/lot bracket model) · `src/observation` obs blocks
+(momentum / hug / bb-interactions / scalp) · `src/analysis` R:R histogram ·
+`jax_tpu/` on-device PPO trainer + envs + **multi-head policy** + CPU↔JAX parity + ONNX export ·
+`src/jarvis` read-only cockpit · `tests/` · `docs/`.
 
 ## Disclaimer
 Research software for simulated prop-firm challenges. Not financial advice.

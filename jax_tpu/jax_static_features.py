@@ -1,7 +1,7 @@
 # =====================================================================
 # WHEN 2026-06-28 | WHO Claude for Monty
 # WHY  Build, ONCE on the host, the things the JAX env indexes instead of
-#      recomputing: (1) the (T, 517) STATIC observation tensor with the 9 per-bar
+#      recomputing: (1) the (T, 557) STATIC observation tensor with the 9 per-bar
 #      blocks placed at their exact contract indices (dynamic slots zeroed), and
 #      (2) the per-bar + per-symbol scalar arrays the branchless step needs
 #      (close, is_new_day, minute_of_day, ref_move, recent-context ranges, ...).
@@ -17,10 +17,10 @@
 # CHANGE_NOTES(IRAC): I: rewriting indicators/alphas in jnp is huge + risky; they're
 #   already precomputed on the host. R: CLAUDE.md #3 (no TA-Lib/pandas in step) +
 #   the shared-table scaling plan. A: lift the 9 static blocks from the CPU env into a
-#   (T,517) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
+#   (T,557) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
 #   static obs + a tiny per-env state -> thousands of envs fit on a TPU.
 # =====================================================================
-"""Host builder for the shared (T,517) static obs tensor + per-bar/per-symbol scalars."""
+"""Host builder for the shared (T,557) static obs tensor + per-bar/per-symbol scalars."""
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
@@ -50,7 +50,7 @@ DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 class StaticData:
     """Everything the JAX env needs that is FIXED per (symbol, bar). Arrays are numpy
     here; jax_env converts to device arrays once and shares them read-only."""
-    static_obs: np.ndarray      # (T, 517) float32 — static blocks placed, dynamic = 0
+    static_obs: np.ndarray      # (T, 557) float32 — static blocks placed, dynamic = 0
     close: np.ndarray           # (T,) float64 — price for P&L + mark
     is_new_day: np.ndarray      # (T,) float32 — 1.0 if bar t starts a new day vs t-1
     open_gate_blocked: np.ndarray  # (T,) float32 — 1.0 where a new directional open is gated (5m CCI neutral)
@@ -193,7 +193,7 @@ class PortfolioStaticData:
     pot. alpha_matrix + occupancy are kept raw so the portfolio's alpha-shaping reward can recompute
     the firing-alpha consensus on-device."""
     symbols: tuple
-    static_obs: np.ndarray      # (N, T, 499)
+    static_obs: np.ndarray      # (N, T, 557)
     close: np.ndarray           # (N, T) float64
     is_new_day: np.ndarray      # (T,)   float32 (shared clock — symbols are time-aligned)
     ref_move: np.ndarray        # (N, T)

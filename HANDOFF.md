@@ -13,6 +13,17 @@ This repo already ships the wiring described below:
 
 ---
 
+> **BOT STATE (2026-07-01) — read this first.** The policy is now a **multi-head "super-scalper" actor**:
+> observation **v1.12.0 (557 float32)**; the actor outputs direction + continuous **TP / SL / lot** (bracket
+> orders, 1%-equity risk clamp), trained via a freeze/unlock **curriculum** (`ACTOR_CURRICULUM_STAGE` 1→2→3)
+> and an **R:R self-discovery reward**. The bracket actor is **default-OFF** (`bracket_enabled=0`) so the
+> discrete bot + this cockpit wiring are unchanged. **Super-scalper Stages 1–4 are complete + CPU↔JAX
+> parity-verified**; the **ONNX export** now emits `direction_logits[4], tp_pct, sl_pct, lot_mult`. Deferred:
+> the **MT5 EA (`.mq5`, external) must read the 4 ONNX outputs** before live deployment. Details:
+> `TRAINING_TASKS.md`, `README.md` QUICKSTART, `docs/UPDATE_LOG.md`.
+
+---
+
 ## 0. The big picture
 
 ```

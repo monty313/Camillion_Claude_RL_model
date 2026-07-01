@@ -353,11 +353,15 @@ if _ARG:
             obs.append(np.asarray(o))
         O = np.stack(obs).astype(np.float32)
         import onnxruntime as ort
-        ol = ort.InferenceSession(out).run(None, {"obs": O})[0]
-        jl, _ = model.apply(p, PPO.norm_apply(norm, jnp.asarray(O)))
-        d2 = float(np.max(np.abs(ol - np.asarray(jl))))
-        assert d2 < 1e-4, f"ONNX vs JAX on rollout obs diff {d2}"
-        return f"ONNX matches JAX on {len(obs)} REAL rollout observations: max|logit|={d2:.2e}"
+        sess = ort.InferenceSession(out)
+        outs = {o.name: v for o, v in zip(sess.get_outputs(), sess.run(None, {"obs": O}))}   # multi-head (v1.12.0)
+        jl, jtp, jsl, jlot = EXP._jax_heads(p, norm, O)
+        d2 = max(float(np.max(np.abs(outs["direction_logits"] - jl))),
+                 float(np.max(np.abs(outs["tp_pct"][:, 0] - jtp))),
+                 float(np.max(np.abs(outs["sl_pct"][:, 0] - jsl))),
+                 float(np.max(np.abs(outs["lot_mult"][:, 0] - jlot))))
+        assert d2 < 1e-4, f"ONNX vs JAX (all heads) on rollout obs diff {d2}"
+        return f"ONNX matches JAX (dir+tp/sl/lot) on {len(obs)} REAL rollout observations: max|diff|={d2:.2e}"
 
     def fingerprint_contract():
         from src.training.env_fingerprint import env_fingerprint

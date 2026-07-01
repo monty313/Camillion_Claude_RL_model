@@ -631,7 +631,10 @@ class PortfolioEnv:
                     lot_mult = C.LOT_MIN_MULT + min(max(float(lot01), 0.0), 1.0) * (C.LOT_MAX_MULT - C.LOT_MIN_MULT)
                     lot_raw = lot_mult * base
                     risk_per_unit = sl_pct * entry_px                       # price distance to SL (trade_size = $/price)
-                    max_by_risk = (C.MAX_TRADE_RISK_PCT / 100.0 * self.acc.equity) / max(risk_per_unit, 1e-12)
+                    # use eq_before (pre-step equity, captured at step start) NOT self.acc.equity, which on a
+                    # REVERSAL (close-leg ran first) is post-close balance-only -> would diverge from the JAX env
+                    # (which clamps on pre-step equity). eq_before is 1:1 with JAX.
+                    max_by_risk = (C.MAX_TRADE_RISK_PCT / 100.0 * eq_before) / max(risk_per_unit, 1e-12)
                     ts = min(lot_raw, max_by_risk)
                     clamped = bool(ts < lot_raw - 1e-12)
                     session_active = int(sub.time_feats[t][4] > 0.5 or sub.time_feats[t][5] > 0.5)

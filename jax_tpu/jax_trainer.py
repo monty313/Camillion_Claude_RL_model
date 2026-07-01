@@ -35,9 +35,9 @@ from jax_tpu import jax_config as JC
 from jax_tpu import jax_progress as PROG
 from src.training.env_fingerprint import env_fingerprint
 
-# v1.12.0 Stage 4: the actor freeze/unlock curriculum (config-driven; flips with ACTOR_CURRICULUM_STAGE).
-_HEAD_MASK = jnp.asarray(JC.curriculum_head_mask(), jnp.float32)   # (3,) tp/sl/lot LIVE=1 / FROZEN=0
-_FROZEN_CONT = jnp.asarray(JC.FROZEN_CONT, jnp.float32)            # value a FROZEN head feeds the env
+# v1.12.0 Stage 4: the actor freeze/unlock curriculum is resolved per-run INSIDE make_train_iter (from an
+# explicit curriculum_stage arg, default config.constants.ACTOR_CURRICULUM_STAGE) -- NOT a module constant, so
+# it can't get stuck at an import-time value when the stage is changed for a new run.
 
 
 def _sample_starts_risk(key, n, warmup, train_end, window):
@@ -84,10 +84,15 @@ def _reset_split(trunc, term_only, fresh_s, fresh_o, restart_s, restart_o, cont_
     return state, obs
 
 
-def make_train_iter(static, params, warmup, train_end, window, env=JE):
+def make_train_iter(static, params, warmup, train_end, window, env=JE, curriculum_stage=None):
     """Build the pmapped one-iteration function (rollout + GAE + PPO epochs). `env` is the env
-    module (jax_env for single-symbol, jax_portfolio_env for the shared pot)."""
+    module (jax_env for single-symbol, jax_portfolio_env for the shared pot). `curriculum_stage` (1/2/3) picks
+    the actor freeze/unlock mask AT BUILD TIME (default: config.constants.ACTOR_CURRICULUM_STAGE) -- passing it
+    EXPLICITLY (e.g. from the Step-8b kwargs) avoids the import-cache gotcha of editing constants.py in a live
+    kernel."""
     step_v = jax.vmap(env.step, in_axes=(0, 0, 0, 0, 0, None, None))   # +tp01/sl01/lot01 bracket heads (v1.12.0)
+    head_mask = jnp.asarray(JC.curriculum_head_mask(curriculum_stage), jnp.float32)   # (3,) tp/sl/lot LIVE/FROZEN
+    frozen_cont = jnp.asarray(JC.FROZEN_CONT, jnp.float32)             # value a FROZEN head feeds the env
     model = PPO.CamillionPolicy()
     optimizer = PPO.make_optimizer()
     n_per_core = JC.N_ENVS_PER_CORE
@@ -107,8 +112,10 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
             # continuous log-prob is masked so frozen heads carry no gradient.
             disc, cont, logp, _lc = PPO.sample_mixed(logits, cont_mean, cont_log_std, ak)
             actions = disc.astype(jnp.int32)
-            cont_used = _HEAD_MASK * cont + (1.0 - _HEAD_MASK) * _FROZEN_CONT
-            _, logp_c, _ = PPO.mixed_logp_entropy(logits, cont_mean, cont_log_std, actions, cont, head_mask=_HEAD_MASK)
+            cont_used = head_mask * cont + (1.0 - head_mask) * frozen_cont
+            # store + score the action the env ACTUALLY executed (cont_used): live heads == the sample; frozen
+            # heads == the fixed default (their log-prob is head-masked to 0 either way, so no garbage gradient).
+            _, logp_c, _ = PPO.mixed_logp_entropy(logits, cont_mean, cont_log_std, actions, cont_used, head_mask=head_mask)
             nstate, nobs2, reward, term, trunc = step_v(
                 state, actions, cont_used[:, 0], cont_used[:, 1], cont_used[:, 2], static, params)
             done = jnp.maximum(term, trunc)
@@ -119,7 +126,7 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
             fresh_s, fresh_o = _fresh_states(rk, obs.shape[0], static, params, warmup, train_end, window, env)
             restart_s, restart_o = _restart_continue(nstate, static, params, env)
             nstate, nobs2 = _reset_split(trunc, term_only, fresh_s, fresh_o, restart_s, restart_o, nstate, nobs2)
-            trans = (obs, actions, logp, cont, logp_c, value, reward, done)
+            trans = (obs, actions, logp, cont_used, logp_c, value, reward, done)
             return (nstate, nobs2, key), trans
 
         (state, obs, key), trans = jax.lax.scan(body, (state, obs, key), None, length=n_steps)
@@ -149,7 +156,7 @@ def make_train_iter(static, params, warmup, train_end, window, env=JE):
             o = PPO.norm_apply(norm, obs_f[idx].astype(jnp.float32))
             (loss, aux), grads = jax.value_and_grad(PPO.ppo_loss_mixed, has_aux=True)(
                 net_params, model.apply, o, act_f[idx], cont_f[idx], logp_f[idx], logpc_f[idx],
-                adv_f[idx], ret_f[idx], mask_f[idx], ent_coef, _HEAD_MASK)
+                adv_f[idx], ret_f[idx], mask_f[idx], ent_coef, head_mask)
             grads = jax.lax.pmean(grads, axis_name="i")
             updates, opt_state = optimizer.update(grads, opt_state, net_params)
             net_params = optax.apply_updates(net_params, updates)
@@ -176,7 +183,7 @@ def _unreplicate(tree):
 def train(static_data, *, save_dir=JC.SAVE_DIR, resume=True, total_updates=None,
           eval_every=JC.EVAL_EVERY, target_streak=JC.TARGET_WON_DAY_STREAK,
           n_envs_per_core=None, n_steps=None, verbose=True, max_iters=None, env_param_kwargs=None,
-          on_eval=None, log_every=10, env=JE, anneal_updates=None):
+          on_eval=None, log_every=10, env=JE, anneal_updates=None, curriculum_stage=None):
     """Train until `target_streak` consecutive held-out challenge passes; save everything to Drive.
 
     `static_data` is a jax_static_features.StaticData (one symbol). `env_param_kwargs` overrides
@@ -201,7 +208,7 @@ def train(static_data, *, save_dir=JC.SAVE_DIR, resume=True, total_updates=None,
     key = jax.random.PRNGKey(JC.SEED)
     model, net_params = PPO.init_params(key)
     norm = PPO.norm_init()
-    train_iter, optimizer = make_train_iter(static, params, warmup, train_end, window, env)
+    train_iter, optimizer = make_train_iter(static, params, warmup, train_end, window, env, curriculum_stage)
     opt_state = optimizer.init(net_params)
 
     start_update = 0

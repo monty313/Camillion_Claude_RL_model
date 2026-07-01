@@ -8,6 +8,31 @@
 
 ---
 
+## ✅ MULTI-HEAD "SUPER-SCALPER" ACTOR — Stages 1–4 COMPLETE (2026-06-30/07-01)
+The TP/SL/lot bracket actor, CPU↔JAX parity-verified, **default-OFF** (`bracket_enabled=0` → the proven
+discrete bot is unchanged). Flip on via the QUICKSTART in `README.md`.
+- [x] ✅ **Stage 1** — 1m `scalp_momentum` obs block (4) + over-trading penalty (`150c761`)
+- [x] ✅ **Stage 2a** — CPU TP/SL bracket model + 1%-equity lot clamp + fed-values test (`95b4c7c`)
+- [x] ✅ **Stage 2b** — JAX bracket execution (branchless) + bracket-ON parity **max|reward|=1.4e-17** + action
+      threaded through trainer AND eval (`285cb4e`)
+- [x] ✅ **Stage 3** — multi-head policy (3 continuous tp/sl/lot heads on the shared trunk) + mixed-action PPO
+      (JAX-native Gaussian, HOLD/CLOSE-masked, independent clip) (`ba49b75`)
+- [x] ✅ **Stage 4** — rollout/eval wiring + R:R self-discovery reward (named constants) + freeze/unlock
+      **curriculum flag** (`ACTOR_CURRICULUM_STAGE` 1→2→3) + per-trade R:R log + `rr_histogram` (`41fc7e1`)
+- [x] ✅ **ONNX export updated to the multi-head net** — outputs `direction_logits[4], tp_pct, sl_pct,
+      lot_mult` (JAX↔torch diff ~3e-8). `jax_tpu/export_to_pytorch.py`.
+
+**Deferred / to track:**
+- [ ] ⬜ **MT5 EA (`.mq5`) inference side** — NOT in this repo; must be updated to read the **4 ONNX outputs**
+      (was 1). REQUIRED before live MT5 deployment; NOT blocking training. `feat/jarvis-bridge`.
+- [ ] 💬 **Run the baseline** (Step 8b) + read Step 8c proof report — then decide bracket-on training. (Colab/TPU.)
+
+**Config surface (all in `config/constants.py`):** `ACTOR_CURRICULUM_STAGE`, `FROZEN_TP01/SL01/LOT01`,
+`TP/SL_MIN/MAX_PCT`, `LOT_MIN/MAX_MULT`, `MAX_TRADE_RISK_PCT`, `RR_BONUS/PENALTY/TAX_SCALE`,
+`RR_SESSION/SPREAD/FTMO_PROXIMITY_PENALTY`. `bracket_enabled` is a Step-8b `env_param_kwargs` value.
+
+---
+
 ## ✅ Already done earlier — the learning/quality fixes (commit `0aeafe6`)
 - [x] ✅ Day-by-day report no longer truncates the portfolio run (counted sub-steps)
 - [x] ✅ Anti HOLD-collapse: entropy nudge back on (`ent_coef` 0 → 0.01)

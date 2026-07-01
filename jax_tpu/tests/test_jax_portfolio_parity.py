@@ -205,6 +205,20 @@ def test_portfolio_parity_brackets_on():
     assert ev["bracket_closed"] > 0, "brackets never fired — test is vacuous (raise drift / lower tp01)"
 
 
+def test_portfolio_parity_brackets_reversals():
+    """v1.12.0 audit fix: on a REVERSAL (close-leg + bracket open in the SAME step) with another symbol holding
+    an open position, the bracket 1%-equity CLAMP must use the PRE-STEP equity in BOTH envs (CPU eq_before, JAX
+    eq_before) -> identical lot. Alternating BUY/SELL forces flips; 2 symbols means one holds while the other
+    reverses. Must match bar-for-bar."""
+    syms = ["US30", "XAUUSD"]
+    sym_data = _symbol_data(syms, seed=7, drift=2e-4, with_aux=True)
+    acts = np.where(np.arange(7000) % 8 < 4, 1, 2)             # BUY 4, SELL 4 -> reversals (close+open same step)
+    behaviors = {"bracket": True, "tp01": 0.6, "sl01": 0.4, "lot01": 0.5}
+    mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts, behaviors=behaviors)
+    print(f"\n[portfolio BRACKET REVERSALS] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
+    assert mo < ATOL_OBS and mr < ATOL_REW, f"reversal-clamp parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
+
+
 def test_portfolio_parity_breach():
     """Strong downtrend + BUY-and-hold -> forces a drawdown BREACH (episode terminates). Parity must
     hold through the breach + penalty."""
