@@ -43,6 +43,8 @@ from src.observation.hug_pressure import compute_hug_pressure
 from src.observation.bb_interactions import compute_bb_interactions
 from src.observation.scalp_momentum import compute_scalp_momentum
 from src.observation.trade_permission import compute_trade_permission
+from src.observation.exit_band import (
+    compute_exit_band_rails, compute_exit_band_matrix, build_bracket_state)
 from src.indicators.bollinger import bollinger
 
 
@@ -225,6 +227,13 @@ class TradingEnv:
         # exact entry conditions. Leak-free precompute; the env applies it as a HARD directional open-gate.
         _perm = compute_trade_permission(self.ind, self.close, self.ohlc_matrix, self.time_ns)
         self.trade_wheel_sell = _perm[:, 0]; self.trade_wheel_buy = _perm[:, 1]
+        # v1.13.0: EXIT-BAND -- BB(20,0.5) on the 1m HIGH (buy band) / LOW (sell band). The raw rails (kept NaN
+        # in warmup) feed the exit-band reward penalty; the 4-float matrix (close-vs-rail rooms) is the STATIC
+        # exit_band obs block. Leak-free precompute (never touched in step()).
+        (self.exit_buy_up, self.exit_buy_lo,
+         self.exit_sell_up, self.exit_sell_lo) = compute_exit_band_rails(self.ohlc_matrix)
+        self.exit_band_matrix = compute_exit_band_matrix(
+            self.close, (self.exit_buy_up, self.exit_buy_lo, self.exit_sell_up, self.exit_sell_lo))
         # v1.11.0: DUAL-BB INTERACTIONS (12: squeeze/expansion + cross-TF cascade + BB-extreme MR) -- STATIC.
         self.bb_interactions_matrix = compute_bb_interactions(self.ind, self.close)
         # v1.12.0: 1m SCALP-MOMENTUM (4: 1m fast dist/roc, 1m-vs-5m vol expansion, 1m with-trend cascade) -- STATIC.
@@ -320,7 +329,9 @@ class TradingEnv:
                           # v1.12.0: 1m scalp-momentum scores (4) -- static obs block
                           "scalp_momentum_matrix",
                           # training wheels: directional trade-permission (not obs -- a hard open-gate mask)
-                          "trade_wheel_sell", "trade_wheel_buy")
+                          "trade_wheel_sell", "trade_wheel_buy",
+                          # v1.13.0: BB(20,0.5) exit-band raw rails (penalty) + the 4-float static obs matrix
+                          "exit_buy_up", "exit_buy_lo", "exit_sell_up", "exit_sell_lo", "exit_band_matrix")
 
     def export_precomputed(self) -> dict:
         """Return {name: ndarray} for the cache (the expensive precompute output, read-only)."""
@@ -583,6 +594,10 @@ class TradingEnv:
             "hug_pressure": self.hug_pressure_matrix[i],   # v1.10.0: 15 hugging-pressure scores (static)
             "bb_interactions": self.bb_interactions_matrix[i],   # v1.11.0: 12 dual-BB interaction scores (static)
             "scalp_momentum": self.scalp_momentum_matrix[i],     # v1.12.0: 4 1m scalp-momentum scores (static)
+            "exit_band": self.exit_band_matrix[i],   # v1.13.0: 4 BB(20,0.5) exit-band rooms (static)
+            # v1.13.0 bracket_state: the single-symbol env has no TP/SL bracket -> zeros (PortfolioEnv fills it).
+            "bracket_state": build_bracket_state(pos=0.0, price=float(self.close[i]),
+                                                 tp_price=0.0, sl_price=0.0, entry_atr=0.0),
         })
 
     def _portfolio_block(self):

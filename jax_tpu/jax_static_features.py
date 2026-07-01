@@ -1,7 +1,7 @@
 # =====================================================================
 # WHEN 2026-06-28 | WHO Claude for Monty
 # WHY  Build, ONCE on the host, the things the JAX env indexes instead of
-#      recomputing: (1) the (T, 557) STATIC observation tensor with the 9 per-bar
+#      recomputing: (1) the (T, 563) STATIC observation tensor with the 9 per-bar
 #      blocks placed at their exact contract indices (dynamic slots zeroed), and
 #      (2) the per-bar + per-symbol scalar arrays the branchless step needs
 #      (close, is_new_day, minute_of_day, ref_move, recent-context ranges, ...).
@@ -17,10 +17,10 @@
 # CHANGE_NOTES(IRAC): I: rewriting indicators/alphas in jnp is huge + risky; they're
 #   already precomputed on the host. R: CLAUDE.md #3 (no TA-Lib/pandas in step) +
 #   the shared-table scaling plan. A: lift the 9 static blocks from the CPU env into a
-#   (T,557) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
+#   (T,563) tensor, share it; recompute only the 40 dynamic floats in jnp. C: exact
 #   static obs + a tiny per-env state -> thousands of envs fit on a TPU.
 # =====================================================================
-"""Host builder for the shared (T,557) static obs tensor + per-bar/per-symbol scalars."""
+"""Host builder for the shared (T,563) static obs tensor + per-bar/per-symbol scalars."""
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
@@ -42,7 +42,8 @@ BLOCK_RANGES = _block_ranges()
 # blocks the JAX env recomputes every step (everything else is static, placed here). v1.7.0 adds
 # trade_risk: it depends on the EVOLVING open-position state, so it is recomputed, not placed.
 DYNAMIC_BLOCKS = ("account_daily", "account_episode", "portfolio", "sizing", "recent_context", "trade_risk",
-                  "consistency")  # v1.8.0: multi-day FTMO standing / won-day streak (recomputed each step)
+                  "consistency",       # v1.8.0: multi-day FTMO standing / won-day streak (recomputed each step)
+                  "bracket_state")     # v1.13.0: live TP/SL bracket as obs (recomputed each step)
 DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 
 
@@ -50,7 +51,7 @@ DYNAMIC_SLICES = {b: BLOCK_RANGES[b] for b in DYNAMIC_BLOCKS}
 class StaticData:
     """Everything the JAX env needs that is FIXED per (symbol, bar). Arrays are numpy
     here; jax_env converts to device arrays once and shares them read-only."""
-    static_obs: np.ndarray      # (T, 557) float32 — static blocks placed, dynamic = 0
+    static_obs: np.ndarray      # (T, 563) float32 — static blocks placed, dynamic = 0
     close: np.ndarray           # (T,) float64 — price for P&L + mark
     is_new_day: np.ndarray      # (T,) float32 — 1.0 if bar t starts a new day vs t-1
     open_gate_blocked: np.ndarray  # (T,) float32 — 1.0 where a new directional open is gated (5m CCI neutral)
@@ -73,6 +74,12 @@ class StaticData:
     bb10_1m_lo: np.ndarray      # (T,) float32
     bb10_5m_up: np.ndarray      # (T,) float32
     bb10_5m_lo: np.ndarray      # (T,) float32
+    # v1.13.0 EXIT-BAND raw rails: BB(20,0.5) on 1m HIGH (buy band) / LOW (sell band); feed the exit-band
+    # penalty (the exit_band OBS rooms are already placed byte-identical in static_obs). NaN warmup -> no penalty.
+    exit_buy_up: np.ndarray     # (T,) float32
+    exit_buy_lo: np.ndarray     # (T,) float32
+    exit_sell_up: np.ndarray    # (T,) float32
+    exit_sell_lo: np.ndarray    # (T,) float32
     # per-symbol scalars
     T: int
     starting_balance: float
@@ -143,7 +150,8 @@ def build_static_data(env) -> StaticData:
     place("hug_pressure", env.hug_pressure_matrix)   # v1.10.0: shifted-SMA hugging-pressure (static, byte-identical)
     place("bb_interactions", env.bb_interactions_matrix)   # v1.11.0: dual-BB interactions (static, byte-identical)
     place("scalp_momentum", env.scalp_momentum_matrix)   # v1.12.0: 1m scalp-momentum (static, byte-identical)
-    # dynamic blocks (account_daily/episode, portfolio, sizing, recent_context) stay 0 here.
+    place("exit_band", env.exit_band_matrix)   # v1.13.0: BB(20,0.5) exit-band rooms (static, byte-identical)
+    # dynamic blocks (account_daily/episode, portfolio, sizing, recent_context, bracket_state) stay 0 here.
 
     # sanitize EXACTLY like the CPU builder (np.nan_to_num on the whole vector)
     so = np.nan_to_num(so, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
@@ -161,6 +169,10 @@ def build_static_data(env) -> StaticData:
         open_gate_blocked=np.asarray(env.open_gate_blocked, dtype=np.float32).ravel(),
         trade_wheel_sell=np.asarray(env.trade_wheel_sell, dtype=np.float32).ravel(),
         trade_wheel_buy=np.asarray(env.trade_wheel_buy, dtype=np.float32).ravel(),
+        exit_buy_up=np.asarray(env.exit_buy_up, dtype=np.float32).ravel(),
+        exit_buy_lo=np.asarray(env.exit_buy_lo, dtype=np.float32).ravel(),
+        exit_sell_up=np.asarray(env.exit_sell_up, dtype=np.float32).ravel(),
+        exit_sell_lo=np.asarray(env.exit_sell_lo, dtype=np.float32).ravel(),
         minute_of_day=np.asarray(env._minute_of_day, dtype=np.int32).ravel(),
         ref_move=np.asarray(env.ref_move, dtype=np.float32).ravel(),
         week_avg=np.asarray(env._week_avg, dtype=np.float32).ravel(),
@@ -197,7 +209,7 @@ class PortfolioStaticData:
     pot. alpha_matrix + occupancy are kept raw so the portfolio's alpha-shaping reward can recompute
     the firing-alpha consensus on-device."""
     symbols: tuple
-    static_obs: np.ndarray      # (N, T, 557)
+    static_obs: np.ndarray      # (N, T, 563)
     close: np.ndarray           # (N, T) float64
     is_new_day: np.ndarray      # (T,)   float32 (shared clock — symbols are time-aligned)
     ref_move: np.ndarray        # (N, T)
@@ -208,6 +220,11 @@ class PortfolioStaticData:
     open_gate_blocked: np.ndarray  # (N, T) — 1.0 where the 5m is FLAT (both CCIs in +/-50) -> block new opens
     trade_wheel_sell: np.ndarray   # (N, T) — 1.0 where the operator's conditions permit a SELL open (wheels)
     trade_wheel_buy: np.ndarray    # (N, T) — 1.0 where they permit a BUY open
+    # v1.13.0 EXIT-BAND raw rails (per symbol) for the exit-band penalty (NaN warmup -> no penalty)
+    exit_buy_up: np.ndarray     # (N, T)
+    exit_buy_lo: np.ndarray     # (N, T)
+    exit_sell_up: np.ndarray    # (N, T)
+    exit_sell_lo: np.ndarray    # (N, T)
     alpha_matrix: np.ndarray    # (N, T, 64) — +1/-1/0 per alpha slot
     occupancy: np.ndarray       # (N, 64)    — 1 assigned / 0 empty
     position_size: np.ndarray   # (N,)
@@ -251,6 +268,10 @@ def build_portfolio_static(subs: dict) -> PortfolioStaticData:
         open_gate_blocked=st("open_gate_blocked").astype(np.float32),
         trade_wheel_sell=st("trade_wheel_sell").astype(np.float32),
         trade_wheel_buy=st("trade_wheel_buy").astype(np.float32),
+        exit_buy_up=st("exit_buy_up").astype(np.float32),
+        exit_buy_lo=st("exit_buy_lo").astype(np.float32),
+        exit_sell_up=st("exit_sell_up").astype(np.float32),
+        exit_sell_lo=st("exit_sell_lo").astype(np.float32),
         alpha_matrix=np.stack([np.asarray(subs[s].alpha_matrix, np.float32) for s in symbols], axis=0),
         occupancy=np.stack([np.asarray(subs[s].occupancy, np.float32) for s in symbols], axis=0),
         position_size=np.array([sds[s].position_size for s in symbols], np.float64),

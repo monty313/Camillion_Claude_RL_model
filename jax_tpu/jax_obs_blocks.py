@@ -272,3 +272,24 @@ def consistency_features(won_day_streak, days_won, days_elapsed, target=_CONSIST
     won_rate = jnp.clip(jnp.asarray(days_won, f) / jnp.maximum(jnp.asarray(days_elapsed, f), 1.0), 0.0, 1.0)
     days_norm = jnp.clip(jnp.asarray(days_elapsed, f) / t, 0.0, 1.0)
     return jnp.stack([streak_norm, days_won_norm, won_rate, days_norm], axis=-1).astype(f)
+
+
+# --- v1.13.0 BRACKET-STATE block (2) — jnp twin of src/observation/exit_band.build_bracket_state ---
+_BRACKET_DIST_SCALE = 5.0   # MUST match exit_band.BRACKET_DIST_SCALE (entry-ATR units: 5 ATR of room -> 1.0)
+
+
+def bracket_state_features(pos, price, tp_price, sl_price, entry_atr):
+    """bracket_state block (2): signed distance to the locked TP / SL in entry-ATR units, clip[-1,1], zero when
+    flat or no bracket. CPU ref: src/observation/exit_band.build_bracket_state (same normalizer). Computed in the
+    inputs' native (promoted) dtype so x64 parity holds; only the final stack is cast to float32."""
+    f = _F32
+    pos = jnp.asarray(pos)
+    price = jnp.asarray(price)
+    tp = jnp.asarray(tp_price); sl = jnp.asarray(sl_price)
+    in_trade = (pos != 0.0).astype(f)
+    has_tp = (tp != 0.0).astype(f)
+    has_sl = (sl != 0.0).astype(f)
+    eatr = jnp.maximum(jnp.asarray(entry_atr), _TR_EPS)
+    tp_room = jnp.clip(pos * (tp - price) / eatr / _BRACKET_DIST_SCALE, -1.0, 1.0) * in_trade * has_tp
+    sl_room = jnp.clip(pos * (price - sl) / eatr / _BRACKET_DIST_SCALE, -1.0, 1.0) * in_trade * has_sl
+    return jnp.stack([tp_room.astype(f), sl_room.astype(f)], axis=-1).astype(f)

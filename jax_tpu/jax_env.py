@@ -230,8 +230,11 @@ def _dynamic_obs(s: EnvState, static: DeviceStatic, params: EnvParams, t) -> dic
         static.bb10_1m_up[t], static.bb10_1m_lo[t], static.bb10_5m_up[t], static.bb10_5m_lo[t])
     # v1.8.0 consistency: single-symbol env has no won-day streak -> 0/0, only days_elapsed is real
     cons = jax_obs_blocks.consistency_features(0.0, 0.0, s.days_elapsed)
+    # v1.13.0 bracket_state: the single-symbol env has no TP/SL bracket -> zeros (1:1 with TradingEnv._obs)
+    brk = jax_obs_blocks.bracket_state_features(0.0, static.close[t], 0.0, 0.0, 0.0)
     return {"account_daily": daily, "account_episode": epi, "portfolio": port,
-            "sizing": size, "recent_context": ctx, "trade_risk": tr, "consistency": cons}
+            "sizing": size, "recent_context": ctx, "trade_risk": tr, "consistency": cons,
+            "bracket_state": brk}
 
 
 def _assemble_obs(s: EnvState, static: DeviceStatic, params: EnvParams, t) -> jnp.ndarray:

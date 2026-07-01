@@ -70,6 +70,18 @@ TRADE_RISK_NAMES = (
 CONSISTENCY_NAMES = (
     "won_day_streak_norm", "days_won_norm", "won_day_rate", "days_into_journey_norm",
 )
+# v1.13.0 EXIT-BAND block: signed room from close to the 1m BB(20,0.5) rails -- band on HIGH = the BUY band,
+# band on LOW = the SELL band. Normalized by the band half-width, clip[-1,1] (negative => close OUTSIDE that
+# rail = the exit-band penalty zone). STATIC (market-only). Order MUST match src/observation/exit_band.py.
+EXIT_BAND_NAMES = (
+    "xb_buyband_up_room", "xb_buyband_lo_room", "xb_sellband_up_room", "xb_sellband_lo_room",
+)
+# v1.13.0 BRACKET-STATE block: the open trade's live bracket (TP/SL as observations). Signed distance from
+# price to the locked TP and SL in entry-ATR units, clip[-1,1], zero when flat. DYNAMIC (jnp twin in
+# jax_tpu/jax_obs_blocks.bracket_state_features).
+BRACKET_STATE_NAMES = (
+    "bs_dist_to_tp_atr", "bs_dist_to_sl_atr",
+)
 
 
 def _block_names() -> dict[str, list[str]]:
@@ -95,6 +107,8 @@ def _block_names() -> dict[str, list[str]]:
         "hug_pressure": list(HUG_PRESSURE_NAMES), # v1.10.0: shifted-SMA hugging pressure (15, 5m/15m/1h)
         "bb_interactions": list(BB_INTERACTION_NAMES),  # v1.11.0: dual-BB squeeze/cascade/MR (12, new logic only)
         "scalp_momentum": list(SCALP_MOMENTUM_NAMES),   # v1.12.0: 1m scalp-momentum entry-timing (4)
+        "exit_band": list(EXIT_BAND_NAMES),             # v1.13.0: BB(20,0.5) exit-band rails on 1m High/Low (4, static)
+        "bracket_state": list(BRACKET_STATE_NAMES),     # v1.13.0: live TP/SL bracket as obs (2, dynamic)
     }
 
 

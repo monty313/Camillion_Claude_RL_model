@@ -9,14 +9,14 @@
 
 ---
 
-## 1. Current state (as of contract v1.6.0)
+## 1. Current state (as of contract v1.13.0)
 
 | Part | Value |
 |---|---|
-| Observation contract | **v1.6.0**, **499 float32** (full block table in `docs/OBSERVATION_CONTRACT.md`) |
-| Observation blocks | indicators(220) · alpha_values(64) · alpha_mask(64) · alpha_summary(4) · signal_memory(5) · signal_accuracy(2) · account_daily(7) · account_episode(7) · time(6) · portfolio(8) · alpha_streak(64) · sizing(10) · cross_asset(10) · recent_context(8) · **ohlc(20)** |
-| Action space | 4 — HOLD / BUY / SELL / CLOSE |
-| Reward | equity-change/step **+ deliberate shaping**: −breach_penalty, +pass_bonus(+10%), +NY index bonus *(when merged)* |
+| Observation contract | **v1.13.0**, **563 float32** (full block table in `docs/OBSERVATION_CONTRACT.md`) |
+| Observation blocks | indicators(220) · alpha_values(64) · alpha_mask(64) · alpha_summary(4) · signal_memory(5) · signal_accuracy(2) · account_daily(7) · account_episode(7) · time(6) · portfolio(8) · alpha_streak(64) · sizing(10) · cross_asset(10) · recent_context(8) · ohlc(20) · trade_risk(14) · consistency(4) · momentum(9) · hug_pressure(15) · bb_interactions(12) · scalp_momentum(4) · **exit_band(4)** · **bracket_state(2)** |
+| Action space | 4 — HOLD / BUY / SELL / CLOSE (+ v1.12.0 continuous tp/sl/lot heads when `bracket_enabled`) |
+| Reward | equity-change/step **+ deliberate shaping**: −breach_penalty, +pass_bonus(+10%), +NY index bonus, R:R bracket shaping, over-trading penalty, **v1.13.0 exit-band penalty** (close outside the direction's 1m BB(20,0.5) band — default OFF, on WITH the training wheels) |
 | FTMO rules | +2.5%/day of **initial**; phase-1 **4% trailing**; two-phase bank → optional **1% trailing**; **+10%** challenge pass; daily 5% / total 10% hard lines |
 | Per-asset sizing | `config/asset_specs.py` — each symbol sized so ~one daily range ≈ +2.5%, full adverse day < 4% |
 | Alpha roster | **18** filled slots (0–17): gravity, regime-pulse, cci-surge, sma-stack, sma-reversion, ORB, + 2 ADX-DI alignment |

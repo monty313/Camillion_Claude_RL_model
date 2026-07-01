@@ -33,7 +33,7 @@ from src.indicators.base import ALL_INDICATOR_COLUMNS
 
 # Bump this if the cache FORMAT or the set of saved arrays changes (a manual backstop on top of
 # the automatic code/data hashes below).
-FEATURE_CACHE_VERSION = "fc-v7"   # v7: +directional trade-permission (training wheels) -> old caches rebuild
+FEATURE_CACHE_VERSION = "fc-v8"   # v8: +BB(20,0.5) exit-band rails on 1m High/Low (v1.13.0) -> old caches rebuild
 
 # The arrays produced by TradingEnv._precompute (+ its sub-methods) -- the expensive part we cache.
 # Kept here as the single source of truth for save/load; TradingEnv.export_precomputed mirrors it.
@@ -53,6 +53,11 @@ PRECOMPUTED_ARRAY_KEYS = [
     "scalp_momentum_matrix",
     # training wheels: directional trade-permission mask (sell_allowed / buy_allowed).
     "trade_wheel_sell", "trade_wheel_buy",
+    # v1.13.0: BB(20,0.5) exit-band RAW rails on 1m High (buy band) / Low (sell band) -- feed the exit_band
+    # static obs block AND the exit-band reward penalty. Kept NaN in warmup (warmup = no penalty).
+    "exit_buy_up", "exit_buy_lo", "exit_sell_up", "exit_sell_lo",
+    # v1.13.0: the 4-float STATIC exit-band obs matrix (close-vs-rail rooms).
+    "exit_band_matrix",
 ]
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))

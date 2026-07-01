@@ -58,6 +58,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     risk_pct = b.get("risk_pct", None)
     open_gate = bool(b.get("open_gate", False))
     trade_wheels = bool(b.get("trade_wheels", False))          # training wheels: hard directional open-gate
+    exit_band_pen = float(b.get("exit_band_penalty", 0.0))     # v1.13.0: exit-band penalty magnitude (0 = off)
     bracket_on = bool(b.get("bracket", False))                 # v1.12.0: TP/SL/lot bracket model ON
     tp01, sl01, lot01 = float(b.get("tp01", 0.0)), float(b.get("sl01", 0.0)), float(b.get("lot01", 0.0))
     if any(k in b for k in ("band_bonus", "reentry_bonus", "conviction_bonus", "hug_bonus", "hug_miss")):
@@ -75,7 +76,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     subs = build_portfolio_subs(sym_data, _reg, cfg=cfg, warmup=50, progress=False)
     env = PortfolioEnv(subs=subs, cfg=cfg, warmup=50, continue_after_pass=continue_after_pass,
                        bb_stop_enabled=bb_stop, risk_per_trade_pct=risk_pct, open_gate=open_gate,
-                       bracket_enabled=bracket_on, trade_wheels=trade_wheels)
+                       bracket_enabled=bracket_on, trade_wheels=trade_wheels, exit_band_penalty=exit_band_pen)
 
     psd = JSF.build_portfolio_static(subs)
     static = JPE.make_portfolio_device_static(psd)
@@ -100,7 +101,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         hug_pressure_bonus=cfg.hug_pressure_bonus, hug_miss_penalty=cfg.hug_miss_penalty,
         overtrade_soft_cap=cfg.overtrade_soft_cap, overtrade_penalty=cfg.overtrade_penalty,
         bracket_enabled=1.0 if bracket_on else 0.0,
-        trade_wheels=1.0 if trade_wheels else 0.0)
+        trade_wheels=1.0 if trade_wheels else 0.0, exit_band_penalty=exit_band_pen)
 
     cpu_obs, _ = env.reset()
     state = JPE.init_state(static, params, start=env.warmup, end=env.T - 1,
@@ -140,6 +141,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
             break
     events["bracket_closed"] = sum(1 for e in getattr(env, "_bracket_log", []) if e["event"] == "close")
     events["wheel_blocks"] = int(getattr(env, "_wheel_blocks", 0))   # opens the training-wheels vetoed
+    events["exit_band_blocks"] = int(getattr(env, "_exit_band_blocks", 0))  # closes the exit-band penalty fired on
     return mo, mr, events
 
 
@@ -167,7 +169,7 @@ def test_portfolio_parity_banking_and_won_days():
 
 def test_portfolio_parity_trade_risk_behaviors_on():
     """v1.7.0: with the BB(10,1) HARD STOP + RISK-BASED sizing + band-stack & re-entry CLOSE bonuses ALL ON,
-    the JAX env must STILL match the CPU PortfolioEnv bar-for-bar (557 obs + reward). An uptrend + BUY-heavy
+    the JAX env must STILL match the CPU PortfolioEnv bar-for-bar (563 obs + reward). An uptrend + BUY-heavy
     actions exercise risk-sized entries, hard-stop closes, and the band-stack bonus."""
     syms = ["EURUSD", "GBPUSD"]
     sym_data = _symbol_data(syms, seed=5, drift=6e-5)
@@ -182,7 +184,7 @@ def test_portfolio_parity_trade_risk_behaviors_on():
 def test_portfolio_parity_hug_pressure_on():
     """v1.10.0: with the HEAVY hugging-pressure reward ON (ride bonus + indices/metals miss-penalty) on
     INDEX + METAL symbols (US30, XAUUSD) fed real 1m High/Low (aux) on a trend, the JAX env must STILL match
-    the CPU PortfolioEnv bar-for-bar (557 obs + reward) — including the >=3-TF hug gate, the conflict carve-out,
+    the CPU PortfolioEnv bar-for-bar (563 obs + reward) — including the >=3-TF hug gate, the conflict carve-out,
     and the post-+2.5%-goal MUTING (no penalty + zeroed hug obs). Random actions -> alignment varies so BOTH
     the ride-bonus and the miss-penalty paths fire."""
     syms = ["US30", "XAUUSD"]                                   # index + metal -> miss-penalty applies to both
@@ -199,7 +201,7 @@ def test_portfolio_parity_hug_pressure_on():
 
 def test_portfolio_parity_brackets_on():
     """v1.12.0 Stage 2b: with the TP/SL/lot BRACKET model ON (fed fixed tp01/sl01/lot01), on a trend that makes
-    the brackets actually FIRE, the JAX env must match the CPU PortfolioEnv bar-for-bar (557 obs + reward) --
+    the brackets actually FIRE, the JAX env must match the CPU PortfolioEnv bar-for-bar (563 obs + reward) --
     the locked TP/SL prices, the intrabar high/low exit at the LEVEL, the 1%-risk lot clamp, and the trade
     tallies. This is THE Stage-2b gate (CPU <-> JAX bracket execution to ~1e-7)."""
     syms = ["US30", "XAUUSD"]                                   # index + metal, with real 1m high/low
@@ -231,7 +233,7 @@ def test_portfolio_parity_brackets_reversals():
 def test_portfolio_parity_trade_wheels_on():
     """TRAINING WHEELS: with the operator's hard directional open-gate ON, a NEW BUY may only open where
     buy_allowed and a NEW SELL only where sell_allowed (the conditions in trade_permission.py). The JAX env
-    must match the CPU PortfolioEnv bar-for-bar (557 obs + reward), AND the wheels must actually BLOCK some
+    must match the CPU PortfolioEnv bar-for-bar (563 obs + reward), AND the wheels must actually BLOCK some
     opens (else the test is vacuous) — proven by comparing open-counts wheels-OFF vs wheels-ON on identical
     actions/data."""
     syms = ["EURUSD", "GBPUSD"]
@@ -244,6 +246,24 @@ def test_portfolio_parity_trade_wheels_on():
     assert mo < ATOL_OBS and mr < ATOL_REW, f"wheels parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
     assert ev["wheel_blocks"] > 0, (
         f"wheels vetoed NOTHING (wheel_blocks=0) — mask path never exercised, test is vacuous")
+
+
+def test_portfolio_parity_exit_band_penalty_on():
+    """EXIT-BAND (v1.13.0): with the exit-band penalty ON, a close landing OUTSIDE the direction's 1m BB(20,0.5)
+    band (a BUY judged vs the band on High, a SELL vs the band on Low) is punished -- on the agent's own
+    close/flip AND on a TP/SL bracket exit. The JAX env must match the CPU PortfolioEnv bar-for-bar (563 obs +
+    reward), AND the penalty must actually FIRE (else the test is vacuous)."""
+    syms = ["EURUSD", "GBPUSD"]
+    sym_data = _symbol_data(syms, seed=17, with_aux=True, drift=-6e-5)  # downtrend + BUY -> SL bracket exits fire
+    pat = np.arange(4000) % 8
+    acts = np.where(pat < 6, 1, np.where(pat == 6, 3, 0))      # BUY-heavy (persist -> tight SL hits) + periodic CLOSE
+    mo, mr, ev = _run(syms, continue_after_pass=False, sym_data=sym_data, actions=acts,
+                      behaviors={"exit_band_penalty": 0.05, "bracket": True, "tp01": 0.9, "sl01": 0.03})
+    print(f"\n[portfolio EXIT-BAND penalty] max|obs|={mo:.2e} max|reward|={mr:.2e} "
+          f"exit_band_blocks={ev['exit_band_blocks']} bracket_closed={ev['bracket_closed']} events={ev}")
+    assert mo < ATOL_OBS and mr < ATOL_REW, f"exit-band parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
+    assert ev["exit_band_blocks"] > 0, (
+        "exit-band penalty fired on NOTHING (exit_band_blocks=0) -- penalty path never exercised, test is vacuous")
 
 
 def test_portfolio_parity_breach():

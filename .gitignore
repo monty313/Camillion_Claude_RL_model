@@ -11,6 +11,8 @@ venv/
 
 # Data + model caches (NEVER commit large binaries)
 data_cache/
+# operator's private market data (MT5/broker exports) — huge + private; keep data/README.md tracked
+data/*.csv
 *.parquet
 *.npy
 *.npz

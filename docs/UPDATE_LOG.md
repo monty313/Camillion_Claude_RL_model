@@ -3,6 +3,43 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-07-01] Exit-band discipline: BB(20,0.5) on 1m High/Low + TP/SL obs + removable exit penalty (v1.13.0)
+- **I (Issue):** The bot had no learned EXIT discipline — it banked into the run (cutting winners while
+  momentum still paid) or clung past the reversal (giving gains back). The operator manages exits against a
+  1m band and wanted TP/SL to be visible to the policy. This is the other half of the momentum method (the
+  training wheels handle the ENTRY; this handles the EXIT).
+- **R (Rule):** A `BB(20, dev=0.5)` band applied to the 1m **HIGH** (the BUY band) and **LOW** (the SELL band)
+  is the exit reference. A good exit lands INSIDE the band (momentum paused); a close OUTSIDE a rail is
+  punished. **DELIBERATE obs contract bump v1.12.0→v1.13.0 (557→563)** — append-only, indices 0..556 unchanged
+  (a v1.12.0 policy retrains). Rails precomputed LEAK-FREE (rolling BB ends at the closed bar t; never in
+  `env.step()`). CPU↔JAX bar-for-bar. The penalty defaults OFF (removable, switched on WITH the training wheels).
+- **A (Application):**
+  - `src/observation/exit_band.py` (NEW): `compute_exit_band_rails(ohlc)` (4 raw rails, NaN warmup),
+    `compute_exit_band_matrix(close, rails)` (4 STATIC obs rooms = signed close-vs-rail, band-half-width
+    normalized, clip[-1,1]), `build_bracket_state(...)` (2 DYNAMIC floats: dist-to-TP / dist-to-SL in entry-ATR
+    units), and `exit_outside_band(...)` (the shared, NaN-safe penalty test).
+  - Obs contract: `config/constants.py` `OBS_BLOCK_EXIT_BAND=4` + `OBS_BLOCK_BRACKET_STATE=2` appended to
+    `OBS_BLOCK_ORDER` → `OBS_TOTAL_SIZE=563`, `OBSERVATION_CONTRACT_VERSION="v1.13.0"`; names in
+    `observation_contract.py` (`EXIT_BAND_NAMES`, `BRACKET_STATE_NAMES`). New reward knob
+    `EXIT_BAND_PENALTY=0.05`.
+  - CPU: `TradingEnv._precompute` computes the rails + matrix (cached, `_PRECOMPUTED_ATTRS`); both envs emit the
+    `exit_band` (static) + `bracket_state` (dynamic) blocks; `PortfolioEnv` applies the penalty on the
+    manual/flip close AND the TP/SL bracket exit (opt-in `exit_band_penalty=`), with an `_exit_band_blocks`
+    diagnostic. Feature cache `fc-v7`→`fc-v8` (+5 arrays) so old caches rebuild.
+  - JAX: rails threaded through `StaticData`/`PortfolioStaticData`/`PortfolioDeviceStatic`; `bracket_state`
+    jnp twin (`jax_obs_blocks.bracket_state_features`) in `_dynamic_obs`; `exit_band` placed in `static_obs`;
+    `PortfolioParams.exit_band_penalty`; branchless penalty on the agent close leg + the bracket-exit loop —
+    1:1 with the CPU imperative code.
+  - Tests: `tests/test_exit_band.py` (NEW, 6 — shape/normalization, buy-band-above-sell-band, the outside-band
+    test + NaN-safety, leak-freedom, bracket-state signs, env wiring); `test_jax_portfolio_parity.py`
+    `test_portfolio_parity_exit_band_penalty_on` (penalty ON → both the manual AND bracket exit paths fire:
+    `exit_band_blocks=149`, `bracket_closed=147`; `max|obs|=1.19e-7`, `max|reward|=8.9e-8`). Shape asserts
+    557→563 across the suite; version-lock asserts →v1.13.0.
+- **C (Conclusion):** The policy can now learn to EXIT like a momentum trader — hold while the move pays, bank
+  into the pause (inside the band), don't cut winners early, don't cling past the reversal — and it SEES its
+  own TP/SL. Tighter, more disciplined exits = fewer round-trips given back = more consistent FTMO days. The
+  penalty is removable, so weaning it off later is part of proving the bot internalized the principle.
+
 ## [2026-07-01] Training wheels: operator's directional entry conditions as a hard, removable open-gate
 - **I (Issue):** The operator KNOWS his discretionary strategy works, but RL-from-reward can't FIND it —
   a tiny, structured entry region is unreachable by exploration. Give the bot "training wheels": let it only

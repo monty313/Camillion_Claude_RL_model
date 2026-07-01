@@ -158,6 +158,15 @@ RR_SESSION_PENALTY: float = 0.10   # open OUTSIDE an active session -> - this (u
 RR_SPREAD_PENALTY: float = 0.0     # open on a wide spread -> penalty (0.0: no spread data feed yet -> inert)
 RR_FTMO_PROXIMITY_PENALTY: float = 0.0  # near the daily wall (handled by dd_proximity_coef; named, kept 0 here)
 
+# --- v1.13.0 EXIT-BAND momentum penalty (the operator's BB(20,0.5) exit discipline) ---
+# On ANY close (agent CLOSE, a flip, or a TP/SL bracket exit), if the exit price is OUTSIDE the direction's
+# 1m BB(20, dev=0.5) band -- a BUY judged vs the band applied to HIGH, a SELL vs the band applied to LOW --
+# subtract this. Teaches "bank into the pause": do NOT cut a winner while momentum still runs past the far
+# rail, and do NOT cling once it has reversed back through the near rail; a good exit lands INSIDE the band.
+# This is the RECOMMENDED magnitude; the env param `exit_band_penalty` DEFAULTS to 0.0 (OFF) and is switched
+# on WITH the training wheels (removable curriculum). Symmetric with the RR_* shaping scales above.
+EXIT_BAND_PENALTY: float = 0.05
+
 # --- Signal memory depth (last N bars of net signal balance) ---
 SIGNAL_MEMORY_LAGS: int = 5
 
@@ -253,6 +262,19 @@ OBS_BLOCK_BB_INTERACTIONS: int = 12
 # 5m & 30m slow trend. STATIC -> static obs tensor, byte-identical into JAX. APPENDED -> 0..552 unchanged;
 # new 553..556. Perception only (no reward change). ---
 OBS_BLOCK_SCALP_MOMENTUM: int = 4
+# --- v1.13.0: EXIT-BAND block (4 floats). The operator's momentum-aware EXIT reference: a 1m BB(20, dev=0.5)
+# band applied to the HIGH series (the BUY band) and to the LOW series (the SELL band). Each band yields an
+# upper + lower rail; these 4 floats are the signed room from the current close to those rails, normalized by
+# the band half-width and clipped to [-1,1] (negative => close is OUTSIDE that rail). STATIC (market-only,
+# per-bar) -> placed in the static obs tensor, byte-identical into the JAX env (auto parity). Lets the policy
+# SEE the exit-band penalty trigger. APPENDED -> obs indices 0..556 UNCHANGED; new 557..560. ---
+OBS_BLOCK_EXIT_BAND: int = 4
+# --- v1.13.0: BRACKET-STATE block (2 floats). The current open trade's live bracket, so "TP/SL are
+# observations" (operator 2026-07-01): signed distance from price to the locked TP and to the locked SL, in
+# entry-ATR units, clipped [-1,1], zero when flat. DYNAMIC (recomputed each step from the position + bracket
+# state) -> filled at runtime in BOTH engines like trade_risk. APPENDED -> obs indices 0..560 UNCHANGED;
+# new 561..562. DELIBERATE contract bump (operator 2026-07-01): a v1.12.0 policy retrains (shape changed). ---
+OBS_BLOCK_BRACKET_STATE: int = 2
 
 # Ordered list of (block_name, size). The builder MUST emit in this order.
 OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
@@ -277,9 +299,11 @@ OBS_BLOCK_ORDER: tuple[tuple[str, int], ...] = (
     ("hug_pressure",     OBS_BLOCK_HUG_PRESSURE), # v1.10.0 (appended -> 0..525 indices unchanged)
     ("bb_interactions",  OBS_BLOCK_BB_INTERACTIONS),  # v1.11.0 (appended -> 0..540 indices unchanged)
     ("scalp_momentum",   OBS_BLOCK_SCALP_MOMENTUM),   # v1.12.0 (appended -> 0..552 indices unchanged)
+    ("exit_band",        OBS_BLOCK_EXIT_BAND),         # v1.13.0 (appended -> 0..556 indices unchanged)
+    ("bracket_state",    OBS_BLOCK_BRACKET_STATE),     # v1.13.0 (appended -> 0..560 indices unchanged)
 )
-OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 557 (v1.12.0)
+OBS_TOTAL_SIZE: int = sum(size for _, size in OBS_BLOCK_ORDER)  # 563 (v1.13.0)
 OBS_SHAPE: tuple[int, ...] = (OBS_TOTAL_SIZE,)
 OBS_DTYPE: str = "float32"
 
-OBSERVATION_CONTRACT_VERSION: str = "v1.12.0"
+OBSERVATION_CONTRACT_VERSION: str = "v1.13.0"

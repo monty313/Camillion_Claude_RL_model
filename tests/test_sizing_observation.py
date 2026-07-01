@@ -14,7 +14,7 @@ from src.strategies.registry import AlphaRegistry
 
 
 def test_sizing_block_is_in_contract():
-    assert C.OBS_BLOCK_SIZING == 10 and C.OBSERVATION_CONTRACT_VERSION == "v1.12.0"
+    assert C.OBS_BLOCK_SIZING == 10 and C.OBSERVATION_CONTRACT_VERSION == "v1.13.0"
     sl = OC.BLOCK_SLICES["sizing"]
     assert sl.stop - sl.start == 10
     assert OC.FEATURE_NAMES[sl.start] == "size_move_pct_lot0_01"
@@ -62,7 +62,7 @@ def test_env_resolves_per_asset_value_per_point_and_shape():
                      warmup=250, symbol="EURUSD", position_size=A.calibrated_position_size("EURUSD"))
     assert env.value_per_point == 100_000.0          # from the asset spec, not the position_size
     obs, _ = env.reset()
-    assert obs.shape == (557,) and np.all(np.isfinite(obs))
+    assert obs.shape == (563,) and np.all(np.isfinite(obs))
     block = obs[OC.BLOCK_SLICES["sizing"]]
     assert block.shape == (10,)
     assert 0.6 < block[8] < 0.95                      # active_lots ~3.12 -> /4 ~0.78

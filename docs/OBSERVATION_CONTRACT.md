@@ -1,4 +1,4 @@
-# OBSERVATION CONTRACT — v1.12.0  (557 float32)
+# OBSERVATION CONTRACT — v1.13.0  (563 float32)
 
 > Defined in `config/constants.py` (sizes) and `src/observation/observation_contract.py`
 > (names). Built by `src/observation/builder.py`. **Changing this = a deliberate
@@ -17,9 +17,13 @@
 > → **v1.11.0 (553): appended the 12-float `bb_interactions` block — only the dual-Bollinger logic the obs
 > did NOT already have (BB-width squeeze/expansion, BB-distance cross-TF momentum cascade, BB-extreme
 > mean-reversion flags); multi-TF agreement / band position / trend strength were already covered
-> → **v1.12.0 (557): appended the 4-float `scalp_momentum` block — the 1m entry-timing layer (1m fast-band
-> distance + roc, 1m-vs-5m vol expansion, 1m with-trend cascade) for the super-scalper.**
-> Appended blocks leave indices 0..(prev-1) unchanged (a v1.11.0 policy must retrain — shape changed).
+> → v1.12.0 (557): appended the 4-float `scalp_momentum` block — the 1m entry-timing layer (1m fast-band
+> distance + roc, 1m-vs-5m vol expansion, 1m with-trend cascade) for the super-scalper
+> → **v1.13.0 (563): appended the 4-float `exit_band` block (BB(20,0.5) rails on the 1m High=buy band /
+> Low=sell band — the operator's momentum-aware EXIT reference) + the 2-float `bracket_state` block (the
+> open trade's live TP/SL as observations). Paired with a removable exit-band reward penalty for closing
+> OUTSIDE the direction's band (bank into the pause, not the run or the reversal).**
+> Appended blocks leave indices 0..(prev-1) unchanged (a v1.12.0 policy must retrain — shape changed).
 
 ## Block order (concatenated in this exact order)
 
@@ -52,7 +56,19 @@
 
 | 21 | `scalp_momentum` | 4 | **v1.12.0**: the 1m entry-timing layer for the super-scalper (`bb_interactions` starts at 5m). `scalp_fast_dist_1m` (signed σ from the 1m BB20 center, tanh), `scalp_fast_roc_1m` (3-bar acceleration of it), `scalp_vol_exp_1m_vs_5m` (1m BB width / 5m BB width — 1m breakout vs 5m structure), `scalp_cascade_1m` (1m fast-dist acceleration signed by the 5m & 30m slow trend — with-trend ignition). **STATIC** → `src/observation/scalp_momentum.py`, byte-identical into JAX (auto parity). No reward change. |
 
-**Total = 557.**
+| 22 | `exit_band` | 4 | **v1.13.0**: the operator's momentum-aware EXIT reference. A `BB(20, dev=0.5)` band on the **1m HIGH** (the BUY band) and on the **1m LOW** (the SELL band); each yields an upper + lower rail. The 4 floats are the signed room from the current close to those rails, normalized by the band half-width and clipped `[-1,1]` — `xb_buyband_up_room`, `xb_buyband_lo_room`, `xb_sellband_up_room`, `xb_sellband_lo_room` (**negative ⇒ close is OUTSIDE that rail = the penalty zone**). Lets the policy SEE the exit-band penalty trigger. **STATIC** (market-only) → `src/observation/exit_band.py`, byte-identical into JAX (auto parity). |
+
+| 23 | `bracket_state` | 2 | **v1.13.0**: the open trade's live bracket, so **TP/SL are observations** (operator 2026-07-01). Signed distance from price to the locked TP (`bs_dist_to_tp_atr`) and SL (`bs_dist_to_sl_atr`) in entry-ATR units, clipped `[-1,1]`, zero when flat / no bracket. DYNAMIC (recomputed each step from the position + bracket state). Shared builder `src/observation/exit_band.build_bracket_state` (jnp twin in `jax_tpu/jax_obs_blocks.bracket_state_features`). |
+
+**Total = 563.**
+
+> **The exit-band penalty** (v1.13.0, `config/constants.EXIT_BAND_PENALTY`, env param `exit_band_penalty`,
+> DEFAULT 0.0 = OFF) subtracts a reward on ANY close — the agent's own CLOSE, a flip, OR a TP/SL bracket exit —
+> whose exit price lands OUTSIDE the direction's 1m BB(20,0.5) band (BUY judged vs the band on High, SELL vs the
+> band on Low). It teaches "bank into the pause": don't cut a winner while momentum still runs past the far rail,
+> don't cling once it has reversed through the near rail. The raw BB(20,0.5) rails are precomputed leak-free in
+> `TradingEnv._precompute` (`compute_exit_band_rails`) and threaded CPU↔JAX; the penalty is switched on WITH the
+> training wheels (removable curriculum) and is parity-clean (CPU ↔ JAX bar-for-bar).
 
 > **The trade-risk block is where the BB hard stop + risk-based sizing + band-stack/re-entry bonuses live.**
 > The 1m+5m BB(10,1) bands it needs are NOT in the 220-indicator cache (BB periods there are 20 & 200 only);

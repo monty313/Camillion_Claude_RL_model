@@ -24,7 +24,7 @@ from __future__ import annotations
 # OBS / ACTION (the locked contract — imported from config.constants at use site;
 # duplicated here only as a readable reference, asserted equal in jax_env).
 # ---------------------------------------------------------------------
-OBS_SIZE: int = 557                 # == config.constants.OBS_TOTAL_SIZE (v1.12.0: +4 1m scalp-momentum block)
+OBS_SIZE: int = 563                 # == config.constants.OBS_TOTAL_SIZE (v1.13.0: +4 exit-band +2 bracket-state)
 N_ACTIONS: int = 4                  # HOLD, BUY, SELL, CLOSE
 # v1.12.0 multi-head actor: 3 CONTINUOUS heads (tp, sl, lot) on the shared trunk, sampled as Gaussians and
 # clipped to [0,1] by the env. log-std is a learnable state-independent param (like SB3 continuous actions).

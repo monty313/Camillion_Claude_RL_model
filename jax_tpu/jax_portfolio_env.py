@@ -98,10 +98,11 @@ class PortfolioParams(NamedTuple):
     overtrade_penalty: float     # v1.12.0: discrete penalty per NEW open once at/over the cap
     bracket_enabled: float       # v1.12.0: 1.0 -> TP/SL/lot heads active (bracket orders); 0.0 -> discrete env
     trade_wheels: float          # training wheels: 1.0 -> only open in an operator-permitted direction
+    exit_band_penalty: float     # v1.13.0: >0 -> penalize a close OUTSIDE the direction's 1m BB(20,0.5) band
 
 
 class PortfolioDeviceStatic(NamedTuple):
-    static_obs: jnp.ndarray     # (N, T, 499)
+    static_obs: jnp.ndarray     # (N, T, 563)
     close: jnp.ndarray          # (N, T)
     is_new_day: jnp.ndarray     # (T,)
     ref_move: jnp.ndarray       # (N, T)
@@ -112,6 +113,11 @@ class PortfolioDeviceStatic(NamedTuple):
     open_gate_blocked: jnp.ndarray  # (N, T) — 1.0 where the 5m is flat (block new opens)
     trade_wheel_sell: jnp.ndarray   # (N, T) — 1.0 where a SELL open is permitted (training wheels)
     trade_wheel_buy: jnp.ndarray    # (N, T) — 1.0 where a BUY open is permitted
+    # v1.13.0 exit-band raw rails (per symbol) for the exit-band penalty (NaN warmup -> comparisons False -> no penalty)
+    exit_buy_up: jnp.ndarray    # (N, T)
+    exit_buy_lo: jnp.ndarray    # (N, T)
+    exit_sell_up: jnp.ndarray   # (N, T)
+    exit_sell_lo: jnp.ndarray   # (N, T)
     alpha_matrix: jnp.ndarray   # (N, T, 64)
     occupancy: jnp.ndarray      # (N, 64)
     position_size: jnp.ndarray  # (N,)
@@ -200,6 +206,8 @@ def make_portfolio_device_static(psd) -> PortfolioDeviceStatic:
         prev2_day=j(psd.prev2_day), today_sofar=j(psd.today_sofar),
         open_gate_blocked=j(psd.open_gate_blocked),
         trade_wheel_sell=j(psd.trade_wheel_sell), trade_wheel_buy=j(psd.trade_wheel_buy),
+        exit_buy_up=j(psd.exit_buy_up), exit_buy_lo=j(psd.exit_buy_lo),
+        exit_sell_up=j(psd.exit_sell_up), exit_sell_lo=j(psd.exit_sell_lo),
         alpha_matrix=j(psd.alpha_matrix), occupancy=j(psd.occupancy),
         position_size=j(psd.position_size), value_per_point=j(psd.value_per_point),
         typical_range=j(psd.typical_range), cost_frac=j(psd.cost_frac), is_index_metal=is_index_metal,
@@ -220,7 +228,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
                      band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0, open_gate=0.0,
                      hug_pressure_bonus=0.0, hug_miss_penalty=0.0,
                      overtrade_soft_cap=15.0, overtrade_penalty=0.0, bracket_enabled=0.0, trade_wheels=0.0,
-                     max_bars=None) -> PortfolioParams:
+                     exit_band_penalty=0.0, max_bars=None) -> PortfolioParams:
     """Build PortfolioParams from a PortfolioStaticData + the FTMO/alpha knobs (defaults = FTMOConfig)."""
     return PortfolioParams(
         N=int(psd.N), T=int(psd.T), max_bars=int(max_bars if max_bars is not None else psd.T),
@@ -240,7 +248,8 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         conviction_bonus=float(conviction_bonus), open_gate=float(open_gate),
         hug_pressure_bonus=float(hug_pressure_bonus), hug_miss_penalty=float(hug_miss_penalty),
         overtrade_soft_cap=float(overtrade_soft_cap), overtrade_penalty=float(overtrade_penalty),
-        bracket_enabled=float(bracket_enabled), trade_wheels=float(trade_wheels))
+        bracket_enabled=float(bracket_enabled), trade_wheels=float(trade_wheels),
+        exit_band_penalty=float(exit_band_penalty))
 
 
 def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, end,
@@ -328,8 +337,11 @@ def _dynamic_obs(s: PortfolioState, static: PortfolioDeviceStatic, params: Portf
         static.bb200_1m_up[j, t], static.bb200_1m_lo[j, t], static.bb200_5m_up[j, t], static.bb200_5m_lo[j, t],
         static.bb10_1m_up[j, t], static.bb10_1m_lo[j, t], static.bb10_5m_up[j, t], static.bb10_5m_lo[j, t])
     cons = jax_obs_blocks.consistency_features(s.daily_pass_streak, s.days_won, s.days_elapsed)  # v1.8.0
+    brk = jax_obs_blocks.bracket_state_features(   # v1.13.0: live TP/SL bracket (2, dynamic)
+        s.position[j], static.close[j, t], s.tp_price[j], s.sl_price[j], s.entry_atr[j])
     return {"account_daily": daily, "account_episode": epi, "portfolio": port,
-            "sizing": size, "recent_context": ctx, "trade_risk": tr, "consistency": cons}
+            "sizing": size, "recent_context": ctx, "trade_risk": tr, "consistency": cons,
+            "bracket_state": brk}
 
 
 def _assemble_obs(s: PortfolioState, static: PortfolioDeviceStatic, params: PortfolioParams, j, t):
@@ -421,6 +433,14 @@ def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
     bonus = alpha_part + params.band_stack_bonus * band_ind + params.reentry_bonus * s.entry_reentry[j] + conviction
     close_active = close_mask * (realized > 0.0).astype(jnp.float32) * (balance > day0).astype(jnp.float32)
     alpha_shaping = close_active * jnp.minimum(bonus, pnl_frac)
+    # v1.13.0 EXIT-BAND penalty (agent close leg): a close OUTSIDE the direction's 1m BB(20,0.5) band is punished
+    # (BUY judged vs the band on HIGH, SELL vs the band on LOW). Exit price = this bar's close; rails at [j,t].
+    # NaN rails (warmup) -> comparisons False -> no penalty (matches CPU exit_outside_band's isfinite guard). 1:1 CPU.
+    _xbu = static.exit_buy_up[j, t]; _xbl = static.exit_buy_lo[j, t]
+    _xsu = static.exit_sell_up[j, t]; _xsl = static.exit_sell_lo[j, t]
+    out_close = (((pos_j > 0.0) & ((close_jt > _xbu) | (close_jt < _xbl)))
+                 | ((pos_j < 0.0) & ((close_jt > _xsu) | (close_jt < _xsl)))).astype(jnp.float32)
+    alpha_shaping = alpha_shaping - params.exit_band_penalty * close_mask * out_close
 
     # clear entry tracking on close (then open may overwrite below)
     agreed_tmp = jnp.where(close_mask > 0.5, 0.0, s.entry_agreed[j])
@@ -543,6 +563,13 @@ def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
                   - (1.0 - won_b) * (rr < 1.0).astype(close_col.dtype) * (1.0 - rr) * _RR_PEN
                   - (rr < 0.5).astype(close_col.dtype) * (0.5 - rr) / 0.5 * _RR_TAX)
         bracket_shaping = bracket_shaping + do_b * rr_rew
+        # v1.13.0 EXIT-BAND penalty (bracket exit): a TP/SL exit OUTSIDE the direction's 1m BB(20,0.5) band is
+        # punished too. Exit price = the LOCKED level; rails at [sidx, t_new]. 1:1 with CPU (_apply_brackets).
+        xbu = static.exit_buy_up[sidx, t_new]; xbl = static.exit_buy_lo[sidx, t_new]
+        xsu = static.exit_sell_up[sidx, t_new]; xsl = static.exit_sell_lo[sidx, t_new]
+        out_b = (((p > 0.0) & ((level > xbu) | (level < xbl)))
+                 | ((p < 0.0) & ((level > xsu) | (level < xsl)))).astype(close_col.dtype)
+        bracket_shaping = bracket_shaping - params.exit_band_penalty * do_b * out_b
         balance = balance + r_b * do_b
         daily_realized = daily_realized + r_b * do_b
         episode_realized = episode_realized + r_b * do_b

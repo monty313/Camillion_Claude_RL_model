@@ -49,6 +49,7 @@ from src.observation import builder as OB
 from src.signals.signal_summary import summarize, net_balance
 from src.signals.signal_memory import last5_from_series
 from src.observation import trade_risk as TR
+from src.observation import exit_band as EB
 from src.observation.hug_pressure import (IDX_DOMINANT_SIDE as _HUG_DOM, IDX_CONTINUATION_3PLUS as _HUG_CONT3,
                                           HUG_EXH_THR, HUG_DECAY_THR, HUG_LOC_THR)
 from src.observation.momentum_scores import (IDX_EXHAUSTION as _MOM_EXH, IDX_LOCATION as _MOM_LOC,
@@ -163,7 +164,8 @@ class PortfolioEnv:
                  window: int | None = None, random_window: bool = False, seed: int | None = None,
                  subs: dict | None = None, continue_after_pass: bool = False,
                  bb_stop_enabled: bool = False, risk_per_trade_pct: float | None = None,
-                 open_gate: bool = False, bracket_enabled: bool = False, trade_wheels: bool = False):
+                 open_gate: bool = False, bracket_enabled: bool = False, trade_wheels: bool = False,
+                 exit_band_penalty: float = 0.0):
         self.cfg = cfg or load_active_config()
         # v1.12.0 MULTI-HEAD ACTOR: when ON, step() accepts continuous tp01/sl01/lot01 in [0,1] -> the env maps
         # them to bounded TP/SL prices (LOCKED at entry) + a risk-clamped lot. Default OFF -> step ignores them
@@ -211,6 +213,10 @@ class PortfolioEnv:
         # TRAINING WHEELS: only OPEN in a direction the operator's entry conditions permit (removable curriculum).
         self._trade_wheels = bool(trade_wheels)
         self._wheel_blocks = 0                                  # diagnostic counter (opens the wheels vetoed)
+        # v1.13.0 EXIT-BAND penalty magnitude (DEFAULT 0.0 = OFF -> byte-identical; switched on WITH the wheels).
+        # Punishes a close (manual, flip, or TP/SL) landing OUTSIDE the direction's 1m BB(20,0.5) band.
+        self._exit_band_pen = float(exit_band_penalty)
+        self._exit_band_blocks = 0                              # diagnostic counter (closes the band penalized)
         self._band_bonus = float(getattr(self.cfg, "band_stack_bonus", 0.0))
         self._reentry_bonus = float(getattr(self.cfg, "reentry_bonus", 0.0))
         # CONVICTION bonus (operator 2026-06-29): paid when >=2 of the 3 strong-setup alphas (slots
@@ -387,12 +393,20 @@ class PortfolioEnv:
             bb10_1m_up=float(sub.bb10_1m_up[i]), bb10_1m_lo=float(sub.bb10_1m_lo[i]),
             bb10_5m_up=float(sub.bb10_5m_up[i]), bb10_5m_lo=float(sub.bb10_5m_lo[i]))
 
+    def _bracket_block(self, sym, sub) -> np.ndarray:
+        """The 2-float v1.13.0 bracket-state block (TP/SL as observations) for the current symbol's open trade."""
+        i = self.t
+        return EB.build_bracket_state(
+            pos=self.position[sym], price=float(sub.close[i]),
+            tp_price=self._tp_price[sym], sl_price=self._sl_price[sym], entry_atr=self._entry_atr[sym])
+
     def _reset_phase2(self) -> None:
         """Reset the per-DAY two-phase state on the SHARED pot (reset + each midnight)."""
         self._phase2_active = False    # banked +2.5% today AND kept trading (1% trail)
         self._phase2_peak = 0.0        # equity peak since the phase-2 (1%) trail started
         self._day_locked = False       # day done (banked +2.5% then stopped) -> no new opens
         self._wheel_blocks = 0         # diagnostic: opens the training-wheels vetoed this episode
+        self._exit_band_blocks = 0     # diagnostic: closes the exit-band penalty fired on this episode
 
     def _flatten_all(self) -> None:
         """Close EVERY open position at the current bar and bank it into the shared pot via
@@ -494,6 +508,13 @@ class PortfolioEnv:
             self._last_close_bar[s] = int(t); self._last_close_dir[s] = int(p); self._last_exit_px[s] = float(level)
             self.position[s] = 0
             self._tp_price[s] = 0.0; self._sl_price[s] = 0.0
+            # v1.13.0 EXIT-BAND penalty: a bracket exit OUTSIDE the direction's 1m BB(20,0.5) band is punished
+            # too (same rule as a manual close). Exit price = the TP/SL LEVEL; rails at bar t.
+            if self._exit_band_pen > 0.0 and EB.exit_outside_band(
+                    p, level, sub.exit_buy_up[t], sub.exit_buy_lo[t],
+                    sub.exit_sell_up[t], sub.exit_sell_lo[t]):
+                self._bracket_shaping -= self._exit_band_pen
+                self._exit_band_blocks += 1
             # R:R REWARD (the ratio self-discovery; constants in config/constants -- no inline magic):
             tp_pct = abs(tp / entry - 1.0); sl_pct = abs(1.0 - sl / entry); rr = tp_pct / max(sl_pct, 1e-12)
             won = realized > 0.0
@@ -556,6 +577,8 @@ class PortfolioEnv:
             "hug_pressure": (self._HUG_ZERO if self._daily_target_reached else sub.hug_pressure_matrix[i]),
             "bb_interactions": sub.bb_interactions_matrix[i],   # v1.11.0: 12 dual-BB interaction scores (static)
             "scalp_momentum": sub.scalp_momentum_matrix[i],     # v1.12.0: 4 1m scalp-momentum scores (static)
+            "exit_band": sub.exit_band_matrix[i],   # v1.13.0: 4 BB(20,0.5) exit-band rooms (static)
+            "bracket_state": self._bracket_block(sym, sub),   # v1.13.0: live TP/SL bracket (2, dynamic)
         })
 
     # ---- step: decide ONE symbol, advance the cursor, mark the pot ----
@@ -593,6 +616,14 @@ class PortfolioEnv:
                 self._last_close_dir[sym] = int(old_dir)
                 self._last_exit_px[sym] = float(sub.close[t])
                 self._tp_price[sym] = 0.0; self._sl_price[sym] = 0.0    # v1.12.0: clear the bracket on a manual close
+                # v1.13.0 EXIT-BAND penalty: a discretionary / flip close OUTSIDE the direction's 1m BB(20,0.5)
+                # band (BUY->band on High, SELL->band on Low) is punished -- bank into the pause, not the run or
+                # the reversal. Exit price = this bar's close; rails at bar t (NaN warmup -> no penalty).
+                if self._exit_band_pen > 0.0 and EB.exit_outside_band(
+                        old_dir, sub.close[t], sub.exit_buy_up[t], sub.exit_buy_lo[t],
+                        sub.exit_sell_up[t], sub.exit_sell_lo[t]):
+                    alpha_shaping -= self._exit_band_pen
+                    self._exit_band_blocks += 1
                 # SHAPING bonuses (paid only on a profitable close with the DAY net up; capped at the trade PnL):
                 #   alpha USE+BEAT (cfg.alpha_*), band-stack ENTER bonus (cfg.band_stack_bonus), re-entry nudge.
                 day0 = self.acc.day_start_balance if self.acc.day_start_balance is not None else self.acc.starting_balance

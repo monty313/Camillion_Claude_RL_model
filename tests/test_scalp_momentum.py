@@ -31,7 +31,8 @@ def test_carries_signal():
 
 
 def test_block_in_contract():
-    assert OC.BLOCK_SLICES["scalp_momentum"] == slice(C.OBS_TOTAL_SIZE - 4, C.OBS_TOTAL_SIZE)
+    sl = OC.BLOCK_SLICES["scalp_momentum"]                     # position shifts as later blocks append (v1.13.0+)
+    assert sl.stop - sl.start == C.OBS_BLOCK_SCALP_MOMENTUM == 4
     assert OC.BLOCK_NAMES["scalp_momentum"] == list(SM.SCALP_MOMENTUM_NAMES)
 
 

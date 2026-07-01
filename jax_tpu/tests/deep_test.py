@@ -369,7 +369,7 @@ if _ARG:
         cfg_, env, sd, static, params = _build_single(seed=1)
         # JAX trainer stamps fp == CPU env_fingerprint
         assert env_fingerprint() == env_fingerprint(), "fingerprint unstable"
-        assert C.OBS_TOTAL_SIZE == 557 and sd.static_obs.shape[1] == 557, "obs size != 557"
+        assert C.OBS_TOTAL_SIZE == 563 and sd.static_obs.shape[1] == 563, "obs size != 563"
         # static obs block placement: a fresh CPU obs at warmup, static parts must match jax static row (dynamic zeroed)
         cpu_obs, _ = env.reset()
         srow = sd.static_obs[sd.warmup]
