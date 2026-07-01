@@ -3,6 +3,31 @@
 Every change appends a dated IRAC entry. **Conclusion** states why it helps the bot
 pass FTMO-style challenges more consistently.
 
+## [2026-07-01] Training wheels: operator's directional entry conditions as a hard, removable open-gate
+- **I (Issue):** The operator KNOWS his discretionary strategy works, but RL-from-reward can't FIND it —
+  a tiny, structured entry region is unreachable by exploration. Give the bot "training wheels": let it only
+  OPEN in a direction the operator's conditions permit, and learn take/skip + exit + size WITHIN that window.
+- **R (Rule):** PRECOMPUTE-ONLY + LEAK-FREE (never in `env.step()`; SMA/shift read only bars ≤ t; "shift-4
+  forward" = the value from 4 TF-bars ago; higher-TF columns last-closed aligned). Obs shape UNCHANGED (557,
+  v1.12.0) — the gate is an ACTION mask, not an observation. CPU↔JAX bar-for-bar. Default OFF (removable
+  curriculum — taking the wheels off later is itself the proof it can ride without them).
+- **A (Application):**
+  - `src/observation/trade_permission.py` (NEW): `compute_trade_permission(ind, close, ohlc, time_ns) ->
+    (T,2)` [sell_allowed, buy_allowed]. The operator's 3 OR-groups — G1: close vs SMA(4,shift-4) of High AND
+    Low on 5m&30m&4h; G2: CCI30 & CCI100 both beyond ∓100 AND beyond their SMA(2,shift-4) on 5m&30m; G3: close
+    vs the MIDDLE of BB(20,dev1) AND BB(200,dev1) on 5m&30m&4h. BUY = the mirror. `sell = g1|g2|g3`.
+  - `TradingEnv._precompute` produces `trade_wheel_sell/buy`; cached (`feature_cache` fc-v6→**fc-v7**).
+  - `PortfolioEnv(trade_wheels=…)` masks a NEW open that fights the permitted direction (target→0), same shape
+    as the 5m open-gate; `_wheel_blocks` diagnostic counts vetoes.
+  - JAX: `PortfolioParams.trade_wheels` + `PortfolioDeviceStatic.trade_wheel_sell/buy` + a branchless mask
+    after the open-gate. Threaded via `train_portfolio(env_param_kwargs={"trade_wheels": 1.0})`.
+- **C (Conclusion):** The bot now explores ONLY the operator's known-good windows, so it can FIND (and improve
+  on) the edge instead of flailing — the fastest path to consistent FTMO passes. Verified: full CPU suite
+  (279 passed) + `tests/test_trade_permission.py` (columns exist, uptrend→BUY / downtrend→SELL, 0/1 mask,
+  leak-free prefix, env wiring) + JAX parity `test_portfolio_parity_trade_wheels_on` (max|obs|=1.19e-7,
+  max|reward|=8.9e-8, 807 wheel-blocks — mask path decisively exercised). NOTE: whether the RAW conditions
+  carry edge still needs a backtest on the operator's REAL market data (repo ships none).
+
 ## [2026-06-30] Super-scalper Stage 4: trainer/eval wiring + R:R reward + freeze/unlock curriculum + R:R log
 - **I (Issue):** Wire the policy's tp/sl/lot heads through the rollout + env + eval; add the R:R self-discovery
   reward; the freeze/unlock curriculum as a CONFIG FLAG (not hardcoded); a per-trade R:R log; and the R:R

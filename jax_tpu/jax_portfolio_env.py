@@ -97,6 +97,7 @@ class PortfolioParams(NamedTuple):
     overtrade_soft_cap: float    # v1.12.0: trades/day before the over-trading penalty kicks in
     overtrade_penalty: float     # v1.12.0: discrete penalty per NEW open once at/over the cap
     bracket_enabled: float       # v1.12.0: 1.0 -> TP/SL/lot heads active (bracket orders); 0.0 -> discrete env
+    trade_wheels: float          # training wheels: 1.0 -> only open in an operator-permitted direction
 
 
 class PortfolioDeviceStatic(NamedTuple):
@@ -109,6 +110,8 @@ class PortfolioDeviceStatic(NamedTuple):
     prev2_day: jnp.ndarray      # (N, T)
     today_sofar: jnp.ndarray    # (N, T)
     open_gate_blocked: jnp.ndarray  # (N, T) — 1.0 where the 5m is flat (block new opens)
+    trade_wheel_sell: jnp.ndarray   # (N, T) — 1.0 where a SELL open is permitted (training wheels)
+    trade_wheel_buy: jnp.ndarray    # (N, T) — 1.0 where a BUY open is permitted
     alpha_matrix: jnp.ndarray   # (N, T, 64)
     occupancy: jnp.ndarray      # (N, 64)
     position_size: jnp.ndarray  # (N,)
@@ -196,6 +199,7 @@ def make_portfolio_device_static(psd) -> PortfolioDeviceStatic:
         ref_move=j(psd.ref_move), week_avg=j(psd.week_avg), prev_day=j(psd.prev_day),
         prev2_day=j(psd.prev2_day), today_sofar=j(psd.today_sofar),
         open_gate_blocked=j(psd.open_gate_blocked),
+        trade_wheel_sell=j(psd.trade_wheel_sell), trade_wheel_buy=j(psd.trade_wheel_buy),
         alpha_matrix=j(psd.alpha_matrix), occupancy=j(psd.occupancy),
         position_size=j(psd.position_size), value_per_point=j(psd.value_per_point),
         typical_range=j(psd.typical_range), cost_frac=j(psd.cost_frac), is_index_metal=is_index_metal,
@@ -215,7 +219,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
                      bb_stop_enabled=0.0, risk_based=0.0, risk_frac=0.0,
                      band_stack_bonus=0.0, reentry_bonus=0.0, conviction_bonus=0.0, open_gate=0.0,
                      hug_pressure_bonus=0.0, hug_miss_penalty=0.0,
-                     overtrade_soft_cap=15.0, overtrade_penalty=0.0, bracket_enabled=0.0,
+                     overtrade_soft_cap=15.0, overtrade_penalty=0.0, bracket_enabled=0.0, trade_wheels=0.0,
                      max_bars=None) -> PortfolioParams:
     """Build PortfolioParams from a PortfolioStaticData + the FTMO/alpha knobs (defaults = FTMOConfig)."""
     return PortfolioParams(
@@ -236,7 +240,7 @@ def portfolio_params(psd, *, daily_target_frac=0.025, trailing_dd_frac=0.04, dai
         conviction_bonus=float(conviction_bonus), open_gate=float(open_gate),
         hug_pressure_bonus=float(hug_pressure_bonus), hug_miss_penalty=float(hug_miss_penalty),
         overtrade_soft_cap=float(overtrade_soft_cap), overtrade_penalty=float(overtrade_penalty),
-        bracket_enabled=float(bracket_enabled))
+        bracket_enabled=float(bracket_enabled), trade_wheels=float(trade_wheels))
 
 
 def init_state(static: PortfolioDeviceStatic, params: PortfolioParams, start, end,
@@ -366,6 +370,12 @@ def step_portfolio(s: PortfolioState, action, tp01, sl01, lot01,
     # 5m CCI open-gate: block a NEW directional open when the 5m is flat (both CCIs in +/-50). 1:1 with CPU.
     gate = params.open_gate * static.open_gate_blocked[j, t] * ((target != 0.0) & (target != pos_j)).astype(pos_j.dtype)
     target = jnp.where(gate > 0.5, 0.0, target)
+    # TRAINING WHEELS: block a NEW open that fights the operator's conditions (BUY only where buy_allowed, SELL
+    # only where sell_allowed). 1:1 with CPU.
+    is_open = ((target != 0.0) & (target != pos_j)).astype(pos_j.dtype)
+    wblock = (((target > 0.0) & (static.trade_wheel_buy[j, t] < 0.5))
+              | ((target < 0.0) & (static.trade_wheel_sell[j, t] < 0.5))).astype(pos_j.dtype)
+    target = jnp.where((params.trade_wheels * is_open * wblock) > 0.5, 0.0, target)
 
     changed = (target != pos_j)
     close_mask = (changed & (pos_j != 0.0)).astype(close_jt.dtype)

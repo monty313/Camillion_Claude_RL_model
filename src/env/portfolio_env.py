@@ -163,7 +163,7 @@ class PortfolioEnv:
                  window: int | None = None, random_window: bool = False, seed: int | None = None,
                  subs: dict | None = None, continue_after_pass: bool = False,
                  bb_stop_enabled: bool = False, risk_per_trade_pct: float | None = None,
-                 open_gate: bool = False, bracket_enabled: bool = False):
+                 open_gate: bool = False, bracket_enabled: bool = False, trade_wheels: bool = False):
         self.cfg = cfg or load_active_config()
         # v1.12.0 MULTI-HEAD ACTOR: when ON, step() accepts continuous tp01/sl01/lot01 in [0,1] -> the env maps
         # them to bounded TP/SL prices (LOCKED at entry) + a risk-clamped lot. Default OFF -> step ignores them
@@ -208,6 +208,9 @@ class PortfolioEnv:
         # 5m CCI open-gate: block a NEW directional open when the 5m is FLAT (both CCI30 & CCI100 in +/-50)
         # -> "don't trade the chop" (operator 2026-06-29). OFF by default; the training path turns it on.
         self._open_gate = bool(open_gate)
+        # TRAINING WHEELS: only OPEN in a direction the operator's entry conditions permit (removable curriculum).
+        self._trade_wheels = bool(trade_wheels)
+        self._wheel_blocks = 0                                  # diagnostic counter (opens the wheels vetoed)
         self._band_bonus = float(getattr(self.cfg, "band_stack_bonus", 0.0))
         self._reentry_bonus = float(getattr(self.cfg, "reentry_bonus", 0.0))
         # CONVICTION bonus (operator 2026-06-29): paid when >=2 of the 3 strong-setup alphas (slots
@@ -389,6 +392,7 @@ class PortfolioEnv:
         self._phase2_active = False    # banked +2.5% today AND kept trading (1% trail)
         self._phase2_peak = 0.0        # equity peak since the phase-2 (1%) trail started
         self._day_locked = False       # day done (banked +2.5% then stopped) -> no new opens
+        self._wheel_blocks = 0         # diagnostic: opens the training-wheels vetoed this episode
 
     def _flatten_all(self) -> None:
         """Close EVERY open position at the current bar and bank it into the shared pot via
@@ -571,6 +575,12 @@ class PortfolioEnv:
         # 5m CCI open-gate: block a NEW directional open when the 5m is FLAT (both CCIs in +/-50). Chop filter.
         if self._open_gate and sub.open_gate_blocked[t] and target != 0 and target != self.position[sym]:
             target = 0
+        # TRAINING WHEELS: block a NEW open that fights the operator's conditions -- BUY only where buy_allowed,
+        # SELL only where sell_allowed. Hard directional gate; the agent still chooses take/skip + exit + size.
+        if self._trade_wheels and target != 0 and target != self.position[sym]:
+            if (target > 0 and sub.trade_wheel_buy[t] < 0.5) or (target < 0 and sub.trade_wheel_sell[t] < 0.5):
+                target = 0
+                self._wheel_blocks += 1                        # diagnostic: opens the wheels vetoed this episode
         alpha_shaping = 0.0
         if target != self.position[sym]:
             if self.position[sym] != 0:                        # realize the closing leg into the POT

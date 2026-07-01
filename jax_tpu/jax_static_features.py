@@ -54,6 +54,8 @@ class StaticData:
     close: np.ndarray           # (T,) float64 — price for P&L + mark
     is_new_day: np.ndarray      # (T,) float32 — 1.0 if bar t starts a new day vs t-1
     open_gate_blocked: np.ndarray  # (T,) float32 — 1.0 where a new directional open is gated (5m CCI neutral)
+    trade_wheel_sell: np.ndarray   # (T,) float32 — 1.0 where a SELL open is permitted (training wheels)
+    trade_wheel_buy: np.ndarray    # (T,) float32 — 1.0 where a BUY open is permitted
     minute_of_day: np.ndarray   # (T,) int32 — UTC minute (NY-bonus windows)
     ref_move: np.ndarray        # (T,) float32 — sizing block input
     week_avg: np.ndarray        # (T,) float32 — recent_context input
@@ -157,6 +159,8 @@ def build_static_data(env) -> StaticData:
         close=np.asarray(env.close, dtype=np.float64).ravel(),
         is_new_day=is_new_day,
         open_gate_blocked=np.asarray(env.open_gate_blocked, dtype=np.float32).ravel(),
+        trade_wheel_sell=np.asarray(env.trade_wheel_sell, dtype=np.float32).ravel(),
+        trade_wheel_buy=np.asarray(env.trade_wheel_buy, dtype=np.float32).ravel(),
         minute_of_day=np.asarray(env._minute_of_day, dtype=np.int32).ravel(),
         ref_move=np.asarray(env.ref_move, dtype=np.float32).ravel(),
         week_avg=np.asarray(env._week_avg, dtype=np.float32).ravel(),
@@ -202,6 +206,8 @@ class PortfolioStaticData:
     prev2_day: np.ndarray       # (N, T)
     today_sofar: np.ndarray     # (N, T)
     open_gate_blocked: np.ndarray  # (N, T) — 1.0 where the 5m is FLAT (both CCIs in +/-50) -> block new opens
+    trade_wheel_sell: np.ndarray   # (N, T) — 1.0 where the operator's conditions permit a SELL open (wheels)
+    trade_wheel_buy: np.ndarray    # (N, T) — 1.0 where they permit a BUY open
     alpha_matrix: np.ndarray    # (N, T, 64) — +1/-1/0 per alpha slot
     occupancy: np.ndarray       # (N, 64)    — 1 assigned / 0 empty
     position_size: np.ndarray   # (N,)
@@ -243,6 +249,8 @@ def build_portfolio_static(subs: dict) -> PortfolioStaticData:
         ref_move=st("ref_move"), week_avg=st("week_avg"), prev_day=st("prev_day"),
         prev2_day=st("prev2_day"), today_sofar=st("today_sofar"),
         open_gate_blocked=st("open_gate_blocked").astype(np.float32),
+        trade_wheel_sell=st("trade_wheel_sell").astype(np.float32),
+        trade_wheel_buy=st("trade_wheel_buy").astype(np.float32),
         alpha_matrix=np.stack([np.asarray(subs[s].alpha_matrix, np.float32) for s in symbols], axis=0),
         occupancy=np.stack([np.asarray(subs[s].occupancy, np.float32) for s in symbols], axis=0),
         position_size=np.array([sds[s].position_size for s in symbols], np.float64),

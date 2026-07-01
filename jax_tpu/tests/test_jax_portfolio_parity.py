@@ -57,6 +57,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     bb_stop = bool(b.get("bb_stop", False))
     risk_pct = b.get("risk_pct", None)
     open_gate = bool(b.get("open_gate", False))
+    trade_wheels = bool(b.get("trade_wheels", False))          # training wheels: hard directional open-gate
     bracket_on = bool(b.get("bracket", False))                 # v1.12.0: TP/SL/lot bracket model ON
     tp01, sl01, lot01 = float(b.get("tp01", 0.0)), float(b.get("sl01", 0.0)), float(b.get("lot01", 0.0))
     if any(k in b for k in ("band_bonus", "reentry_bonus", "conviction_bonus", "hug_bonus", "hug_miss")):
@@ -74,7 +75,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     subs = build_portfolio_subs(sym_data, _reg, cfg=cfg, warmup=50, progress=False)
     env = PortfolioEnv(subs=subs, cfg=cfg, warmup=50, continue_after_pass=continue_after_pass,
                        bb_stop_enabled=bb_stop, risk_per_trade_pct=risk_pct, open_gate=open_gate,
-                       bracket_enabled=bracket_on)
+                       bracket_enabled=bracket_on, trade_wheels=trade_wheels)
 
     psd = JSF.build_portfolio_static(subs)
     static = JPE.make_portfolio_device_static(psd)
@@ -98,7 +99,8 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         conviction_bonus=cfg.conviction_bonus, open_gate=1.0 if open_gate else 0.0,
         hug_pressure_bonus=cfg.hug_pressure_bonus, hug_miss_penalty=cfg.hug_miss_penalty,
         overtrade_soft_cap=cfg.overtrade_soft_cap, overtrade_penalty=cfg.overtrade_penalty,
-        bracket_enabled=1.0 if bracket_on else 0.0)
+        bracket_enabled=1.0 if bracket_on else 0.0,
+        trade_wheels=1.0 if trade_wheels else 0.0)
 
     cpu_obs, _ = env.reset()
     state = JPE.init_state(static, params, start=env.warmup, end=env.T - 1,
@@ -111,8 +113,9 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
     if actions is None:
         actions = np.random.default_rng(7).integers(0, 4, size=n_steps)
     mo = mr = 0.0
-    events = {"banked": False, "won_day": False, "breach": False}  # alpha-shaping is proven by the reward atol
+    events = {"banked": False, "won_day": False, "breach": False, "opens": 0}  # alpha-shaping proven by reward atol
     prev_streak = 0
+    prev_pos = {s: 0 for s in symbols}
     for k, a in enumerate(actions):
         cpu_obs, cpu_r, cpu_term, cpu_trunc, info = env.step(int(a), tp01, sl01, lot01)
         state, jx_obs, jx_r, jx_term, jx_trunc = step(state, int(a), tp01, sl01, lot01, static, params)
@@ -123,6 +126,11 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         assert abs(jx_r - cpu_r) < ATOL_REW, f"step {k} reward: cpu={cpu_r:.10f} jax={jx_r:.10f} (action={a})"
         assert bool(jx_term > 0.5) == bool(cpu_term), f"step {k} terminated mismatch"
         assert bool(jx_trunc > 0.5) == bool(cpu_trunc), f"step {k} truncated mismatch"
+        for s in symbols:                                    # count NEW opens (flat/opposite -> a direction)
+            np_ = info["positions"].get(s, 0)
+            if np_ != 0 and np_ != prev_pos[s]:
+                events["opens"] += 1
+            prev_pos[s] = np_
         events["banked"] |= bool(info.get("day_locked") or info.get("phase2_active"))
         if info.get("daily_pass_streak", 0) > prev_streak:
             events["won_day"] = True
@@ -131,6 +139,7 @@ def _run(symbols, continue_after_pass, n_steps=1600, seed=21, sym_data=None, act
         if cpu_term or cpu_trunc:
             break
     events["bracket_closed"] = sum(1 for e in getattr(env, "_bracket_log", []) if e["event"] == "close")
+    events["wheel_blocks"] = int(getattr(env, "_wheel_blocks", 0))   # opens the training-wheels vetoed
     return mo, mr, events
 
 
@@ -217,6 +226,24 @@ def test_portfolio_parity_brackets_reversals():
     mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts, behaviors=behaviors)
     print(f"\n[portfolio BRACKET REVERSALS] max|obs|={mo:.2e} max|reward|={mr:.2e} events={ev}")
     assert mo < ATOL_OBS and mr < ATOL_REW, f"reversal-clamp parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
+
+
+def test_portfolio_parity_trade_wheels_on():
+    """TRAINING WHEELS: with the operator's hard directional open-gate ON, a NEW BUY may only open where
+    buy_allowed and a NEW SELL only where sell_allowed (the conditions in trade_permission.py). The JAX env
+    must match the CPU PortfolioEnv bar-for-bar (557 obs + reward), AND the wheels must actually BLOCK some
+    opens (else the test is vacuous) — proven by comparing open-counts wheels-OFF vs wheels-ON on identical
+    actions/data."""
+    syms = ["EURUSD", "GBPUSD"]
+    sym_data = _symbol_data(syms, seed=13)
+    acts = np.random.default_rng(3).integers(0, 4, size=3000)  # mixed BUY/SELL/CLOSE/HOLD -> both wheels tested
+    mo, mr, ev = _run(syms, continue_after_pass=True, sym_data=sym_data, actions=acts,
+                      behaviors={"trade_wheels": True})
+    print(f"\n[portfolio TRAINING WHEELS] max|obs|={mo:.2e} max|reward|={mr:.2e} "
+          f"wheel_blocks={ev['wheel_blocks']} opens={ev['opens']} events={ev}")
+    assert mo < ATOL_OBS and mr < ATOL_REW, f"wheels parity broke: max|obs|={mo:.2e} max|reward|={mr:.2e}"
+    assert ev["wheel_blocks"] > 0, (
+        f"wheels vetoed NOTHING (wheel_blocks=0) — mask path never exercised, test is vacuous")
 
 
 def test_portfolio_parity_breach():

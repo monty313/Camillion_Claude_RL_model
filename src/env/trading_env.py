@@ -42,6 +42,7 @@ from src.observation.momentum_scores import compute_momentum_scores
 from src.observation.hug_pressure import compute_hug_pressure
 from src.observation.bb_interactions import compute_bb_interactions
 from src.observation.scalp_momentum import compute_scalp_momentum
+from src.observation.trade_permission import compute_trade_permission
 from src.indicators.bollinger import bollinger
 
 
@@ -220,6 +221,10 @@ class TradingEnv:
         self.momentum_matrix = compute_momentum_scores(self.ind, self.close)
         # v1.10.0: SHIFTED-SMA HUGGING-PRESSURE (15, across 5m/15m/1h from the 1m High/Low) -- STATIC.
         self.hug_pressure_matrix = compute_hug_pressure(self.ohlc_matrix, self.time_ns)
+        # TRAINING WHEELS: per-bar directional trade-permission (sell_allowed, buy_allowed) from the operator's
+        # exact entry conditions. Leak-free precompute; the env applies it as a HARD directional open-gate.
+        _perm = compute_trade_permission(self.ind, self.close, self.ohlc_matrix, self.time_ns)
+        self.trade_wheel_sell = _perm[:, 0]; self.trade_wheel_buy = _perm[:, 1]
         # v1.11.0: DUAL-BB INTERACTIONS (12: squeeze/expansion + cross-TF cascade + BB-extreme MR) -- STATIC.
         self.bb_interactions_matrix = compute_bb_interactions(self.ind, self.close)
         # v1.12.0: 1m SCALP-MOMENTUM (4: 1m fast dist/roc, 1m-vs-5m vol expansion, 1m with-trend cascade) -- STATIC.
@@ -313,7 +318,9 @@ class TradingEnv:
                           # v1.11.0: dual-BB interaction scores (12) -- static obs block
                           "bb_interactions_matrix",
                           # v1.12.0: 1m scalp-momentum scores (4) -- static obs block
-                          "scalp_momentum_matrix")
+                          "scalp_momentum_matrix",
+                          # training wheels: directional trade-permission (not obs -- a hard open-gate mask)
+                          "trade_wheel_sell", "trade_wheel_buy")
 
     def export_precomputed(self) -> dict:
         """Return {name: ndarray} for the cache (the expensive precompute output, read-only)."""
