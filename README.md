@@ -1,51 +1,82 @@
-# Camillion Claude RL Model
+# Camillion_Claude_RL_model
 
-A modular reinforcement-learning **forex** framework where each strategy emits a
-simple directional **alpha** (`+1` buy / `-1` sell / `0` inactive) and an RL agent
-learns how to **combine those alphas** — while it can also trade directly from raw
-indicators — all under **FTMO-style** challenge rules.
+## Project mission
+Develop and operate a trading/market intelligence system focused on Camillion Claude RL model.
 
-> Mission: not to maximize PnL, but to **repeatedly pass FTMO-style challenges**
-> (2.5% daily target / 4% trailing wall). Evolved from the `Quantra` repo.
+## What this repository currently contains
+Top-level structure:
+- `.gitignore` (file)
+- `0_JARVIS_COCKPIT.html` (file)
+- `audit_results` (dir)
+- `CLAUDE.md` (file)
+- `config` (dir)
+- `data` (dir)
+- `docs` (dir)
+- `go_live.py` (file)
+- `HANDOFF.md` (file)
+- `HANDOFF_IRAC.md` (file)
+- `HANDOFF_TRAINING_JARVIS.md` (file)
+- `jarvis_bridge.py` (file)
+- `jax_tpu` (dir)
+- `notebooks` (dir)
+- `pyproject.toml` (file)
+- `README.md` (file)
+- `records` (dir)
+- `requirements-jarvis.txt` (file)
+- `run_training.py` (file)
+- `src` (dir)
 
-## Status — Phase 0 (skeleton)
-Foundation only: configs, the locked observation contract, indicator registry +
-stubs, `BaseStrategy` + `StrategyRegistry` (64 fixed slots), the signal/observation
-builders, account + risk scaffolds, and the shape-contract tests. **No RL training,
-no UI yet** (those are Phases 1 and 2).
+Primary languages/tooling detected: Python (206), Markdown (36), Jupyter Notebook (4)
 
-## The observation (locked: 367 float32, contract `v1.1.0`)
-| Block | Size | What it is |
-|---|---|---|
-| indicators | 200 | raw values, 5 TFs x 40 (NOT normalized; TA-Lib optional) |
-| alpha_values | 64 | strategy outputs `+1/-1/0` (fixed slots) |
-| alpha_mask | 64 | occupancy: `1` assigned, `0` empty slot |
-| alpha_summary | 4 | buy% / sell% / active% / net% |
-| signal_memory | 5 | last-5-bar net signal balance |
-| signal_accuracy | 2 | rolling 1-bar / 3-bar accuracy (no leakage) |
-| account_daily | 7 | daily win%, pnl%, dd%, target%, risk%, trades%, streak% |
-| account_episode | 7 | episode win%, pnl%, dd%, target%, pass%, risk%, streak% |
-| time | 6 | time-of-day / day-of-week / session flags |
-| portfolio | 8 | open positions, exposure, unrealized pnl, equity/balance |
+Likely key implementation files:
+- `README.md`
+- `src/__init__.py`
+- `src/account/__init__.py`
+- `src/account/account_state.py`
+- `src/account/trade_history.py`
+- `src/account/win_loss_features.py`
+- `src/barbershop/__init__.py`
+- `src/barbershop/alpha_edge.py`
+- `src/barbershop/day_replay.py`
+- `src/barbershop/feature_doctor.py`
 
-**Adding strategies fills slots — the shape never changes.** See
-`docs/OBSERVATION_CONTRACT.md`.
+## Quickstart (operator + LLM friendly)
+Use this sequence first, then adapt to repo-specific details.
 
-## Run the tests
-```bash
-# with pytest (Colab):
-pip install pytest && pytest -q
-# or stdlib-only (no install):
-python tools/run_tests.py
-```
+1. Clone and enter repo:
+   ```bash
+   git clone https://github.com/monty313/Camillion_Claude_RL_model.git
+   cd Camillion_Claude_RL_model
+   ```
+2. Setup environment/dependencies:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -e .
+   ```
+3. Run locally:
+   ```bash
+   python main.py  # adjust to project entrypoint
+   ```
+4. Validate changes:
+   ```bash
+   pytest -q
+   ```
 
-## Repo layout
-`config/` frozen constants + tunables + FTMO/FREE + speed knobs ·
-`src/indicators` TA-Lib registry/stubs · `src/strategies` base + 64-slot registry ·
-`src/signals` summary / memory / accuracy · `src/observation` contract + builder ·
-`src/account` state + win/loss features · `src/risk` FTMO/FREE/breach ·
-`src/env` RL env (Phase 1) · `src/training` trainer (Phase 1) ·
-`src/jarvis` + `src/barbershop` UI/diagnostics (Phase 2) · `tests/` · `docs/`.
+## Operating intent (CEO-mode guide for future LLMs)
+When continuing this project, optimize for business outcome first:
 
-## Disclaimer
-Research software for simulated prop-firm challenges. Not financial advice.
+- Preserve or improve strategy quality, reliability, and reproducibility.
+- Prefer small, testable, reversible changes over broad rewrites.
+- Keep docs synchronized with code behavior.
+- Add explicit assumptions, constraints, and success criteria in every major change.
+
+## Delivery checklist
+- [ ] Environment setup is deterministic.
+- [ ] Primary run path is documented and works.
+- [ ] Validation/test path is documented and works.
+- [ ] Key risks and TODOs are tracked in the handoff file.
+
+## Branch and release notes
+- Default branch: `main`
+- Keep PRs focused and attach proof-of-run or proof-of-test for behavior changes.
